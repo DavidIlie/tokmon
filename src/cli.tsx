@@ -2,7 +2,7 @@ import { render } from 'ink'
 import { App } from './app'
 
 const args = process.argv.slice(2)
-let interval = 2000
+let interval: number | undefined
 
 for (let i = 0; i < args.length; i++) {
   if ((args[i] === '--interval' || args[i] === '-i') && args[i + 1]) {
@@ -13,8 +13,14 @@ for (let i = 0; i < args.length; i++) {
     console.log('tokmon - Terminal dashboard for Claude Code usage\n')
     console.log('Usage: tokmon [options]\n')
     console.log('Options:')
-    console.log('  -i, --interval <seconds>  Refresh interval (default: 2)')
-    console.log('  -h, --help                Show this help')
+    console.log('  -i, --interval <seconds>  Refresh interval (default: from config or 2)')
+    console.log('  -h, --help                Show this help\n')
+    console.log('Keybindings:')
+    console.log('  Tab / ←→    Switch views')
+    console.log('  ↑↓          Scroll table')
+    console.log('  1-2         Jump to view')
+    console.log('  s           Settings')
+    console.log('  Ctrl+C      Quit')
     process.exit(0)
   }
 }

@@ -1,24 +1,57 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Box, Text, useInput, useStdout } from 'ink'
 import { fetchData } from './data'
+import { loadConfig, saveConfig, configLocation, type Config } from './config'
 import * as fmt from './format'
 import type { AppData, UsageSummary, BlockInfo, DailyRow } from './types'
 
 const TABS = ['Dashboard', 'Daily'] as const
-type Tab = typeof TABS[number]
 
-export function App({ interval = 2000 }: { interval?: number }) {
+export function App({ interval: initialInterval }: { interval?: number }) {
   const [data, setData] = useState<AppData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [updated, setUpdated] = useState(new Date())
-  const [tab, setTab] = useState<number>(0)
+  const [tab, setTab] = useState(0)
   const [scroll, setScroll] = useState(0)
+  const [showSettings, setShowSettings] = useState(false)
+  const [config, setConfig] = useState<Config>({ interval: (initialInterval ?? 2000) / 1000 })
+  const [settingsCursor, setSettingsCursor] = useState(0)
   const { stdout } = useStdout()
   const rows = stdout?.rows ?? 24
+  const interval = config.interval * 1000
+
+  useEffect(() => {
+    loadConfig().then(c => {
+      if (!initialInterval) setConfig(c)
+      else setConfig({ ...c, interval: initialInterval / 1000 })
+    })
+  }, [])
 
   const isTTY = process.stdin.isTTY === true
 
   useInput((input, key) => {
+    if (showSettings) {
+      if (key.escape || input === 's') setShowSettings(false)
+      if (key.upArrow) setSettingsCursor(c => Math.max(0, c - 1))
+      if (key.downArrow) setSettingsCursor(c => Math.min(0, c + 1))
+      if (key.leftArrow && settingsCursor === 0) {
+        setConfig(c => {
+          const next = { ...c, interval: Math.max(1, c.interval - 1) }
+          saveConfig(next)
+          return next
+        })
+      }
+      if (key.rightArrow && settingsCursor === 0) {
+        setConfig(c => {
+          const next = { ...c, interval: c.interval + 1 }
+          saveConfig(next)
+          return next
+        })
+      }
+      return
+    }
+
+    if (input === 's') { setShowSettings(true); return }
     if (key.tab || key.rightArrow) { setTab(t => (t + 1) % TABS.length); setScroll(0) }
     if (key.leftArrow) { setTab(t => (t - 1 + TABS.length) % TABS.length); setScroll(0) }
     if (key.upArrow) setScroll(s => Math.max(0, s - 1))
@@ -50,17 +83,25 @@ export function App({ interval = 2000 }: { interval?: number }) {
       <Box justifyContent="space-between">
         <Box>
           <Text bold color="greenBright">{'◉'} tokmon</Text>
-          <Text dimColor>  ·  {interval / 1000}s</Text>
+          <Text dimColor>  ·  {config.interval}s</Text>
         </Box>
         <Text dimColor>{fmt.time(updated)}</Text>
       </Box>
-      <Box marginTop={1}>
-        <TabBar tabs={TABS} active={tab} />
-        <Text dimColor>  ←→ or 1-{TABS.length}</Text>
-      </Box>
-      <Box height={1} />
-      {TABS[tab] === 'Dashboard' && <DashboardView data={data} />}
-      {TABS[tab] === 'Daily' && <DailyView daily={data.daily} scroll={scroll} maxRows={rows - 10} />}
+
+      {showSettings ? (
+        <SettingsView config={config} cursor={settingsCursor} />
+      ) : (
+        <>
+          <Box marginTop={1}>
+            <TabBar tabs={TABS} active={tab} />
+            <Text dimColor>  Tab/←→  s=settings</Text>
+          </Box>
+          <Box height={1} />
+          {TABS[tab] === 'Dashboard' && <DashboardView data={data} />}
+          {TABS[tab] === 'Daily' && <DailyView daily={data.daily} scroll={scroll} maxRows={rows - 10} />}
+        </>
+      )}
+
       <Box marginTop={1}>
         <Text dimColor>by </Text>
         <Text>David Ilie</Text>
@@ -83,6 +124,26 @@ function TabBar({ tabs, active }: { tabs: readonly string[]; active: number }) {
           }
         </Box>
       ))}
+    </Box>
+  )
+}
+
+function SettingsView({ config, cursor }: { config: Config; cursor: number }) {
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text bold>Settings</Text>
+      <Text dimColor>Saved to {configLocation()}</Text>
+      <Box height={1} />
+      <Box>
+        {cursor === 0 ? <Text color="green">{'▸'} </Text> : <Text>  </Text>}
+        <Text>Refresh interval  </Text>
+        <Text dimColor>{'◂'} </Text>
+        <Text bold color="yellow">{config.interval}s</Text>
+        <Text dimColor> {'▸'}</Text>
+        <Text dimColor>  (←→ to adjust)</Text>
+      </Box>
+      <Box height={1} />
+      <Text dimColor>Press s or Esc to close</Text>
     </Box>
   )
 }
@@ -179,68 +240,61 @@ function ProgressBar({ percent, width = 36 }: { percent: number; width?: number 
 }
 
 function DailyView({ daily, scroll, maxRows }: { daily: DailyRow[]; scroll: number; maxRows: number }) {
-  const COL = { date: 12, models: 20, input: 10, output: 10, cc: 12, cr: 14, total: 14, cost: 10 }
+  const W = { date: 7, models: 16, input: 8, output: 8, cc: 8, cr: 8, cost: 10 }
+  const lineW = W.date + W.models + W.input + W.output + W.cc + W.cr + W.cost
 
-  const totals: DailyRow = {
-    date: 'Total',
-    models: [],
-    input: 0, output: 0, cacheCreate: 0, cacheRead: 0, total: 0, cost: 0,
-  }
+  const totals = { input: 0, output: 0, cacheCreate: 0, cacheRead: 0, cost: 0 }
   for (const r of daily) {
     totals.input += r.input
     totals.output += r.output
     totals.cacheCreate += r.cacheCreate
     totals.cacheRead += r.cacheRead
-    totals.total += r.total
     totals.cost += r.cost
   }
 
   const visible = daily.slice(scroll, scroll + maxRows)
-  const canScrollDown = scroll + maxRows < daily.length
+  const more = daily.length - scroll - maxRows
 
   return (
     <Box flexDirection="column">
-      <Box>
-        <Text bold>{fmt.pad('Date', COL.date, 'left')}</Text>
-        <Text bold>{fmt.pad('Models', COL.models, 'left')}</Text>
-        <Text bold>{fmt.pad('Input', COL.input)}</Text>
-        <Text bold>{fmt.pad('Output', COL.output)}</Text>
-        <Text bold>{fmt.pad('Cache Crt', COL.cc)}</Text>
-        <Text bold>{fmt.pad('Cache Read', COL.cr)}</Text>
-        <Text bold>{fmt.pad('Total', COL.total)}</Text>
-        <Text bold>{fmt.pad('Cost', COL.cost)}</Text>
-      </Box>
-      <Text dimColor>{'─'.repeat(COL.date + COL.models + COL.input + COL.output + COL.cc + COL.cr + COL.total + COL.cost)}</Text>
+      <Text>
+        <Text bold>{fmt.col('Date', W.date, 'left')}</Text>
+        <Text bold>{fmt.col('Models', W.models, 'left')}</Text>
+        <Text bold>{fmt.col('Input', W.input)}</Text>
+        <Text bold>{fmt.col('Output', W.output)}</Text>
+        <Text bold>{fmt.col('CchCrt', W.cc)}</Text>
+        <Text bold>{fmt.col('CchRd', W.cr)}</Text>
+        <Text bold>{fmt.col('Cost', W.cost)}</Text>
+      </Text>
+      <Text dimColor>{'─'.repeat(lineW)}</Text>
 
       {visible.map(r => (
-        <Box key={r.date}>
-          <Text color="cyan">{fmt.pad(r.date, COL.date, 'left')}</Text>
-          <Text dimColor>{fmt.pad(r.models.join(', '), COL.models, 'left')}</Text>
-          <Text>{fmt.pad(fmt.num(r.input), COL.input)}</Text>
-          <Text>{fmt.pad(fmt.num(r.output), COL.output)}</Text>
-          <Text>{fmt.pad(fmt.num(r.cacheCreate), COL.cc)}</Text>
-          <Text>{fmt.pad(fmt.num(r.cacheRead), COL.cr)}</Text>
-          <Text>{fmt.pad(fmt.num(r.total), COL.total)}</Text>
-          <Text bold color="yellow">{fmt.pad(fmt.currency(r.cost), COL.cost)}</Text>
-        </Box>
+        <Text key={r.date}>
+          <Text color="cyan">{fmt.col(fmt.shortDate(r.date), W.date, 'left')}</Text>
+          <Text dimColor>{fmt.col(r.models.join(', '), W.models, 'left')}</Text>
+          <Text>{fmt.col(fmt.tokens(r.input), W.input)}</Text>
+          <Text>{fmt.col(fmt.tokens(r.output), W.output)}</Text>
+          <Text>{fmt.col(fmt.tokens(r.cacheCreate), W.cc)}</Text>
+          <Text>{fmt.col(fmt.tokens(r.cacheRead), W.cr)}</Text>
+          <Text bold color="yellow">{fmt.col(fmt.currency(r.cost), W.cost)}</Text>
+        </Text>
       ))}
 
-      {canScrollDown && <Text dimColor>  ↓ {daily.length - scroll - maxRows} more rows</Text>}
+      {more > 0 && <Text dimColor>  ↓ {more} more</Text>}
 
-      <Text dimColor>{'─'.repeat(COL.date + COL.models + COL.input + COL.output + COL.cc + COL.cr + COL.total + COL.cost)}</Text>
-      <Box>
-        <Text bold color="greenBright">{fmt.pad('Total', COL.date, 'left')}</Text>
-        <Text>{fmt.pad('', COL.models, 'left')}</Text>
-        <Text bold color="yellow">{fmt.pad(fmt.tokens(totals.input), COL.input)}</Text>
-        <Text bold color="yellow">{fmt.pad(fmt.tokens(totals.output), COL.output)}</Text>
-        <Text bold color="yellow">{fmt.pad(fmt.tokens(totals.cacheCreate), COL.cc)}</Text>
-        <Text bold color="yellow">{fmt.pad(fmt.tokens(totals.cacheRead), COL.cr)}</Text>
-        <Text bold color="yellow">{fmt.pad(fmt.tokens(totals.total), COL.total)}</Text>
-        <Text bold color="yellowBright">{fmt.pad(fmt.currency(totals.cost), COL.cost)}</Text>
-      </Box>
+      <Text dimColor>{'─'.repeat(lineW)}</Text>
+      <Text>
+        <Text bold color="greenBright">{fmt.col('Total', W.date, 'left')}</Text>
+        <Text>{fmt.col('', W.models, 'left')}</Text>
+        <Text bold color="yellow">{fmt.col(fmt.tokens(totals.input), W.input)}</Text>
+        <Text bold color="yellow">{fmt.col(fmt.tokens(totals.output), W.output)}</Text>
+        <Text bold color="yellow">{fmt.col(fmt.tokens(totals.cacheCreate), W.cc)}</Text>
+        <Text bold color="yellow">{fmt.col(fmt.tokens(totals.cacheRead), W.cr)}</Text>
+        <Text bold color="yellowBright">{fmt.col(fmt.currency(totals.cost), W.cost)}</Text>
+      </Text>
 
       <Box marginTop={1}>
-        <Text dimColor>↑↓ scroll  ·  {daily.length} days  ·  showing {scroll + 1}-{Math.min(scroll + maxRows, daily.length)}</Text>
+        <Text dimColor>↑↓ scroll  ·  {daily.length} days  ·  {scroll + 1}-{Math.min(scroll + maxRows, daily.length)}</Text>
       </Box>
     </Box>
   )

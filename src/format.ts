@@ -27,8 +27,14 @@ export function minutes(mins: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
-export function pad(s: string, w: number, align: 'left' | 'right' = 'right'): string {
-  if (s.length >= w) return s.slice(0, w)
+export function shortDate(iso: string): string {
+  const [, m, d] = iso.split('-')
+  const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  return `${months[Number(m)]} ${Number(d).toString().padStart(2, ' ')}`
+}
+
+export function col(s: string, w: number, align: 'left' | 'right' = 'right'): string {
+  if (s.length > w) return s.slice(0, w - 1) + '~'
   const spaces = ' '.repeat(w - s.length)
   return align === 'right' ? spaces + s : s + spaces
 }
