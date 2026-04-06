@@ -1,0 +1,46 @@
+{
+  "name": "tokmon",
+  "version": "0.1.0",
+  "description": "Terminal dashboard for Claude Code usage and costs",
+  "type": "module",
+  "bin": {
+    "tokmon": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/cli.tsx"
+  },
+  "dependencies": {
+    "ink": "^5.0.0",
+    "react": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "author": "David Ilie <david@davidilie.com> (https://davidilie.com)",
+  "homepage": "https://github.com/DavidIlie/tokmon",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DavidIlie/tokmon.git"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "usage",
+    "tokens",
+    "cost",
+    "terminal",
+    "dashboard",
+    "cli"
+  ],
+  "license": "MIT"
+}
