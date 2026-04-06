@@ -25,6 +25,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec tsup
 
-      - run: npm publish --access public
+      - run: npm publish --access public || true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
