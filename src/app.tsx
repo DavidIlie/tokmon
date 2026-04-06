@@ -1,24 +1,26 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Box, Text, useInput, useStdout } from 'ink'
-import { fetchData } from './data'
+import { fetchDashboard, fetchTable, type DashboardData, type TableData } from './data'
 import { loadConfig, saveConfig, configLocation, type Config } from './config'
 import * as fmt from './format'
-import type { AppData, UsageSummary, BlockInfo, TableRow } from './types'
+import type { UsageSummary, BlockInfo, TableRow } from './types'
 
 const TABS = ['Dashboard', 'Table'] as const
 const VIEWS = ['Daily', 'Weekly', 'Monthly'] as const
-type View = typeof VIEWS[number]
 
 export function App({ interval: cliInterval }: { interval?: number }) {
-  const [data, setData] = useState<AppData | null>(null)
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null)
+  const [table, setTable] = useState<TableData | null>(null)
+  const [tableLoading, setTableLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [updated, setUpdated] = useState(new Date())
   const [tab, setTab] = useState(0)
-  const [view, setView] = useState<number>(0)
+  const [view, setView] = useState(0)
   const [scroll, setScroll] = useState(0)
   const [showSettings, setShowSettings] = useState(false)
   const [config, setConfig] = useState<Config | null>(null)
   const [settingsCursor, setSettingsCursor] = useState(0)
+  const tableLoadedOnce = useRef(false)
   const { stdout } = useStdout()
   const rows = stdout?.rows ?? 24
   const cols = stdout?.columns ?? 80
@@ -31,6 +33,44 @@ export function App({ interval: cliInterval }: { interval?: number }) {
       if (c.clearScreen && stdout) stdout.write('\x1B[2J\x1B[H')
     })
   }, [])
+
+  useEffect(() => {
+    let active = true
+    const load = async () => {
+      try {
+        const result = await fetchDashboard()
+        if (active) { setDashboard(result); setError(null); setUpdated(new Date()) }
+      } catch (e) {
+        if (active) setError(e instanceof Error ? e.message : String(e))
+      }
+    }
+    load()
+    const id = setInterval(load, interval)
+    return () => { active = false; clearInterval(id) }
+  }, [interval])
+
+  useEffect(() => {
+    if (tab !== 1) return
+    if (tableLoadedOnce.current && table) return
+    let active = true
+    setTableLoading(true)
+    fetchTable().then(result => {
+      if (active) { setTable(result); setTableLoading(false); tableLoadedOnce.current = true }
+    }).catch(() => { if (active) setTableLoading(false) })
+    return () => { active = false }
+  }, [tab])
+
+  useEffect(() => {
+    if (tab !== 1 || !tableLoadedOnce.current) return
+    let active = true
+    const id = setInterval(async () => {
+      try {
+        const result = await fetchTable()
+        if (active) setTable(result)
+      } catch { /* skip */ }
+    }, Math.max(interval, 10000))
+    return () => { active = false; clearInterval(id) }
+  }, [tab, interval])
 
   const isTTY = process.stdin.isTTY === true
   const settingsItems = 2
@@ -76,25 +116,10 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     if (key.pageUp) setScroll(s => Math.max(0, s - Math.max(1, rows - 12)))
   }, { isActive: isTTY })
 
-  useEffect(() => {
-    let active = true
-    const load = async () => {
-      try {
-        const result = await fetchData()
-        if (active) { setData(result); setError(null); setUpdated(new Date()) }
-      } catch (e) {
-        if (active) setError(e instanceof Error ? e.message : String(e))
-      }
-    }
-    load()
-    const id = setInterval(load, interval)
-    return () => { active = false; clearInterval(id) }
-  }, [interval])
-
   if (error) return <Box padding={1}><Text color="red">{error}</Text></Box>
-  if (!data) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
+  if (!dashboard) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
 
-  const tableData = [data.daily, data.weekly, data.monthly][view]
+  const tableData = table ? [table.daily, table.weekly, table.monthly][view] : []
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
@@ -115,12 +140,15 @@ export function App({ interval: cliInterval }: { interval?: number }) {
             <Text dimColor>  Tab  s=settings</Text>
           </Box>
           <Box height={1} />
-          {tab === 0 && <DashboardView data={data} />}
+          {tab === 0 && <DashboardView data={dashboard} />}
           {tab === 1 && (
             <>
               <ViewBar views={VIEWS} active={view} />
               <Box height={1} />
-              <TableView rows={tableData} scroll={scroll} maxRows={rows - 12} wide={cols > 90} />
+              {tableLoading && !table
+                ? <Text dimColor>Loading 6 months of history...</Text>
+                : <TableView rows={tableData} scroll={scroll} maxRows={rows - 12} wide={cols > 90} />
+              }
             </>
           )}
         </>
@@ -192,7 +220,7 @@ function SettingsView({ config, cursor }: { config: Config; cursor: number }) {
   )
 }
 
-function DashboardView({ data }: { data: AppData }) {
+function DashboardView({ data }: { data: DashboardData }) {
   return (
     <>
       <Box

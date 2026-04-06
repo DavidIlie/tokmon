@@ -184,16 +184,28 @@ function monthLabel(ts: number): string {
   return new Date(ts).toISOString().slice(0, 7)
 }
 
-export async function fetchData(): Promise<AppData> {
+export interface DashboardData {
+  today: UsageSummary
+  week: UsageSummary
+  month: UsageSummary
+  block: AppData['block']
+}
+
+export interface TableData {
+  daily: TableRow[]
+  weekly: TableRow[]
+  monthly: TableRow[]
+}
+
+export async function fetchDashboard(): Promise<DashboardData> {
   const now = Date.now()
   const d = new Date()
-  const lookback = new Date(d.getFullYear(), d.getMonth() - 6, 1).getTime()
   const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime()
   const todayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
   const weekDay = d.getDay()
   const weekStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() - (weekDay === 0 ? 6 : weekDay - 1)).getTime()
 
-  const entries = await loadEntries(lookback)
+  const entries = await loadEntries(monthStart)
 
   const fiveHoursAgo = now - 5 * 3_600_000
   const blockEntries = entries.filter(e => e.ts >= fiveHoursAgo)
@@ -209,17 +221,22 @@ export async function fetchData(): Promise<AppData> {
     block = { spent, projected: burnRate * 5, burnRate, percent, remaining: minutes(remainMs / 60_000) }
   }
 
-  const daily = groupBy(entries, e => new Date(e.ts).toISOString().slice(0, 10))
-  const weekly = groupBy(entries, e => isoWeekLabel(e.ts))
-  const monthly = groupBy(entries, e => monthLabel(e.ts))
-
   return {
     today: sum(entries.filter(e => e.ts >= todayStart)),
     week: sum(entries.filter(e => e.ts >= weekStart)),
     month: sum(entries.filter(e => e.ts >= monthStart)),
     block,
-    daily,
-    weekly,
-    monthly,
+  }
+}
+
+export async function fetchTable(): Promise<TableData> {
+  const d = new Date()
+  const lookback = new Date(d.getFullYear(), d.getMonth() - 6, 1).getTime()
+  const entries = await loadEntries(lookback)
+
+  return {
+    daily: groupBy(entries, e => new Date(e.ts).toISOString().slice(0, 10)),
+    weekly: groupBy(entries, e => isoWeekLabel(e.ts)),
+    monthly: groupBy(entries, e => monthLabel(e.ts)),
   }
 }
