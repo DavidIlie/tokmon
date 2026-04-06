@@ -1,26 +1,30 @@
 # tokmon
 
-Terminal dashboard for Claude Code usage and costs. Refreshes every 2 seconds like `watch`.
+Terminal dashboard for Claude Code usage and costs. Tabbed interface with auto-refresh.
 
 Built with [Ink](https://github.com/vadimdemedes/ink), TypeScript.
 
 ```
-  ◉ tokmon  ·  refreshing every 2s
+  ◉ tokmon  ·  2s                                              01:17:09 AM
+
+   Dashboard   Daily    ←→ or 1-2
 
   ┃ Claude
   ┃
-  ┃ Today              $122.78     179.9M tokens
-  ┃ This Week          $356.47     535.4M tokens
-  ┃ This Month        $1293.71       2.1B tokens
+  ┃ Today              $166.10     252.7M tokens
+  ┃ This Week          $399.79     608.2M tokens
+  ┃ This Month        $1337.03       2.2B tokens
 
-  ┃ Active Block  35m remaining
+  ┃ Active Block  12m remaining
   ┃
-  ┃ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──── 88%
+  ┃ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━─ 96%
   ┃
-  ┃ $271.05 spent  ·  ~$306.63 proj  ·  $61.33/hr
+  ┃ $314.37 spent  ·  ~$328.01 proj  ·  $65.60/hr
 
   ──────────────────────────────────────────────────
-  Total $1293.71                         12:54:49 AM
+  Total $1337.03
+
+  by David Ilie (davidilie.com)
 ```
 
 ## Quick Start
@@ -43,15 +47,39 @@ npm install -g tokmon
 
 Then just run `tokmon`. Press `Ctrl+C` to exit.
 
-## What It Shows
+## Options
 
-- **Today / This Week / This Month** — cost and token totals from Claude Code JSONL logs
-- **Active Block** — current 5-hour window with burn rate, projected cost, and time remaining
-- Auto-refreshes every 2 seconds with mtime-based file caching
+```
+-i, --interval <seconds>  Refresh interval in seconds (default: 2)
+-h, --help                Show help
+```
+
+```bash
+tokmon -i 5    # refresh every 5 seconds
+```
+
+## Views
+
+Navigate between views with `←` `→` arrow keys, `Tab`, or number keys `1` `2`.
+
+| View | Description |
+|------|-------------|
+| **Dashboard** | Today / week / month cost summaries, active 5-hour block with burn rate |
+| **Daily** | Per-day breakdown table with model, token, and cost columns (scrollable with `↑` `↓`) |
 
 ## How It Works
 
 Reads Claude Code's JSONL session logs directly from `~/.claude/projects/`. Calculates costs using Claude model pricing (Opus, Sonnet, Haiku). Caches file reads by mtime so subsequent refreshes are near-instant.
+
+Cross-platform: supports macOS, Linux, and Windows (`%APPDATA%`, `XDG_CONFIG_HOME`, `CLAUDE_CONFIG_DIR`).
+
+## CI/CD
+
+Publishes to npm automatically via GitHub Actions when a version tag is pushed:
+
+```bash
+git tag v0.2.0 && git push --tags
+```
 
 ## Requirements
 

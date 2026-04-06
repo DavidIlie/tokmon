@@ -11,9 +11,21 @@ export interface BlockInfo {
   remaining: string
 }
 
-export interface UsageData {
+export interface DailyRow {
+  date: string
+  models: string[]
+  input: number
+  output: number
+  cacheCreate: number
+  cacheRead: number
+  total: number
+  cost: number
+}
+
+export interface AppData {
   today: UsageSummary
   week: UsageSummary
   month: UsageSummary
   block: BlockInfo | null
+  daily: DailyRow[]
 }

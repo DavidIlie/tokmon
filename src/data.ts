@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { minutes } from './format'
-import type { UsageData, UsageSummary } from './types'
+import type { AppData, UsageSummary, DailyRow } from './types'
 
 const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> = {
   'claude-opus-4': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
@@ -16,8 +16,12 @@ const FALLBACK = PRICING['claude-opus-4']
 
 interface Entry {
   ts: number
+  model: string
   cost: number
-  tokens: number
+  input: number
+  output: number
+  cacheCreate: number
+  cacheRead: number
 }
 
 const fileCache = new Map<string, { mtimeMs: number; data: Entry[] }>()
@@ -56,6 +60,15 @@ function costOf(model: string, u: Record<string, number>): number {
     + (u.cache_read_input_tokens ?? 0) * p.cr
 }
 
+function shortModel(model: string): string {
+  return model
+    .replace('claude-', '')
+    .replace('-20251001', '')
+    .replace('-20250514', '')
+    .replace('-20251101', '')
+    .replace('-20250805', '')
+}
+
 async function parseFile(path: string, since: number): Promise<Entry[]> {
   const entries: Entry[] = []
   const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity })
@@ -67,11 +80,15 @@ async function parseFile(path: string, since: number): Promise<Entry[]> {
       const ts = new Date(obj.timestamp ?? 0).getTime()
       if (ts < since) continue
       const u = obj.message.usage
+      const model = obj.message.model ?? 'unknown'
       entries.push({
         ts,
-        cost: costOf(obj.message.model ?? '', u),
-        tokens: (u.input_tokens ?? 0) + (u.output_tokens ?? 0)
-          + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0),
+        model,
+        cost: costOf(model, u),
+        input: u.input_tokens ?? 0,
+        output: u.output_tokens ?? 0,
+        cacheCreate: u.cache_creation_input_tokens ?? 0,
+        cacheRead: u.cache_read_input_tokens ?? 0,
       })
     } catch { /* skip malformed lines */ }
   }
@@ -118,11 +135,46 @@ async function loadEntries(since: number): Promise<Entry[]> {
 
 function sum(entries: Entry[]): UsageSummary {
   let cost = 0, tokens = 0
-  for (const e of entries) { cost += e.cost; tokens += e.tokens }
+  for (const e of entries) {
+    cost += e.cost
+    tokens += e.input + e.output + e.cacheCreate + e.cacheRead
+  }
   return { cost, tokens }
 }
 
-export async function fetchUsage(): Promise<UsageData> {
+function buildDaily(entries: Entry[]): DailyRow[] {
+  const byDate = new Map<string, Entry[]>()
+  for (const e of entries) {
+    const date = new Date(e.ts).toISOString().slice(0, 10)
+    const arr = byDate.get(date)
+    if (arr) arr.push(e)
+    else byDate.set(date, [e])
+  }
+
+  const rows: DailyRow[] = []
+  for (const [date, dayEntries] of byDate) {
+    const models = [...new Set(dayEntries.map(e => shortModel(e.model)))]
+    let input = 0, output = 0, cacheCreate = 0, cacheRead = 0, cost = 0
+    for (const e of dayEntries) {
+      input += e.input
+      output += e.output
+      cacheCreate += e.cacheCreate
+      cacheRead += e.cacheRead
+      cost += e.cost
+    }
+    rows.push({
+      date,
+      models: models.sort(),
+      input, output, cacheCreate, cacheRead,
+      total: input + output + cacheCreate + cacheRead,
+      cost,
+    })
+  }
+
+  return rows.sort((a, b) => a.date.localeCompare(b.date))
+}
+
+export async function fetchData(): Promise<AppData> {
   const now = Date.now()
   const d = new Date()
   const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime()
@@ -135,7 +187,7 @@ export async function fetchUsage(): Promise<UsageData> {
   const fiveHoursAgo = now - 5 * 3_600_000
   const blockEntries = entries.filter(e => e.ts >= fiveHoursAgo)
 
-  let block: UsageData['block'] = null
+  let block: AppData['block'] = null
   if (blockEntries.length > 0) {
     const spent = blockEntries.reduce((s, e) => s + e.cost, 0)
     const oldest = Math.min(...blockEntries.map(e => e.ts))
@@ -152,5 +204,6 @@ export async function fetchUsage(): Promise<UsageData> {
     week: sum(entries.filter(e => e.ts >= weekStart)),
     month: sum(entries),
     block,
+    daily: buildDaily(entries),
   }
 }
