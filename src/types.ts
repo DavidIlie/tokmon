@@ -11,8 +11,8 @@ export interface BlockInfo {
   remaining: string
 }
 
-export interface DailyRow {
-  date: string
+export interface TableRow {
+  label: string
   models: string[]
   input: number
   output: number
@@ -27,5 +27,7 @@ export interface AppData {
   week: UsageSummary
   month: UsageSummary
   block: BlockInfo | null
-  daily: DailyRow[]
+  daily: TableRow[]
+  weekly: TableRow[]
+  monthly: TableRow[]
 }

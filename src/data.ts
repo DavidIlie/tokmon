@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { minutes } from './format'
-import type { AppData, UsageSummary, DailyRow } from './types'
+import type { AppData, UsageSummary, TableRow } from './types'
 
 const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> = {
   'claude-opus-4': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
@@ -80,11 +80,10 @@ async function parseFile(path: string, since: number): Promise<Entry[]> {
       const ts = new Date(obj.timestamp ?? 0).getTime()
       if (ts < since) continue
       const u = obj.message.usage
-      const model = obj.message.model ?? 'unknown'
       entries.push({
         ts,
-        model,
-        cost: costOf(model, u),
+        model: obj.message.model ?? 'unknown',
+        cost: costOf(obj.message.model ?? '', u),
         input: u.input_tokens ?? 0,
         output: u.output_tokens ?? 0,
         cacheCreate: u.cache_creation_input_tokens ?? 0,
@@ -142,20 +141,20 @@ function sum(entries: Entry[]): UsageSummary {
   return { cost, tokens }
 }
 
-function buildDaily(entries: Entry[]): DailyRow[] {
-  const byDate = new Map<string, Entry[]>()
+function groupBy(entries: Entry[], keyFn: (e: Entry) => string): TableRow[] {
+  const groups = new Map<string, Entry[]>()
   for (const e of entries) {
-    const date = new Date(e.ts).toISOString().slice(0, 10)
-    const arr = byDate.get(date)
+    const key = keyFn(e)
+    const arr = groups.get(key)
     if (arr) arr.push(e)
-    else byDate.set(date, [e])
+    else groups.set(key, [e])
   }
 
-  const rows: DailyRow[] = []
-  for (const [date, dayEntries] of byDate) {
-    const models = [...new Set(dayEntries.map(e => shortModel(e.model)))]
+  const rows: TableRow[] = []
+  for (const [label, group] of groups) {
+    const models = [...new Set(group.map(e => shortModel(e.model)))]
     let input = 0, output = 0, cacheCreate = 0, cacheRead = 0, cost = 0
-    for (const e of dayEntries) {
+    for (const e of group) {
       input += e.input
       output += e.output
       cacheCreate += e.cacheCreate
@@ -163,26 +162,38 @@ function buildDaily(entries: Entry[]): DailyRow[] {
       cost += e.cost
     }
     rows.push({
-      date,
-      models: models.sort(),
+      label, models: models.sort(),
       input, output, cacheCreate, cacheRead,
-      total: input + output + cacheCreate + cacheRead,
-      cost,
+      total: input + output + cacheCreate + cacheRead, cost,
     })
   }
 
-  return rows.sort((a, b) => a.date.localeCompare(b.date))
+  return rows.sort((a, b) => a.label.localeCompare(b.label))
+}
+
+function isoWeekLabel(ts: number): string {
+  const d = new Date(ts)
+  const day = d.getDay()
+  const mondayOffset = day === 0 ? 6 : day - 1
+  const monday = new Date(d)
+  monday.setDate(d.getDate() - mondayOffset)
+  return monday.toISOString().slice(0, 10)
+}
+
+function monthLabel(ts: number): string {
+  return new Date(ts).toISOString().slice(0, 7)
 }
 
 export async function fetchData(): Promise<AppData> {
   const now = Date.now()
   const d = new Date()
+  const lookback = new Date(d.getFullYear(), d.getMonth() - 6, 1).getTime()
   const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime()
   const todayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
   const weekDay = d.getDay()
   const weekStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() - (weekDay === 0 ? 6 : weekDay - 1)).getTime()
 
-  const entries = await loadEntries(monthStart)
+  const entries = await loadEntries(lookback)
 
   const fiveHoursAgo = now - 5 * 3_600_000
   const blockEntries = entries.filter(e => e.ts >= fiveHoursAgo)
@@ -195,15 +206,20 @@ export async function fetchData(): Promise<AppData> {
     const burnRate = elapsedHrs > 0 ? spent / elapsedHrs : 0
     const remainMs = Math.max(0, oldest + 5 * 3_600_000 - now)
     const percent = Math.min(100, ((now - oldest) / (5 * 3_600_000)) * 100)
-
     block = { spent, projected: burnRate * 5, burnRate, percent, remaining: minutes(remainMs / 60_000) }
   }
+
+  const daily = groupBy(entries, e => new Date(e.ts).toISOString().slice(0, 10))
+  const weekly = groupBy(entries, e => isoWeekLabel(e.ts))
+  const monthly = groupBy(entries, e => monthLabel(e.ts))
 
   return {
     today: sum(entries.filter(e => e.ts >= todayStart)),
     week: sum(entries.filter(e => e.ts >= weekStart)),
-    month: sum(entries),
+    month: sum(entries.filter(e => e.ts >= monthStart)),
     block,
-    daily: buildDaily(entries),
+    daily,
+    weekly,
+    monthly,
   }
 }

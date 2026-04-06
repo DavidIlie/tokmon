@@ -1,63 +1,79 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { Box, Text, useInput, useStdout } from 'ink'
 import { fetchData } from './data'
 import { loadConfig, saveConfig, configLocation, type Config } from './config'
 import * as fmt from './format'
-import type { AppData, UsageSummary, BlockInfo, DailyRow } from './types'
+import type { AppData, UsageSummary, BlockInfo, TableRow } from './types'
 
-const TABS = ['Dashboard', 'Daily'] as const
+const TABS = ['Dashboard', 'Table'] as const
+const VIEWS = ['Daily', 'Weekly', 'Monthly'] as const
+type View = typeof VIEWS[number]
 
-export function App({ interval: initialInterval }: { interval?: number }) {
+export function App({ interval: cliInterval }: { interval?: number }) {
   const [data, setData] = useState<AppData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [updated, setUpdated] = useState(new Date())
   const [tab, setTab] = useState(0)
+  const [view, setView] = useState<number>(0)
   const [scroll, setScroll] = useState(0)
   const [showSettings, setShowSettings] = useState(false)
-  const [config, setConfig] = useState<Config>({ interval: (initialInterval ?? 2000) / 1000 })
+  const [config, setConfig] = useState<Config | null>(null)
   const [settingsCursor, setSettingsCursor] = useState(0)
   const { stdout } = useStdout()
   const rows = stdout?.rows ?? 24
-  const interval = config.interval * 1000
+  const cols = stdout?.columns ?? 80
+  const interval = cliInterval ?? (config?.interval ?? 2) * 1000
 
   useEffect(() => {
     loadConfig().then(c => {
-      if (!initialInterval) setConfig(c)
-      else setConfig({ ...c, interval: initialInterval / 1000 })
+      if (cliInterval) c = { ...c, interval: cliInterval / 1000 }
+      setConfig(c)
+      if (c.clearScreen && stdout) stdout.write('\x1B[2J\x1B[H')
     })
   }, [])
 
   const isTTY = process.stdin.isTTY === true
+  const settingsItems = 2
+  const cfg = config ?? { interval: 2, clearScreen: true }
 
   useInput((input, key) => {
     if (showSettings) {
       if (key.escape || input === 's') setShowSettings(false)
       if (key.upArrow) setSettingsCursor(c => Math.max(0, c - 1))
-      if (key.downArrow) setSettingsCursor(c => Math.min(0, c + 1))
-      if (key.leftArrow && settingsCursor === 0) {
-        setConfig(c => {
-          const next = { ...c, interval: Math.max(1, c.interval - 1) }
-          saveConfig(next)
-          return next
-        })
+      if (key.downArrow) setSettingsCursor(c => Math.min(settingsItems - 1, c + 1))
+      if (settingsCursor === 0) {
+        if (key.leftArrow) {
+          setConfig(c => { const next = { ...c!, interval: Math.max(1, c!.interval - 1) }; saveConfig(next); return next })
+        }
+        if (key.rightArrow) {
+          setConfig(c => { const next = { ...c!, interval: c!.interval + 1 }; saveConfig(next); return next })
+        }
       }
-      if (key.rightArrow && settingsCursor === 0) {
-        setConfig(c => {
-          const next = { ...c, interval: c.interval + 1 }
-          saveConfig(next)
-          return next
-        })
+      if (settingsCursor === 1 && (key.leftArrow || key.rightArrow || key.return)) {
+        setConfig(c => { const next = { ...c!, clearScreen: !c!.clearScreen }; saveConfig(next); return next })
       }
       return
     }
 
     if (input === 's') { setShowSettings(true); return }
-    if (key.tab || key.rightArrow) { setTab(t => (t + 1) % TABS.length); setScroll(0) }
-    if (key.leftArrow) { setTab(t => (t - 1 + TABS.length) % TABS.length); setScroll(0) }
+    if (key.tab) { setTab(t => (t + 1) % TABS.length); setScroll(0); return }
+    if (input === '1') { setTab(0); setScroll(0); return }
+    if (input === '2') { setTab(1); setScroll(0); return }
+
+    if (tab === 1) {
+      if (input === 'd') { setView(0); setScroll(0); return }
+      if (input === 'w') { setView(1); setScroll(0); return }
+      if (input === 'm') { setView(2); setScroll(0); return }
+      if (key.leftArrow) { setView(v => (v - 1 + VIEWS.length) % VIEWS.length); setScroll(0); return }
+      if (key.rightArrow) { setView(v => (v + 1) % VIEWS.length); setScroll(0); return }
+    } else {
+      if (key.leftArrow || key.rightArrow) { setTab(t => (t + 1) % TABS.length); setScroll(0); return }
+    }
+
     if (key.upArrow) setScroll(s => Math.max(0, s - 1))
     if (key.downArrow) setScroll(s => s + 1)
-    if (input === '1') { setTab(0); setScroll(0) }
-    if (input === '2') { setTab(1); setScroll(0) }
+    if (key.pageDown) setScroll(s => s + Math.max(1, rows - 12))
+    if (key.pageUp) setScroll(s => Math.max(0, s - Math.max(1, rows - 12)))
   }, { isActive: isTTY })
 
   useEffect(() => {
@@ -78,27 +94,35 @@ export function App({ interval: initialInterval }: { interval?: number }) {
   if (error) return <Box padding={1}><Text color="red">{error}</Text></Box>
   if (!data) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
 
+  const tableData = [data.daily, data.weekly, data.monthly][view]
+
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Box>
           <Text bold color="greenBright">{'◉'} tokmon</Text>
-          <Text dimColor>  ·  {config.interval}s</Text>
+          <Text dimColor>  ·  {cliInterval ? cliInterval / 1000 : cfg.interval}s</Text>
         </Box>
         <Text dimColor>{fmt.time(updated)}</Text>
       </Box>
 
       {showSettings ? (
-        <SettingsView config={config} cursor={settingsCursor} />
+        <SettingsView config={cfg} cursor={settingsCursor} />
       ) : (
         <>
           <Box marginTop={1}>
             <TabBar tabs={TABS} active={tab} />
-            <Text dimColor>  Tab/←→  s=settings</Text>
+            <Text dimColor>  Tab  s=settings</Text>
           </Box>
           <Box height={1} />
-          {TABS[tab] === 'Dashboard' && <DashboardView data={data} />}
-          {TABS[tab] === 'Daily' && <DailyView daily={data.daily} scroll={scroll} maxRows={rows - 10} />}
+          {tab === 0 && <DashboardView data={data} />}
+          {tab === 1 && (
+            <>
+              <ViewBar views={VIEWS} active={view} />
+              <Box height={1} />
+              <TableView rows={tableData} scroll={scroll} maxRows={rows - 12} wide={cols > 90} />
+            </>
+          )}
         </>
       )}
 
@@ -128,22 +152,42 @@ function TabBar({ tabs, active }: { tabs: readonly string[]; active: number }) {
   )
 }
 
+function ViewBar({ views, active }: { views: readonly string[]; active: number }) {
+  return (
+    <Box>
+      {views.map((v, i) => (
+        <Box key={v} marginRight={2}>
+          {i === active
+            ? <Text bold color="cyan">[{v}]</Text>
+            : <Text dimColor>{v}</Text>
+          }
+        </Box>
+      ))}
+      <Text dimColor>  d/w/m or ←→</Text>
+    </Box>
+  )
+}
+
 function SettingsView({ config, cursor }: { config: Config; cursor: number }) {
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text bold>Settings</Text>
-      <Text dimColor>Saved to {configLocation()}</Text>
+      <Text dimColor>{configLocation()}</Text>
       <Box height={1} />
       <Box>
-        {cursor === 0 ? <Text color="green">{'▸'} </Text> : <Text>  </Text>}
+        <Text color={cursor === 0 ? 'green' : undefined}>{cursor === 0 ? '▸' : ' '} </Text>
         <Text>Refresh interval  </Text>
         <Text dimColor>{'◂'} </Text>
         <Text bold color="yellow">{config.interval}s</Text>
         <Text dimColor> {'▸'}</Text>
-        <Text dimColor>  (←→ to adjust)</Text>
+      </Box>
+      <Box>
+        <Text color={cursor === 1 ? 'green' : undefined}>{cursor === 1 ? '▸' : ' '} </Text>
+        <Text>Clear screen      </Text>
+        <Text bold color={config.clearScreen ? 'green' : 'red'}>{config.clearScreen ? 'on' : 'off'}</Text>
       </Box>
       <Box height={1} />
-      <Text dimColor>Press s or Esc to close</Text>
+      <Text dimColor>↑↓ select  ←→ adjust  s/Esc close</Text>
     </Box>
   )
 }
@@ -176,11 +220,9 @@ function DashboardView({ data }: { data: AppData }) {
 
       <Box height={1} />
       <Text dimColor>{'─'.repeat(50)}</Text>
-      <Box justifyContent="space-between" width={50}>
-        <Box>
-          <Text dimColor>Total </Text>
-          <Text bold color="yellowBright">{fmt.currency(data.month.cost)}</Text>
-        </Box>
+      <Box width={50}>
+        <Text dimColor>Total </Text>
+        <Text bold color="yellowBright">{fmt.currency(data.month.cost)}</Text>
       </Box>
     </>
   )
@@ -239,12 +281,15 @@ function ProgressBar({ percent, width = 36 }: { percent: number; width?: number 
   )
 }
 
-function DailyView({ daily, scroll, maxRows }: { daily: DailyRow[]; scroll: number; maxRows: number }) {
-  const W = { date: 7, models: 16, input: 8, output: 8, cc: 8, cr: 8, cost: 10 }
-  const lineW = W.date + W.models + W.input + W.output + W.cc + W.cr + W.cost
+function TableView({ rows: allRows, scroll, maxRows, wide }: { rows: TableRow[]; scroll: number; maxRows: number; wide: boolean }) {
+  const W = wide
+    ? { label: 10, models: 18, input: 8, output: 8, cc: 8, cr: 9, total: 9, cost: 10 }
+    : { label: 8, models: 14, input: 7, output: 7, cc: 7, cr: 8, total: 0, cost: 9 }
+
+  const lineW = W.label + W.models + W.input + W.output + W.cc + W.cr + W.total + W.cost
 
   const totals = { input: 0, output: 0, cacheCreate: 0, cacheRead: 0, cost: 0 }
-  for (const r of daily) {
+  for (const r of allRows) {
     totals.input += r.input
     totals.output += r.output
     totals.cacheCreate += r.cacheCreate
@@ -252,30 +297,33 @@ function DailyView({ daily, scroll, maxRows }: { daily: DailyRow[]; scroll: numb
     totals.cost += r.cost
   }
 
-  const visible = daily.slice(scroll, scroll + maxRows)
-  const more = daily.length - scroll - maxRows
+  const clampedScroll = Math.min(scroll, Math.max(0, allRows.length - maxRows))
+  const visible = allRows.slice(clampedScroll, clampedScroll + maxRows)
+  const more = allRows.length - clampedScroll - maxRows
 
   return (
     <Box flexDirection="column">
       <Text>
-        <Text bold>{fmt.col('Date', W.date, 'left')}</Text>
+        <Text bold>{fmt.col('Date', W.label, 'left')}</Text>
         <Text bold>{fmt.col('Models', W.models, 'left')}</Text>
         <Text bold>{fmt.col('Input', W.input)}</Text>
         <Text bold>{fmt.col('Output', W.output)}</Text>
         <Text bold>{fmt.col('CchCrt', W.cc)}</Text>
         <Text bold>{fmt.col('CchRd', W.cr)}</Text>
+        {W.total > 0 && <Text bold>{fmt.col('Total', W.total)}</Text>}
         <Text bold>{fmt.col('Cost', W.cost)}</Text>
       </Text>
       <Text dimColor>{'─'.repeat(lineW)}</Text>
 
       {visible.map(r => (
-        <Text key={r.date}>
-          <Text color="cyan">{fmt.col(fmt.shortDate(r.date), W.date, 'left')}</Text>
+        <Text key={r.label}>
+          <Text color="cyan">{fmt.col(fmtLabel(r.label), W.label, 'left')}</Text>
           <Text dimColor>{fmt.col(r.models.join(', '), W.models, 'left')}</Text>
           <Text>{fmt.col(fmt.tokens(r.input), W.input)}</Text>
           <Text>{fmt.col(fmt.tokens(r.output), W.output)}</Text>
           <Text>{fmt.col(fmt.tokens(r.cacheCreate), W.cc)}</Text>
           <Text>{fmt.col(fmt.tokens(r.cacheRead), W.cr)}</Text>
+          {W.total > 0 && <Text>{fmt.col(fmt.tokens(r.total), W.total)}</Text>}
           <Text bold color="yellow">{fmt.col(fmt.currency(r.cost), W.cost)}</Text>
         </Text>
       ))}
@@ -284,18 +332,29 @@ function DailyView({ daily, scroll, maxRows }: { daily: DailyRow[]; scroll: numb
 
       <Text dimColor>{'─'.repeat(lineW)}</Text>
       <Text>
-        <Text bold color="greenBright">{fmt.col('Total', W.date, 'left')}</Text>
+        <Text bold color="greenBright">{fmt.col('Total', W.label, 'left')}</Text>
         <Text>{fmt.col('', W.models, 'left')}</Text>
         <Text bold color="yellow">{fmt.col(fmt.tokens(totals.input), W.input)}</Text>
         <Text bold color="yellow">{fmt.col(fmt.tokens(totals.output), W.output)}</Text>
         <Text bold color="yellow">{fmt.col(fmt.tokens(totals.cacheCreate), W.cc)}</Text>
         <Text bold color="yellow">{fmt.col(fmt.tokens(totals.cacheRead), W.cr)}</Text>
+        {W.total > 0 && <Text bold color="yellow">{fmt.col(fmt.tokens(totals.input + totals.output + totals.cacheCreate + totals.cacheRead), W.total)}</Text>}
         <Text bold color="yellowBright">{fmt.col(fmt.currency(totals.cost), W.cost)}</Text>
       </Text>
 
       <Box marginTop={1}>
-        <Text dimColor>↑↓ scroll  ·  {daily.length} days  ·  {scroll + 1}-{Math.min(scroll + maxRows, daily.length)}</Text>
+        <Text dimColor>↑↓ PgUp/Dn scroll  ·  {allRows.length} rows  ·  {clampedScroll + 1}-{Math.min(clampedScroll + maxRows, allRows.length)}</Text>
       </Box>
     </Box>
   )
+}
+
+function fmtLabel(label: string): string {
+  if (label.length === 10 && label[4] === '-') return fmt.shortDate(label)
+  if (label.length === 7 && label[4] === '-') {
+    const [, m] = label.split('-')
+    const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    return `${months[Number(m)]} '${label.slice(2, 4)}`
+  }
+  return fmt.shortDate(label)
 }
