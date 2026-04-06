@@ -33,9 +33,6 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     })
   }, [])
 
-  useEffect(() => {
-    if (stdout) stdout.write('\x1B[2J\x1B[H')
-  }, [tab, view, showSettings])
 
   useEffect(() => {
     let active = true
@@ -127,7 +124,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const tableData = table ? [table.daily, table.weekly, table.monthly][view] : []
 
   return (
-    <Box flexDirection="column" paddingX={2} paddingY={1}>
+    <Box flexDirection="column" paddingX={2} paddingY={1} minHeight={rows}>
       <Box justifyContent="space-between">
         <Box>
           <Text bold color="greenBright">{'◉'} tokmon</Text>

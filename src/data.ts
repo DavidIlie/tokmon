@@ -184,6 +184,24 @@ function monthLabel(ts: number): string {
   return new Date(ts).toISOString().slice(0, 7)
 }
 
+function findBlockStart(entries: Entry[], now: number): number {
+  const recent = entries.filter(e => e.ts <= now).sort((a, b) => a.ts - b.ts)
+  if (recent.length === 0) return 0
+
+  const GAP = 30 * 60_000
+  let blockStart = recent[0].ts
+
+  for (let i = 1; i < recent.length; i++) {
+    if (recent[i].ts - recent[i - 1].ts > GAP) {
+      blockStart = recent[i].ts
+    }
+  }
+
+  if (now - blockStart > 5 * 3_600_000) return 0
+
+  return blockStart
+}
+
 export interface DashboardData {
   today: UsageSummary
   week: UsageSummary
@@ -207,18 +225,20 @@ export async function fetchDashboard(): Promise<DashboardData> {
 
   const entries = await loadEntries(monthStart)
 
-  const fiveHoursAgo = now - 5 * 3_600_000
-  const blockEntries = entries.filter(e => e.ts >= fiveHoursAgo)
-
   let block: AppData['block'] = null
-  if (blockEntries.length > 0) {
-    const spent = blockEntries.reduce((s, e) => s + e.cost, 0)
-    const oldest = Math.min(...blockEntries.map(e => e.ts))
-    const elapsedHrs = (now - oldest) / 3_600_000
-    const burnRate = elapsedHrs > 0 ? spent / elapsedHrs : 0
-    const remainMs = Math.max(0, oldest + 5 * 3_600_000 - now)
-    const percent = Math.min(100, ((now - oldest) / (5 * 3_600_000)) * 100)
-    block = { spent, projected: burnRate * 5, burnRate, percent, remaining: minutes(remainMs / 60_000) }
+  const blockStart = findBlockStart(entries, now)
+  if (blockStart > 0) {
+    const blockEnd = blockStart + 5 * 3_600_000
+    const blockEntries = entries.filter(e => e.ts >= blockStart && e.ts < blockEnd)
+    if (blockEntries.length > 0) {
+      const spent = blockEntries.reduce((s, e) => s + e.cost, 0)
+      const elapsedMs = now - blockStart
+      const elapsedHrs = elapsedMs / 3_600_000
+      const burnRate = elapsedHrs > 0 ? spent / elapsedHrs : 0
+      const remainMs = Math.max(0, blockEnd - now)
+      const percent = Math.min(100, (elapsedMs / (5 * 3_600_000)) * 100)
+      block = { spent, projected: burnRate * 5, burnRate, percent, remaining: minutes(remainMs / 60_000) }
+    }
   }
 
   return {
