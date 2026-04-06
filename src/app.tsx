@@ -34,6 +34,10 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   }, [])
 
   useEffect(() => {
+    if (stdout) stdout.write('\x1B[2J\x1B[H')
+  }, [tab, view, showSettings])
+
+  useEffect(() => {
     let active = true
     const load = async () => {
       try {
