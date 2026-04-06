@@ -23,19 +23,25 @@ Built with [Ink](https://github.com/vadimdemedes/ink), TypeScript.
   Total $1293.71                         12:54:49 AM
 ```
 
-## Install
+## Quick Start
+
+```bash
+npx tokmon
+```
+
+Or with pnpm:
+
+```bash
+pnpm dlx tokmon
+```
+
+### Global Install
 
 ```bash
 npm install -g tokmon
 ```
 
-## Usage
-
-```bash
-tokmon
-```
-
-Press `Ctrl+C` to exit.
+Then just run `tokmon`. Press `Ctrl+C` to exit.
 
 ## What It Shows
 
