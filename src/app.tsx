@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Box, Text, useInput, useStdout } from 'ink'
+import { Box, Text, useInput, useStdout, useApp } from 'ink'
 import { fetchDashboard, fetchTable, type DashboardData, type TableData } from './data'
 import { loadConfig, saveConfig, configLocation, type Config } from './config'
 import * as fmt from './format'
@@ -72,6 +72,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     return () => { active = false; clearInterval(id) }
   }, [tab, interval])
 
+  const { exit } = useApp()
   const isTTY = process.stdin.isTTY === true
   const settingsItems = 2
   const cfg = config ?? { interval: 2, clearScreen: true }
@@ -95,6 +96,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
       return
     }
 
+    if (input === 'q') { exit(); return }
     if (input === 's') { setShowSettings(true); return }
     if (key.tab) { setTab(t => (t + 1) % TABS.length); setScroll(0); return }
     if (input === '1') { setTab(0); setScroll(0); return }
@@ -137,7 +139,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
         <>
           <Box marginTop={1}>
             <TabBar tabs={TABS} active={tab} />
-            <Text dimColor>  Tab  s=settings</Text>
+            <Text dimColor>  Tab/←→</Text>
           </Box>
           <Box height={1} />
           {tab === 0 && <DashboardView data={dashboard} />}
@@ -159,7 +161,8 @@ export function App({ interval: cliInterval }: { interval?: number }) {
         <Text>David Ilie</Text>
         <Text dimColor> (</Text>
         <Text color="cyan">davidilie.com</Text>
-        <Text dimColor>)</Text>
+        <Text dimColor>)  ·  </Text>
+        <Text dimColor>s=settings  q=quit</Text>
       </Box>
     </Box>
   )
