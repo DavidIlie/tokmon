@@ -30,7 +30,6 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     loadConfig().then(c => {
       if (cliInterval) c = { ...c, interval: cliInterval / 1000 }
       setConfig(c)
-      if (c.clearScreen && stdout) stdout.write('\x1B[2J\x1B[H')
     })
   }, [])
 

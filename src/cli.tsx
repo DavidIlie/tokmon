@@ -1,4 +1,5 @@
 import { render } from 'ink'
+import { loadConfig } from './config'
 import { App } from './app'
 
 const args = process.argv.slice(2)
@@ -20,9 +21,14 @@ for (let i = 0; i < args.length; i++) {
     console.log('  ↑↓          Scroll table')
     console.log('  1-2         Jump to view')
     console.log('  s           Settings')
-    console.log('  Ctrl+C      Quit')
+    console.log('  q           Quit')
     process.exit(0)
   }
+}
+
+const config = await loadConfig()
+if (config.clearScreen && process.stdout.isTTY) {
+  process.stdout.write('\x1B[2J\x1B[H')
 }
 
 const { waitUntilExit } = render(<App interval={interval} />)
