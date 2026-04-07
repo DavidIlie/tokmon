@@ -9,10 +9,6 @@ export function tokens(value: number): string {
   return String(value)
 }
 
-export function num(value: number): string {
-  return value.toLocaleString()
-}
-
 export function time(date: Date): string {
   return date.toLocaleTimeString(undefined, {
     hour: '2-digit',
@@ -21,16 +17,11 @@ export function time(date: Date): string {
   })
 }
 
-export function minutes(mins: number): string {
-  const h = Math.floor(mins / 60)
-  const m = Math.round(mins % 60)
-  return h > 0 ? `${h}h ${m}m` : `${m}m`
-}
+const SHORT_MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 export function shortDate(iso: string): string {
   const [, m, d] = iso.split('-')
-  const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-  return `${months[Number(m)]} ${Number(d).toString().padStart(2, ' ')}`
+  return `${SHORT_MONTHS[Number(m)]} ${Number(d).toString().padStart(2, ' ')}`
 }
 
 export function col(s: string, w: number, align: 'left' | 'right' = 'right'): string {

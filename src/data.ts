@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import type { AppData, UsageSummary, TableRow, ModelDetail } from './types'
+import type { UsageSummary, TableRow, ModelDetail } from './types'
 
 const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> = {
   'claude-opus-4': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
@@ -44,14 +44,21 @@ function getClaudeDirs(): string[] {
   return dirs
 }
 
-function priceFor(model: string) {
+function priceFor(model: string): { i: number; o: number; cc: number; cr: number } {
   for (const [prefix, p] of Object.entries(PRICING)) {
     if (model.startsWith(prefix)) return p
   }
   return FALLBACK
 }
 
-function costOf(model: string, u: Record<string, number>): number {
+interface UsageTokens {
+  input_tokens?: number
+  output_tokens?: number
+  cache_creation_input_tokens?: number
+  cache_read_input_tokens?: number
+}
+
+function costOf(model: string, u: UsageTokens): number {
   const p = priceFor(model)
   return (u.input_tokens ?? 0) * p.i
     + (u.output_tokens ?? 0) * p.o
@@ -60,12 +67,7 @@ function costOf(model: string, u: Record<string, number>): number {
 }
 
 function shortModel(model: string): string {
-  return model
-    .replace('claude-', '')
-    .replace('-20251001', '')
-    .replace('-20250514', '')
-    .replace('-20251101', '')
-    .replace('-20250805', '')
+  return model.replace('claude-', '').replace(/-\d{8}$/, '')
 }
 
 async function parseFile(path: string, since: number): Promise<Entry[]> {
@@ -94,7 +96,7 @@ async function parseFile(path: string, since: number): Promise<Entry[]> {
 }
 
 async function loadEntries(since: number): Promise<Entry[]> {
-  const all: Entry[] = []
+  const chunks: Entry[][] = []
   const seen = new Set<string>()
 
   for (const dir of getClaudeDirs()) {
@@ -117,18 +119,18 @@ async function loadEntries(since: number): Promise<Entry[]> {
 
         const cached = fileCache.get(path)
         if (cached && cached.mtimeMs === s.mtimeMs) {
-          all.push(...cached.data)
+          chunks.push(cached.data)
           return
         }
 
         const data = await parseFile(path, since)
         fileCache.set(path, { mtimeMs: s.mtimeMs, data })
-        all.push(...data)
-      } catch { /* skip inaccessible files */ }
+        chunks.push(data)
+      } catch {}
     }))
   }
 
-  return all
+  return chunks.flat()
 }
 
 function sum(entries: Entry[]): UsageSummary {
@@ -151,28 +153,32 @@ function groupBy(entries: Entry[], keyFn: (e: Entry) => string): TableRow[] {
 
   const rows: TableRow[] = []
   for (const [label, group] of groups) {
-    const models = [...new Set(group.map(e => shortModel(e.model)))]
     let input = 0, output = 0, cacheCreate = 0, cacheRead = 0, cost = 0
+    const byModel = new Map<string, ModelDetail>()
+
     for (const e of group) {
       input += e.input
       output += e.output
       cacheCreate += e.cacheCreate
       cacheRead += e.cacheRead
       cost += e.cost
-    }
 
-    const byModel = new Map<string, ModelDetail>()
-    for (const e of group) {
       const name = shortModel(e.model)
-      const m = byModel.get(name) ?? { name, input: 0, output: 0, cacheCreate: 0, cacheRead: 0, cost: 0 }
-      m.input += e.input; m.output += e.output
-      m.cacheCreate += e.cacheCreate; m.cacheRead += e.cacheRead
-      m.cost += e.cost
-      byModel.set(name, m)
+      const m = byModel.get(name)
+      if (m) {
+        m.input += e.input; m.output += e.output
+        m.cacheCreate += e.cacheCreate; m.cacheRead += e.cacheRead
+        m.cost += e.cost
+      } else {
+        byModel.set(name, {
+          name, input: e.input, output: e.output,
+          cacheCreate: e.cacheCreate, cacheRead: e.cacheRead, cost: e.cost,
+        })
+      }
     }
 
     rows.push({
-      label, models: models.sort(),
+      label, models: [...byModel.keys()].sort(),
       input, output, cacheCreate, cacheRead,
       total: input + output + cacheCreate + cacheRead, cost,
       breakdown: [...byModel.values()].sort((a, b) => b.cost - a.cost),
@@ -221,9 +227,14 @@ export async function fetchDashboard(): Promise<DashboardData> {
 
   let burnRate = 0
   if (todayEntries.length > 0) {
-    const oldest = Math.min(...todayEntries.map(e => e.ts))
+    let oldest = todayEntries[0].ts
+    let totalCost = 0
+    for (const e of todayEntries) {
+      if (e.ts < oldest) oldest = e.ts
+      totalCost += e.cost
+    }
     const hrs = (now - oldest) / 3_600_000
-    if (hrs > 0) burnRate = todayEntries.reduce((s, e) => s + e.cost, 0) / hrs
+    if (hrs > 0) burnRate = totalCost / hrs
   }
 
   return {

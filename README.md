@@ -35,57 +35,86 @@ Then just run `tokmon`. Press `q` to quit.
 
 ## Keybindings
 
+### Global
+
 | Key | Action |
 |-----|--------|
-| `Tab` / `←→` | Switch between Dashboard and Table |
-| `1` `2` | Jump to view |
-| `d` `w` `m` | Daily / Weekly / Monthly (in Table view) |
-| `↑` `↓` | Scroll table |
-| `PgUp` `PgDn` | Scroll table fast |
-| `s` | Settings |
+| `Tab` | Cycle between Dashboard and Table |
+| `1` `2` | Jump to Dashboard / Table |
+| `s` | Open settings |
 | `q` | Quit |
+
+### Table View
+
+| Key | Action |
+|-----|--------|
+| `d` `w` `m` | Switch to Daily / Weekly / Monthly |
+| `←` `→` | Cycle sub-view |
+| `↑` `↓` | Move cursor / navigate rows |
+| `Enter` | Expand row — per-model cost breakdown |
+| `Esc` | Collapse expanded row |
+| `o` | Cycle sort: date ↑, date ↓, cost ↑, cost ↓ |
+| `g` | Jump to top |
+| `G` | Jump to bottom |
+| `PgUp` `PgDn` | Page scroll |
+
+### Settings
+
+| Key | Action |
+|-----|--------|
+| `↑` `↓` | Select option |
+| `←` `→` | Adjust value |
+| `s` / `Esc` | Close |
 
 ## Views
 
-| View | Description |
-|------|-------------|
-| **Dashboard** | Today / week / month cost summaries, burn rate ($/hr), real-time rate limits with reset countdowns |
-| **Table → Daily** | Per-day breakdown with models, tokens, and costs (6 months of history) |
-| **Table → Weekly** | Grouped by ISO week |
-| **Table → Monthly** | Grouped by month |
+### Dashboard
 
-## Rate Limits
+- **Today / This Week / This Month** — cost and token summaries
+- **Burn rate** — current $/hr
+- **Rate Limits** — real-time session (5h), weekly (7d), and Sonnet utilization with reset countdowns, fetched from Anthropic's OAuth API
 
-Fetches real billing data from Anthropic's OAuth API (reads your token from macOS Keychain automatically). Shows:
+### Table
 
-- **Session** — 5-hour utilization with reset countdown
-- **Weekly** — 7-day utilization with reset countdown
-- **Sonnet** — Sonnet-specific limits (if applicable)
-- **Extra usage** — spend vs monthly limit
+Interactive table with 3 sub-views:
 
-Polls every 2 minutes to stay within API rate limits.
+- **Daily** — per-day breakdown (6 months of history)
+- **Weekly** — grouped by ISO week
+- **Monthly** — grouped by month
+
+Each row shows models used, input/output/cache tokens, and cost. Press `Enter` on any row to expand a per-model breakdown:
+
+```
+▸ Apr  7  haiku-4-5, op~  7.6K 487.0K  10.1M    1.1B  $603.89
+          ├─ opus-4-6          7.5K    485.0K    10.0M      1.1B  $601.50
+          └─ haiku-4-5          100     2.0K     100K      5.0M    $2.39
+```
+
+Sort by date or cost with `o`.
 
 ## Settings
 
-Press `s` to open settings. Persisted to `~/.config/tokmon/config.json` (macOS/Linux) or `%APPDATA%\tokmon\config.json` (Windows).
+Press `s` to open. Persisted to `~/.config/tokmon/config.json` (macOS/Linux) or `%APPDATA%\tokmon\config.json` (Windows).
 
-- **Refresh interval** — adjust with `←→`
-- **Clear screen** — on/off toggle
+- **Refresh interval** — adjust with `←` `→`
+- **Clear screen** — clears terminal on launch (like `watch`)
 
 ## How It Works
 
-Reads Claude Code's JSONL session logs directly from `~/.claude/projects/`. Calculates costs using Claude model pricing (Opus, Sonnet, Haiku). Caches file reads by mtime so refreshes are near-instant.
+- Reads Claude Code's JSONL session logs from `~/.claude/projects/`
+- Calculates costs using Claude model pricing (Opus, Sonnet, Haiku)
+- Caches file reads by mtime — subsequent refreshes are near-instant
+- Dashboard loads current month only (fast). Table loads 6 months lazily.
+- Rate limits fetched from Anthropic OAuth API every 2 minutes (token from macOS Keychain)
 
-Dashboard loads current month only (fast). Table loads 6 months lazily on first switch.
-
-Cross-platform: supports macOS, Linux, and Windows (`%APPDATA%`, `XDG_CONFIG_HOME`, `CLAUDE_CONFIG_DIR`).
+Cross-platform: macOS, Linux, Windows.
 
 ## CI/CD
 
-Publishes to npm via GitHub Actions on version tags:
+Publishes to npm and GitHub Packages via GitHub Actions on version tags:
 
 ```bash
-git tag v0.5.0 && git push --tags
+git tag v0.7.0 && git push --tags
 ```
 
 ## Requirements

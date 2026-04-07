@@ -1,13 +1,18 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Box, Text, useInput, useStdout, useApp } from 'ink'
 import { fetchDashboard, fetchTable, type DashboardData, type TableData } from './data'
 import { fetchBilling, type BillingData } from './billing'
 import { loadConfig, saveConfig, configLocation, type Config } from './config'
 import * as fmt from './format'
-import type { UsageSummary, TableRow, ModelDetail } from './types'
+import type { UsageSummary, TableRow } from './types'
 
 const TABS = ['Dashboard', 'Table'] as const
 const VIEWS = ['Daily', 'Weekly', 'Monthly'] as const
+const SORTS = ['date ↑', 'date ↓', 'cost ↑', 'cost ↓'] as const
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const DEFAULT_CONFIG: Config = { interval: 2, clearScreen: true }
+const IS_TTY = process.stdin.isTTY === true
 
 export function App({ interval: cliInterval }: { interval?: number }) {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
@@ -20,6 +25,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const [view, setView] = useState(0)
   const [cursor, setCursor] = useState(0)
   const [expanded, setExpanded] = useState(-1)
+  const [sort, setSort] = useState(0)
   const [showSettings, setShowSettings] = useState(false)
   const [config, setConfig] = useState<Config | null>(null)
   const [settingsCursor, setSettingsCursor] = useState(0)
@@ -29,7 +35,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const rows = stdout?.rows ?? 24
   const cols = stdout?.columns ?? 80
   const interval = cliInterval ?? (config?.interval ?? 2) * 1000
-  const cfg = config ?? { interval: 2, clearScreen: true }
+  const cfg = config ?? DEFAULT_CONFIG
 
   useEffect(() => {
     loadConfig().then(c => {
@@ -84,7 +90,10 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     return () => { active = false; clearInterval(id) }
   }, [tab, interval])
 
-  const isTTY = process.stdin.isTTY === true
+  const resetView = useCallback(() => {
+    setCursor(0)
+    setExpanded(-1)
+  }, [])
 
   useInput((input, key) => {
     if (showSettings) {
@@ -92,43 +101,53 @@ export function App({ interval: cliInterval }: { interval?: number }) {
       if (key.upArrow) setSettingsCursor(c => Math.max(0, c - 1))
       if (key.downArrow) setSettingsCursor(c => Math.min(1, c + 1))
       if (settingsCursor === 0) {
-        if (key.leftArrow) setConfig(c => { const n = { ...c!, interval: Math.max(1, c!.interval - 1) }; saveConfig(n); return n })
-        if (key.rightArrow) setConfig(c => { const n = { ...c!, interval: c!.interval + 1 }; saveConfig(n); return n })
+        if (key.leftArrow) updateConfig(c => ({ ...c, interval: Math.max(1, c.interval - 1) }))
+        if (key.rightArrow) updateConfig(c => ({ ...c, interval: c.interval + 1 }))
       }
       if (settingsCursor === 1 && (key.leftArrow || key.rightArrow || key.return)) {
-        setConfig(c => { const n = { ...c!, clearScreen: !c!.clearScreen }; saveConfig(n); return n })
+        updateConfig(c => ({ ...c, clearScreen: !c.clearScreen }))
       }
       return
     }
 
     if (input === 'q') { exit(); return }
     if (input === 's') { setShowSettings(true); return }
-    if (key.tab) { setTab(t => (t + 1) % TABS.length); setCursor(0); setExpanded(-1); return }
-    if (input === '1') { setTab(0); setCursor(0); setExpanded(-1); return }
-    if (input === '2') { setTab(1); setCursor(0); setExpanded(-1); return }
+    if (key.tab) { setTab(t => (t + 1) % TABS.length); resetView(); return }
+    if (input === '1') { setTab(0); resetView(); return }
+    if (input === '2') { setTab(1); resetView(); return }
 
     if (tab === 1) {
-      if (input === 'd') { setView(0); setCursor(0); setExpanded(-1); return }
-      if (input === 'w') { setView(1); setCursor(0); setExpanded(-1); return }
-      if (input === 'm') { setView(2); setCursor(0); setExpanded(-1); return }
-      if (key.leftArrow) { setView(v => (v - 1 + VIEWS.length) % VIEWS.length); setCursor(0); setExpanded(-1); return }
-      if (key.rightArrow) { setView(v => (v + 1) % VIEWS.length); setCursor(0); setExpanded(-1); return }
+      if (input === 'd') { setView(0); resetView(); return }
+      if (input === 'w') { setView(1); resetView(); return }
+      if (input === 'm') { setView(2); resetView(); return }
+      if (key.leftArrow) { setView(v => (v - 1 + VIEWS.length) % VIEWS.length); resetView(); return }
+      if (key.rightArrow) { setView(v => (v + 1) % VIEWS.length); resetView(); return }
+      if (input === 'o') { setSort(s => (s + 1) % SORTS.length); resetView(); return }
       if (key.return) { setExpanded(e => e === cursor ? -1 : cursor); return }
       if (key.escape) { setExpanded(-1); return }
     } else {
-      if (key.leftArrow || key.rightArrow) { setTab(t => (t + 1) % TABS.length); setCursor(0); setExpanded(-1); return }
+      if (key.leftArrow || key.rightArrow) { setTab(t => (t + 1) % TABS.length); resetView(); return }
     }
 
     if (key.upArrow) { setCursor(c => Math.max(0, c - 1)); return }
     if (key.downArrow) { setCursor(c => c + 1); return }
     if (key.pageDown || input === 'G') { setCursor(c => input === 'G' ? 99999 : c + Math.max(1, rows - 12)); return }
     if (key.pageUp || input === 'g') { setCursor(c => input === 'g' ? 0 : Math.max(0, c - Math.max(1, rows - 12))); return }
-  }, { isActive: isTTY })
+  }, { isActive: IS_TTY })
+
+  function updateConfig(fn: (prev: Config) => Config): void {
+    setConfig(prev => {
+      const next = fn(prev ?? DEFAULT_CONFIG)
+      saveConfig(next)
+      return next
+    })
+  }
 
   if (error) return <Box padding={1}><Text color="red">{error}</Text></Box>
   if (!dashboard) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
 
-  const tableData = table ? [table.daily, table.weekly, table.monthly][view] : []
+  const rawTableData = table ? [table.daily, table.weekly, table.monthly][view] : []
+  const tableData = sortRows(rawTableData, sort)
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1} minHeight={rows}>
@@ -152,7 +171,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
           {tab === 0 && <DashboardView data={dashboard} billing={billing} />}
           {tab === 1 && (
             <>
-              <ViewBar views={VIEWS} active={view} />
+              <ViewBar views={VIEWS} active={view} sort={SORTS[sort]} />
               <Box height={1} />
               {tableLoading && !table
                 ? <Spinner label="Loading 6 months of history" />
@@ -163,15 +182,19 @@ export function App({ interval: cliInterval }: { interval?: number }) {
         </>
       )}
 
-      {(tab === 0 || showSettings) && (
-        <Box marginTop={1}>
-          <Text dimColor>by </Text>
-          <Text>David Ilie</Text>
-          <Text dimColor> (</Text>
-          <Text color="cyan">davidilie.com</Text>
-          <Text dimColor>)  ·  s=settings  q=quit</Text>
-        </Box>
-      )}
+      {(tab === 0 || showSettings) && <Footer />}
+    </Box>
+  )
+}
+
+function Footer() {
+  return (
+    <Box marginTop={1}>
+      <Text dimColor>by </Text>
+      <Text>David Ilie</Text>
+      <Text dimColor> (</Text>
+      <Text color="cyan">davidilie.com</Text>
+      <Text dimColor>)  ·  s=settings  q=quit</Text>
     </Box>
   )
 }
@@ -188,7 +211,7 @@ function TabBar({ tabs, active }: { tabs: readonly string[]; active: number }) {
   )
 }
 
-function ViewBar({ views, active }: { views: readonly string[]; active: number }) {
+function ViewBar({ views, active, sort }: { views: readonly string[]; active: number; sort: string }) {
   return (
     <Box>
       {views.map((v, i) => (
@@ -196,9 +219,23 @@ function ViewBar({ views, active }: { views: readonly string[]; active: number }
           {i === active ? <Text bold color="cyan">[{v}]</Text> : <Text dimColor>{v}</Text>}
         </Box>
       ))}
-      <Text dimColor>  d/w/m or ←→</Text>
+      <Text dimColor>  d/w/m  ·  sort: </Text>
+      <Text bold color="magenta">{sort}</Text>
+      <Text dimColor>  o=cycle</Text>
     </Box>
   )
+}
+
+function sortRows(rows: TableRow[], sortIdx: number): TableRow[] {
+  if (rows.length === 0) return rows
+  const sorted = [...rows]
+  switch (sortIdx) {
+    case 0: return sorted.sort((a, b) => a.label.localeCompare(b.label))
+    case 1: return sorted.sort((a, b) => b.label.localeCompare(a.label))
+    case 2: return sorted.sort((a, b) => a.cost - b.cost)
+    case 3: return sorted.sort((a, b) => b.cost - a.cost)
+    default: return sorted
+  }
 }
 
 function SettingsView({ config, cursor }: { config: Config; cursor: number }) {
@@ -287,7 +324,6 @@ function DashboardView({ data, billing }: { data: DashboardData; billing: Billin
           </Box>
         </>
       )}
-
     </>
   )
 }
@@ -379,26 +415,18 @@ function TableView({ rows: allRows, cursor, expanded, maxRows, wide }: { rows: T
         <Text bold color="yellowBright">{fmt.col(fmt.currency(totals.cost), W.cost)}</Text>
       </Text>
       <Box height={1} />
-      <Text dimColor>↑↓ navigate  ·  Enter detail  ·  g top  G bottom  ·  {clampedCursor + 1}/{allRows.length}</Text>
+      <Text dimColor>↑↓ navigate  ·  Enter detail  ·  o sort  ·  g/G top/bottom  ·  {clampedCursor + 1}/{allRows.length}</Text>
       <Box height={1} />
-      <Box>
-        <Text dimColor>by </Text>
-        <Text>David Ilie</Text>
-        <Text dimColor> (</Text>
-        <Text color="cyan">davidilie.com</Text>
-        <Text dimColor>)  ·  s=settings  q=quit</Text>
-      </Box>
+      <Footer />
     </Box>
   )
 }
 
 function RowDetail({ row, indent }: { row: TableRow; indent: number }) {
-  const pad = ' '.repeat(indent)
   return (
     <Box flexDirection="column" paddingLeft={indent} marginY={0}>
       {row.breakdown.map((m, i) => {
-        const last = i === row.breakdown.length - 1
-        const prefix = last ? '└─' : '├─'
+        const prefix = i === row.breakdown.length - 1 ? '└─' : '├─'
         return (
           <Text key={m.name}>
             <Text dimColor>{prefix} </Text>
@@ -416,15 +444,14 @@ function RowDetail({ row, indent }: { row: TableRow; indent: number }) {
 }
 
 function Spinner({ label }: { label: string }) {
-  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
   const [i, setI] = useState(0)
   useEffect(() => {
-    const id = setInterval(() => setI(n => (n + 1) % frames.length), 80)
+    const id = setInterval(() => setI(n => (n + 1) % SPINNER_FRAMES.length), 80)
     return () => clearInterval(id)
   }, [])
   return (
     <Box>
-      <Text color="green">{frames[i]} </Text>
+      <Text color="green">{SPINNER_FRAMES[i]} </Text>
       <Text dimColor>{label}</Text>
     </Box>
   )
@@ -433,9 +460,8 @@ function Spinner({ label }: { label: string }) {
 function fmtLabel(label: string): string {
   if (label.length === 10 && label[4] === '-') return fmt.shortDate(label)
   if (label.length === 7 && label[4] === '-') {
-    const [, m] = label.split('-')
-    const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    return `${months[Number(m)]} '${label.slice(2, 4)}`
+    const m = label.slice(5, 7)
+    return `${MONTHS[Number(m)]} '${label.slice(2, 4)}`
   }
   return fmt.shortDate(label)
 }

@@ -17,13 +17,13 @@ function configDir(): string {
   return join(xdg, 'tokmon')
 }
 
-function configPath(): string {
+export function configLocation(): string {
   return join(configDir(), 'config.json')
 }
 
 export async function loadConfig(): Promise<Config> {
   try {
-    const raw = await readFile(configPath(), 'utf-8')
+    const raw = await readFile(configLocation(), 'utf-8')
     const parsed = JSON.parse(raw)
     return { ...DEFAULTS, ...parsed }
   } catch {
@@ -34,9 +34,5 @@ export async function loadConfig(): Promise<Config> {
 export async function saveConfig(config: Config): Promise<void> {
   const dir = configDir()
   await mkdir(dir, { recursive: true })
-  await writeFile(configPath(), JSON.stringify(config, null, 2) + '\n')
-}
-
-export function configLocation(): string {
-  return configPath()
+  await writeFile(configLocation(), JSON.stringify(config, null, 2) + '\n')
 }

@@ -23,12 +23,3 @@ export interface TableRow {
   cost: number
   breakdown: ModelDetail[]
 }
-
-export interface AppData {
-  today: UsageSummary
-  week: UsageSummary
-  month: UsageSummary
-  daily: TableRow[]
-  weekly: TableRow[]
-  monthly: TableRow[]
-}
