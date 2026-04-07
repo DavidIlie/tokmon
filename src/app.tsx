@@ -12,7 +12,7 @@ const VIEWS = ['Daily', 'Weekly', 'Monthly'] as const
 const SORTS = ['date ↑', 'date ↓', 'cost ↑', 'cost ↓'] as const
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-const DEFAULT_CONFIG: Config = { interval: 2, clearScreen: true }
+const DEFAULT_CONFIG: Config = { interval: 2, billingInterval: 5, clearScreen: true }
 const IS_TTY = process.stdin.isTTY === true
 
 export function App({ interval: cliInterval }: { interval?: number }) {
@@ -60,13 +60,15 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     return () => { active = false; clearInterval(id) }
   }, [interval])
 
+  const billingMs = cfg.billingInterval * 60_000
+
   useEffect(() => {
     let active = true
     const load = () => fetchBilling().then(b => { if (active) setBilling(b) }).catch(() => {})
     load()
-    const id = setInterval(load, 120_000)
+    const id = setInterval(load, billingMs)
     return () => { active = false; clearInterval(id) }
-  }, [])
+  }, [billingMs])
 
   useEffect(() => {
     if (tab !== 1) return
@@ -114,12 +116,16 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     if (showSettings) {
       if (key.escape || input === 's') setShowSettings(false)
       if (key.upArrow) setSettingsCursor(c => Math.max(0, c - 1))
-      if (key.downArrow) setSettingsCursor(c => Math.min(1, c + 1))
+      if (key.downArrow) setSettingsCursor(c => Math.min(2, c + 1))
       if (settingsCursor === 0) {
         if (key.leftArrow) updateConfig(c => ({ ...c, interval: Math.max(1, c.interval - 1) }))
         if (key.rightArrow) updateConfig(c => ({ ...c, interval: c.interval + 1 }))
       }
-      if (settingsCursor === 1 && (key.leftArrow || key.rightArrow || key.return)) {
+      if (settingsCursor === 1) {
+        if (key.leftArrow) updateConfig(c => ({ ...c, billingInterval: Math.max(1, c.billingInterval - 1) }))
+        if (key.rightArrow) updateConfig(c => ({ ...c, billingInterval: c.billingInterval + 1 }))
+      }
+      if (settingsCursor === 2 && (key.leftArrow || key.rightArrow || key.return)) {
         updateConfig(c => ({ ...c, clearScreen: !c.clearScreen }))
       }
       return
@@ -266,14 +272,21 @@ function SettingsView({ config, cursor }: { config: Config; cursor: number }) {
       <Box height={1} />
       <Box>
         <Text color={cursor === 0 ? 'green' : undefined}>{cursor === 0 ? '▸' : ' '} </Text>
-        <Text>Refresh interval  </Text>
+        <Text>Refresh interval    </Text>
         <Text dimColor>{'◂'} </Text>
         <Text bold color="yellow">{config.interval}s</Text>
         <Text dimColor> {'▸'}</Text>
       </Box>
       <Box>
         <Text color={cursor === 1 ? 'green' : undefined}>{cursor === 1 ? '▸' : ' '} </Text>
-        <Text>Clear screen      </Text>
+        <Text>Billing poll        </Text>
+        <Text dimColor>{'◂'} </Text>
+        <Text bold color="yellow">{config.billingInterval}m</Text>
+        <Text dimColor> {'▸'}</Text>
+      </Box>
+      <Box>
+        <Text color={cursor === 2 ? 'green' : undefined}>{cursor === 2 ? '▸' : ' '} </Text>
+        <Text>Clear screen        </Text>
         <Text bold color={config.clearScreen ? 'green' : 'red'}>{config.clearScreen ? 'on' : 'off'}</Text>
       </Box>
       <Box height={1} />

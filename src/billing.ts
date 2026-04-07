@@ -77,7 +77,7 @@ export async function fetchBilling(): Promise<BillingData> {
       signal: AbortSignal.timeout(10000),
     })
 
-    if (res.status === 429) return { ...EMPTY, error: 'Rate limited — retrying in 2m' }
+    if (res.status === 429) return { ...EMPTY, error: 'Rate limited — retrying next poll' }
     if (res.status === 401) return { ...EMPTY, error: 'Token expired — restart Claude Code' }
     if (!res.ok) return { ...EMPTY, error: `API ${res.status}` }
 

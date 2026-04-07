@@ -4,10 +4,11 @@ import { homedir } from 'node:os'
 
 export interface Config {
   interval: number
+  billingInterval: number
   clearScreen: boolean
 }
 
-const DEFAULTS: Config = { interval: 2, clearScreen: true }
+const DEFAULTS: Config = { interval: 2, billingInterval: 5, clearScreen: true }
 
 function configDir(): string {
   if (process.platform === 'win32') {

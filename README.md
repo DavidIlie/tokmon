@@ -96,7 +96,8 @@ Sort by date or cost with `o`.
 
 Press `s` to open. Persisted to `~/.config/tokmon/config.json` (macOS/Linux) or `%APPDATA%\tokmon\config.json` (Windows).
 
-- **Refresh interval** — adjust with `←` `→`
+- **Refresh interval** — dashboard poll rate (default: 2s)
+- **Billing poll** — rate limits API poll rate (default: 5m, min 1m to avoid 429s)
 - **Clear screen** — clears terminal on launch (like `watch`)
 
 ## How It Works
