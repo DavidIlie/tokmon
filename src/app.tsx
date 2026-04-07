@@ -165,11 +165,11 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const tableData = sortRows(rawTableData, sort)
 
   return (
-    <Box flexDirection="column" paddingX={2} paddingY={1} minHeight={rows}>
+    <Box flexDirection="column" paddingX={2} paddingY={1} height={rows}>
       <Box justifyContent="space-between">
         <Box>
           <Text bold color="greenBright">{'◉'} tokmon</Text>
-          <Text dimColor>  ·  {cliInterval ? cliInterval / 1000 : cfg.interval}s</Text>
+          <Text dimColor>  ·  every {cliInterval ? cliInterval / 1000 : cfg.interval}s</Text>
         </Box>
         <Text dimColor>{fmt.time(updated)}</Text>
       </Box>
