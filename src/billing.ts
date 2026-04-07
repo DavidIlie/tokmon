@@ -3,11 +3,17 @@ import { promisify } from 'node:util'
 
 const execFile = promisify(execFileCb)
 
+export interface RateLimit {
+  utilization: number
+  resetsAt: string
+}
+
 export interface BillingData {
-  session: { utilization: number; resetsAt: string } | null
-  weekly: { utilization: number; resetsAt: string } | null
-  sonnet: { utilization: number; resetsAt: string } | null
+  session: RateLimit | null
+  weekly: RateLimit | null
+  sonnet: RateLimit | null
   extraUsage: { limit: number; used: number } | null
+  error: string | null
 }
 
 interface OAuthResponse {
@@ -32,9 +38,11 @@ async function getAccessToken(): Promise<string | null> {
   return null
 }
 
-export async function fetchBilling(): Promise<BillingData | null> {
+const EMPTY: BillingData = { session: null, weekly: null, sonnet: null, extraUsage: null, error: null }
+
+export async function fetchBilling(): Promise<BillingData> {
   const token = await getAccessToken()
-  if (!token) return null
+  if (!token) return { ...EMPTY, error: 'No OAuth token found (macOS Keychain)' }
 
   try {
     const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
@@ -45,7 +53,11 @@ export async function fetchBilling(): Promise<BillingData | null> {
       },
       signal: AbortSignal.timeout(10000),
     })
-    if (!res.ok) return null
+
+    if (res.status === 429) return { ...EMPTY, error: 'Rate limited — retrying in 2m' }
+    if (res.status === 401) return { ...EMPTY, error: 'Token expired — restart Claude Code' }
+    if (!res.ok) return { ...EMPTY, error: `API ${res.status}` }
+
     const data = await res.json() as OAuthResponse
     return {
       session: data.five_hour ? {
@@ -64,9 +76,10 @@ export async function fetchBilling(): Promise<BillingData | null> {
         limit: data.extra_usage.monthly_limit / 100,
         used: data.extra_usage.used_credits / 100,
       } : null,
+      error: null,
     }
   } catch {
-    return null
+    return { ...EMPTY, error: 'Network error' }
   }
 }
 

@@ -6,7 +6,7 @@ export default defineConfig({
   target: 'node20',
   clean: true,
   banner: { js: '#!/usr/bin/env node' },
-  external: ['ink', 'react'],
+  external: ['ink', 'react', '@zenobius/ink-mouse'],
   esbuildOptions(options) {
     options.jsx = 'automatic'
   },

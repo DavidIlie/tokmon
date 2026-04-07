@@ -1,4 +1,5 @@
 import { render } from 'ink'
+import { MouseProvider } from '@zenobius/ink-mouse'
 import { loadConfig } from './config'
 import { App } from './app'
 
@@ -31,5 +32,5 @@ if (config.clearScreen && process.stdout.isTTY) {
   process.stdout.write('\x1B[2J\x1B[H')
 }
 
-const { waitUntilExit } = render(<App interval={interval} />)
+const { waitUntilExit } = render(<MouseProvider><App interval={interval} /></MouseProvider>)
 await waitUntilExit()

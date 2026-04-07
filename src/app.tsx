@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Box, Text, useInput, useStdout, useApp } from 'ink'
+import { MouseProvider, useMouse } from '@zenobius/ink-mouse'
 import { fetchDashboard, fetchTable, type DashboardData, type TableData } from './data'
 import { fetchBilling, type BillingData } from './billing'
 import { loadConfig, saveConfig, configLocation, type Config } from './config'
@@ -61,7 +62,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
 
   useEffect(() => {
     let active = true
-    const load = () => fetchBilling().then(b => { if (active && b) setBilling(b) }).catch(() => {})
+    const load = () => fetchBilling().then(b => { if (active) setBilling(b) }).catch(() => {})
     load()
     const id = setInterval(load, 120_000)
     return () => { active = false; clearInterval(id) }
@@ -94,6 +95,20 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     setCursor(0)
     setExpanded(-1)
   }, [])
+
+  const mouse = useMouse()
+
+  useEffect(() => {
+    if (!IS_TTY) return
+    mouse.enable()
+    const onScroll = (_pos: { x: number; y: number }, dir: string | null) => {
+      if (tab === 1) {
+        setCursor(c => dir === 'scrollup' ? Math.max(0, c - 3) : c + 3)
+      }
+    }
+    mouse.events.on('scroll', onScroll)
+    return () => { mouse.events.off('scroll', onScroll) }
+  }, [tab])
 
   useInput((input, key) => {
     if (showSettings) {
@@ -291,20 +306,22 @@ function DashboardView({ data, billing }: { data: DashboardData; billing: Billin
         )}
       </Box>
 
-      {billing && (
-        <>
-          <Box height={1} />
-          <Box
-            flexDirection="column"
-            paddingLeft={1}
-            borderStyle="bold"
-            borderColor="yellow"
-            borderRight={false}
-            borderTop={false}
-            borderBottom={false}
-          >
-            <Text bold>Rate Limits</Text>
-            <Box height={1} />
+      <Box height={1} />
+      <Box
+        flexDirection="column"
+        paddingLeft={1}
+        borderStyle="bold"
+        borderColor={billing?.error ? 'red' : 'yellow'}
+        borderRight={false}
+        borderTop={false}
+        borderBottom={false}
+      >
+        <Text bold>Rate Limits</Text>
+        <Box height={1} />
+        {billing?.error ? (
+          <Text color="red">{billing.error}</Text>
+        ) : billing?.session || billing?.weekly ? (
+          <>
             {billing.session && (
               <LimitBar label="Session" pct={billing.session.utilization} resets={billing.session.resetsAt} />
             )}
@@ -321,9 +338,11 @@ function DashboardView({ data, billing }: { data: DashboardData; billing: Billin
                 <Text dimColor> / ${billing.extraUsage.limit.toFixed(2)} limit</Text>
               </Box>
             )}
-          </Box>
-        </>
-      )}
+          </>
+        ) : (
+          <Text dimColor>Fetching...</Text>
+        )}
+      </Box>
     </>
   )
 }

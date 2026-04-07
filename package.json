@@ -1,6 +1,6 @@
 {
   "name": "tokmon",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Terminal dashboard for Claude Code usage and costs",
   "type": "module",
   "bin": {
@@ -14,6 +14,7 @@
     "dev": "tsx src/cli.tsx"
   },
   "dependencies": {
+    "@zenobius/ink-mouse": "^1.0.3",
     "ink": "^5.0.0",
     "react": "^18.0.0"
   },
