@@ -1,4 +1,7 @@
 import { execFile as execFileCb } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 import { promisify } from 'node:util'
 
 const execFile = promisify(execFileCb)
@@ -23,26 +26,46 @@ interface OAuthResponse {
   extra_usage?: { is_enabled: boolean; monthly_limit: number; used_credits: number } | null
 }
 
+function credentialsFilePath(): string {
+  const base = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+  return join(base, '.credentials.json')
+}
+
+async function readCredentialsFile(): Promise<string | null> {
+  try {
+    const raw = await readFile(credentialsFilePath(), 'utf-8')
+    const creds = JSON.parse(raw)
+    return creds?.claudeAiOauth?.accessToken ?? creds?.accessToken ?? null
+  } catch {
+    return null
+  }
+}
+
+async function readMacKeychain(): Promise<string | null> {
+  try {
+    const { stdout } = await execFile('security', [
+      'find-generic-password', '-s', 'Claude Code-credentials', '-w',
+    ], { timeout: 5000 })
+    const creds = JSON.parse(stdout.trim())
+    return creds?.claudeAiOauth?.accessToken ?? creds?.accessToken ?? null
+  } catch {
+    return null
+  }
+}
+
 async function getAccessToken(): Promise<string | null> {
   if (process.platform === 'darwin') {
-    try {
-      const { stdout } = await execFile('security', [
-        'find-generic-password', '-s', 'Claude Code-credentials', '-w',
-      ], { timeout: 5000 })
-      const creds = JSON.parse(stdout.trim())
-      return creds?.claudeAiOauth?.accessToken ?? null
-    } catch {
-      return null
-    }
+    const token = await readMacKeychain()
+    if (token) return token
   }
-  return null
+  return readCredentialsFile()
 }
 
 const EMPTY: BillingData = { session: null, weekly: null, sonnet: null, extraUsage: null, error: null }
 
 export async function fetchBilling(): Promise<BillingData> {
   const token = await getAccessToken()
-  if (!token) return { ...EMPTY, error: 'No OAuth token found (macOS Keychain)' }
+  if (!token) return { ...EMPTY, error: 'No OAuth token — run claude and log in' }
 
   try {
     const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
