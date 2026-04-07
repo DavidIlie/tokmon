@@ -113,6 +113,8 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   }, [tab])
 
   useInput((input, key) => {
+    if (input === 'q') { exit(); return }
+
     if (showSettings) {
       if (key.escape || input === 's') setShowSettings(false)
       if (key.upArrow) setSettingsCursor(c => Math.max(0, c - 1))
@@ -131,7 +133,6 @@ export function App({ interval: cliInterval }: { interval?: number }) {
       return
     }
 
-    if (input === 'q') { exit(); return }
     if (input === 's') { setShowSettings(true); return }
     if (key.tab) { setTab(t => (t + 1) % TABS.length); resetView(); return }
     if (input === '1') { setTab(0); resetView(); return }
