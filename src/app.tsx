@@ -283,12 +283,6 @@ function DashboardView({ data, billing }: { data: DashboardData; billing: Billin
         </>
       )}
 
-      <Box height={1} />
-      <Text dimColor>{'─'.repeat(50)}</Text>
-      <Box width={50}>
-        <Text dimColor>Total </Text>
-        <Text bold color="yellowBright">{fmt.currency(data.month.cost)}</Text>
-      </Box>
     </>
   )
 }
