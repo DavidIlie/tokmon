@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Box, Text, useInput, useStdout, useApp } from 'ink'
-import { MouseProvider, useMouse } from '@zenobius/ink-mouse'
+import { Box, Text, useInput, useStdout, useApp, type DOMElement } from 'ink'
+import { useMouse, useOnMouseClick } from '@zenobius/ink-mouse'
 import { fetchDashboard, fetchTable, type DashboardData, type TableData } from './data'
 import { fetchBilling, type BillingData } from './billing'
 import { loadConfig, saveConfig, configLocation, type Config } from './config'
@@ -179,18 +179,23 @@ export function App({ interval: cliInterval }: { interval?: number }) {
       ) : (
         <>
           <Box marginTop={1}>
-            <TabBar tabs={TABS} active={tab} />
+            <TabBar tabs={TABS} active={tab} onSelect={(i) => { setTab(i); resetView() }} />
             <Text dimColor>  Tab/←→</Text>
           </Box>
           <Box height={1} />
           {tab === 0 && <DashboardView data={dashboard} billing={billing} />}
           {tab === 1 && (
             <>
-              <ViewBar views={VIEWS} active={view} sort={SORTS[sort]} />
+              <ViewBar views={VIEWS} active={view} sort={SORTS[sort]} onSelect={(i) => { setView(i); resetView() }} />
               <Box height={1} />
               {tableLoading && !table
                 ? <Spinner label="Loading 6 months of history" />
-                : <TableView rows={tableData} cursor={cursor} expanded={expanded} maxRows={rows - 12} wide={cols > 90} />
+                : <TableView rows={tableData} cursor={cursor} expanded={expanded} maxRows={rows - 12} wide={cols > 90}
+                    onRowClick={(idx) => {
+                      if (idx === cursor) setExpanded(e => e === idx ? -1 : idx)
+                      else setCursor(idx)
+                    }}
+                  />
               }
             </>
           )}
@@ -214,27 +219,27 @@ function Footer() {
   )
 }
 
-function TabBar({ tabs, active }: { tabs: readonly string[]; active: number }) {
+function TabBar({ tabs, active, onSelect }: { tabs: readonly string[]; active: number; onSelect: (i: number) => void }) {
   return (
     <Box>
       {tabs.map((t, i) => (
-        <Box key={t} marginRight={1}>
+        <ClickableBox key={t} onClick={() => onSelect(i)} marginRight={1}>
           {i === active ? <Text bold inverse> {t} </Text> : <Text dimColor> {t} </Text>}
-        </Box>
+        </ClickableBox>
       ))}
     </Box>
   )
 }
 
-function ViewBar({ views, active, sort }: { views: readonly string[]; active: number; sort: string }) {
+function ViewBar({ views, active, sort, onSelect }: { views: readonly string[]; active: number; sort: string; onSelect: (i: number) => void }) {
   return (
     <Box>
       {views.map((v, i) => (
-        <Box key={v} marginRight={2}>
+        <ClickableBox key={v} onClick={() => onSelect(i)} marginRight={2}>
           {i === active ? <Text bold color="cyan">[{v}]</Text> : <Text dimColor>{v}</Text>}
-        </Box>
+        </ClickableBox>
       ))}
-      <Text dimColor>  d/w/m  ·  sort: </Text>
+      <Text dimColor>  sort: </Text>
       <Text bold color="magenta">{sort}</Text>
       <Text dimColor>  o=cycle</Text>
     </Box>
@@ -373,7 +378,7 @@ function SummaryRow({ label, summary }: { label: string; summary: UsageSummary }
   )
 }
 
-function TableView({ rows: allRows, cursor, expanded, maxRows, wide }: { rows: TableRow[]; cursor: number; expanded: number; maxRows: number; wide: boolean }) {
+function TableView({ rows: allRows, cursor, expanded, maxRows, wide, onRowClick }: { rows: TableRow[]; cursor: number; expanded: number; maxRows: number; wide: boolean; onRowClick: (idx: number) => void }) {
   const W = wide
     ? { label: 10, models: 18, input: 8, output: 8, cc: 8, cr: 9, total: 9, cost: 10 }
     : { label: 8, models: 14, input: 7, output: 7, cc: 7, cr: 8, total: 0, cost: 9 }
@@ -408,16 +413,18 @@ function TableView({ rows: allRows, cursor, expanded, maxRows, wide }: { rows: T
         const isExpanded = idx === expanded
         return (
           <Box key={r.label} flexDirection="column">
-            <Text inverse={selected}>
-              <Text color={selected ? undefined : 'cyan'}>{selected ? '▸ ' : '  '}{fmt.col(fmtLabel(r.label), W.label, 'left')}</Text>
-              <Text dimColor={!selected}>{fmt.col(r.models.join(', '), W.models, 'left')}</Text>
-              <Text>{fmt.col(fmt.tokens(r.input), W.input)}</Text>
-              <Text>{fmt.col(fmt.tokens(r.output), W.output)}</Text>
-              <Text>{fmt.col(fmt.tokens(r.cacheCreate), W.cc)}</Text>
-              <Text>{fmt.col(fmt.tokens(r.cacheRead), W.cr)}</Text>
-              {W.total > 0 && <Text>{fmt.col(fmt.tokens(r.total), W.total)}</Text>}
-              <Text bold color={selected ? undefined : 'yellow'}>{fmt.col(fmt.currency(r.cost), W.cost)}</Text>
-            </Text>
+            <ClickableBox onClick={() => onRowClick(idx)}>
+              <Text inverse={selected}>
+                <Text color={selected ? undefined : 'cyan'}>{selected ? '▸ ' : '  '}{fmt.col(fmtLabel(r.label), W.label, 'left')}</Text>
+                <Text dimColor={!selected}>{fmt.col(r.models.join(', '), W.models, 'left')}</Text>
+                <Text>{fmt.col(fmt.tokens(r.input), W.input)}</Text>
+                <Text>{fmt.col(fmt.tokens(r.output), W.output)}</Text>
+                <Text>{fmt.col(fmt.tokens(r.cacheCreate), W.cc)}</Text>
+                <Text>{fmt.col(fmt.tokens(r.cacheRead), W.cr)}</Text>
+                {W.total > 0 && <Text>{fmt.col(fmt.tokens(r.total), W.total)}</Text>}
+                <Text bold color={selected ? undefined : 'yellow'}>{fmt.col(fmt.currency(r.cost), W.cost)}</Text>
+              </Text>
+            </ClickableBox>
             {isExpanded && <RowDetail row={r} indent={W.label + 2} />}
           </Box>
         )
@@ -483,4 +490,10 @@ function fmtLabel(label: string): string {
     return `${MONTHS[Number(m)]} '${label.slice(2, 4)}`
   }
   return fmt.shortDate(label)
+}
+
+function ClickableBox({ onClick, children, ...props }: { onClick: () => void; children: React.ReactNode } & Record<string, unknown>) {
+  const ref = useRef<DOMElement>(null)
+  useOnMouseClick(ref, (clicked) => { if (clicked) onClick() })
+  return <Box ref={ref} {...props}>{children}</Box>
 }
