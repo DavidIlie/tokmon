@@ -121,8 +121,8 @@ export function App({ interval: cliInterval }: { interval?: number }) {
 
     if (key.upArrow) { setCursor(c => Math.max(0, c - 1)); return }
     if (key.downArrow) { setCursor(c => c + 1); return }
-    if (key.pageDown) { setCursor(c => c + Math.max(1, rows - 12)); return }
-    if (key.pageUp) { setCursor(c => Math.max(0, c - Math.max(1, rows - 12))); return }
+    if (key.pageDown || input === 'G') { setCursor(c => input === 'G' ? 99999 : c + Math.max(1, rows - 12)); return }
+    if (key.pageUp || input === 'g') { setCursor(c => input === 'g' ? 0 : Math.max(0, c - Math.max(1, rows - 12))); return }
   }, { isActive: isTTY })
 
   if (error) return <Box padding={1}><Text color="red">{error}</Text></Box>
@@ -163,13 +163,15 @@ export function App({ interval: cliInterval }: { interval?: number }) {
         </>
       )}
 
-      <Box marginTop={1}>
-        <Text dimColor>by </Text>
-        <Text>David Ilie</Text>
-        <Text dimColor> (</Text>
-        <Text color="cyan">davidilie.com</Text>
-        <Text dimColor>)  ·  s=settings  q=quit</Text>
-      </Box>
+      {(tab === 0 || showSettings) && (
+        <Box marginTop={1}>
+          <Text dimColor>by </Text>
+          <Text>David Ilie</Text>
+          <Text dimColor> (</Text>
+          <Text color="cyan">davidilie.com</Text>
+          <Text dimColor>)  ·  s=settings  q=quit</Text>
+        </Box>
+      )}
     </Box>
   )
 }
@@ -376,8 +378,15 @@ function TableView({ rows: allRows, cursor, expanded, maxRows, wide }: { rows: T
         {W.total > 0 && <Text bold color="yellow">{fmt.col(fmt.tokens(totals.input + totals.output + totals.cacheCreate + totals.cacheRead), W.total)}</Text>}
         <Text bold color="yellowBright">{fmt.col(fmt.currency(totals.cost), W.cost)}</Text>
       </Text>
-      <Box marginTop={1}>
-        <Text dimColor>↑↓ navigate  Enter=detail  Esc=close  ·  {allRows.length} rows  ·  {clampedCursor + 1}/{allRows.length}</Text>
+      <Box height={1} />
+      <Text dimColor>↑↓ navigate  ·  Enter detail  ·  g top  G bottom  ·  {clampedCursor + 1}/{allRows.length}</Text>
+      <Box height={1} />
+      <Box>
+        <Text dimColor>by </Text>
+        <Text>David Ilie</Text>
+        <Text dimColor> (</Text>
+        <Text color="cyan">davidilie.com</Text>
+        <Text dimColor>)  ·  s=settings  q=quit</Text>
       </Box>
     </Box>
   )
