@@ -187,6 +187,7 @@ export interface DashboardData {
   today: UsageSummary
   week: UsageSummary
   month: UsageSummary
+  burnRate: number
 }
 
 export interface TableData {
@@ -202,12 +203,22 @@ export async function fetchDashboard(): Promise<DashboardData> {
   const weekDay = d.getDay()
   const weekStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() - (weekDay === 0 ? 6 : weekDay - 1)).getTime()
 
+  const now = Date.now()
   const entries = await loadEntries(monthStart)
+  const todayEntries = entries.filter(e => e.ts >= todayStart)
+
+  let burnRate = 0
+  if (todayEntries.length > 0) {
+    const oldest = Math.min(...todayEntries.map(e => e.ts))
+    const hrs = (now - oldest) / 3_600_000
+    if (hrs > 0) burnRate = todayEntries.reduce((s, e) => s + e.cost, 0) / hrs
+  }
 
   return {
-    today: sum(entries.filter(e => e.ts >= todayStart)),
+    today: sum(todayEntries),
     week: sum(entries.filter(e => e.ts >= weekStart)),
     month: sum(entries.filter(e => e.ts >= monthStart)),
+    burnRate,
   }
 }
 

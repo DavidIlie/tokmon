@@ -237,6 +237,16 @@ function DashboardView({ data, billing }: { data: DashboardData; billing: Billin
         <SummaryRow label="Today" summary={data.today} />
         <SummaryRow label="This Week" summary={data.week} />
         <SummaryRow label="This Month" summary={data.month} />
+        {data.burnRate > 0 && (
+          <>
+            <Box height={1} />
+            <Box>
+              <Box width={14}><Text dimColor>Burn rate</Text></Box>
+              <Box width={12} justifyContent="flex-end"><Text color="red">{fmt.currency(data.burnRate)}</Text></Box>
+              <Text dimColor>/hr</Text>
+            </Box>
+          </>
+        )}
       </Box>
 
       {billing && (
