@@ -15,6 +15,7 @@ const FALLBACK = PRICING['claude-opus-4']
 
 interface Entry {
   ts: number
+  msgId: string
   model: string
   cost: number
   input: number
@@ -83,6 +84,7 @@ async function parseFile(path: string, since: number): Promise<Entry[]> {
       const u = obj.message.usage
       entries.push({
         ts,
+        msgId: obj.message.id ?? '',
         model: obj.message.model ?? 'unknown',
         cost: costOf(obj.message.model ?? '', u),
         input: u.input_tokens ?? 0,
@@ -130,7 +132,14 @@ async function loadEntries(since: number): Promise<Entry[]> {
     }))
   }
 
-  return chunks.flat()
+  const all = chunks.flat()
+  const seenIds = new Set<string>()
+  return all.filter(e => {
+    if (!e.msgId) return true
+    if (seenIds.has(e.msgId)) return false
+    seenIds.add(e.msgId)
+    return true
+  })
 }
 
 function sum(entries: Entry[]): UsageSummary {
