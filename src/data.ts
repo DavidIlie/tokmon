@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import type { AppData, UsageSummary, TableRow } from './types'
+import type { AppData, UsageSummary, TableRow, ModelDetail } from './types'
 
 const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> = {
   'claude-opus-4': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
@@ -160,10 +160,22 @@ function groupBy(entries: Entry[], keyFn: (e: Entry) => string): TableRow[] {
       cacheRead += e.cacheRead
       cost += e.cost
     }
+
+    const byModel = new Map<string, ModelDetail>()
+    for (const e of group) {
+      const name = shortModel(e.model)
+      const m = byModel.get(name) ?? { name, input: 0, output: 0, cacheCreate: 0, cacheRead: 0, cost: 0 }
+      m.input += e.input; m.output += e.output
+      m.cacheCreate += e.cacheCreate; m.cacheRead += e.cacheRead
+      m.cost += e.cost
+      byModel.set(name, m)
+    }
+
     rows.push({
       label, models: models.sort(),
       input, output, cacheCreate, cacheRead,
       total: input + output + cacheCreate + cacheRead, cost,
+      breakdown: [...byModel.values()].sort((a, b) => b.cost - a.cost),
     })
   }
 

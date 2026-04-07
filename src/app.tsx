@@ -4,7 +4,7 @@ import { fetchDashboard, fetchTable, type DashboardData, type TableData } from '
 import { fetchBilling, type BillingData } from './billing'
 import { loadConfig, saveConfig, configLocation, type Config } from './config'
 import * as fmt from './format'
-import type { UsageSummary, TableRow } from './types'
+import type { UsageSummary, TableRow, ModelDetail } from './types'
 
 const TABS = ['Dashboard', 'Table'] as const
 const VIEWS = ['Daily', 'Weekly', 'Monthly'] as const
@@ -18,7 +18,8 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const [updated, setUpdated] = useState(new Date())
   const [tab, setTab] = useState(0)
   const [view, setView] = useState(0)
-  const [scroll, setScroll] = useState(0)
+  const [cursor, setCursor] = useState(0)
+  const [expanded, setExpanded] = useState(-1)
   const [showSettings, setShowSettings] = useState(false)
   const [config, setConfig] = useState<Config | null>(null)
   const [settingsCursor, setSettingsCursor] = useState(0)
@@ -102,24 +103,26 @@ export function App({ interval: cliInterval }: { interval?: number }) {
 
     if (input === 'q') { exit(); return }
     if (input === 's') { setShowSettings(true); return }
-    if (key.tab) { setTab(t => (t + 1) % TABS.length); setScroll(0); return }
-    if (input === '1') { setTab(0); setScroll(0); return }
-    if (input === '2') { setTab(1); setScroll(0); return }
+    if (key.tab) { setTab(t => (t + 1) % TABS.length); setCursor(0); setExpanded(-1); return }
+    if (input === '1') { setTab(0); setCursor(0); setExpanded(-1); return }
+    if (input === '2') { setTab(1); setCursor(0); setExpanded(-1); return }
 
     if (tab === 1) {
-      if (input === 'd') { setView(0); setScroll(0); return }
-      if (input === 'w') { setView(1); setScroll(0); return }
-      if (input === 'm') { setView(2); setScroll(0); return }
-      if (key.leftArrow) { setView(v => (v - 1 + VIEWS.length) % VIEWS.length); setScroll(0); return }
-      if (key.rightArrow) { setView(v => (v + 1) % VIEWS.length); setScroll(0); return }
+      if (input === 'd') { setView(0); setCursor(0); setExpanded(-1); return }
+      if (input === 'w') { setView(1); setCursor(0); setExpanded(-1); return }
+      if (input === 'm') { setView(2); setCursor(0); setExpanded(-1); return }
+      if (key.leftArrow) { setView(v => (v - 1 + VIEWS.length) % VIEWS.length); setCursor(0); setExpanded(-1); return }
+      if (key.rightArrow) { setView(v => (v + 1) % VIEWS.length); setCursor(0); setExpanded(-1); return }
+      if (key.return) { setExpanded(e => e === cursor ? -1 : cursor); return }
+      if (key.escape) { setExpanded(-1); return }
     } else {
-      if (key.leftArrow || key.rightArrow) { setTab(t => (t + 1) % TABS.length); setScroll(0); return }
+      if (key.leftArrow || key.rightArrow) { setTab(t => (t + 1) % TABS.length); setCursor(0); setExpanded(-1); return }
     }
 
-    if (key.upArrow) setScroll(s => Math.max(0, s - 1))
-    if (key.downArrow) setScroll(s => s + 1)
-    if (key.pageDown) setScroll(s => s + Math.max(1, rows - 12))
-    if (key.pageUp) setScroll(s => Math.max(0, s - Math.max(1, rows - 12)))
+    if (key.upArrow) { setCursor(c => Math.max(0, c - 1)); return }
+    if (key.downArrow) { setCursor(c => c + 1); return }
+    if (key.pageDown) { setCursor(c => c + Math.max(1, rows - 12)); return }
+    if (key.pageUp) { setCursor(c => Math.max(0, c - Math.max(1, rows - 12))); return }
   }, { isActive: isTTY })
 
   if (error) return <Box padding={1}><Text color="red">{error}</Text></Box>
@@ -152,8 +155,8 @@ export function App({ interval: cliInterval }: { interval?: number }) {
               <ViewBar views={VIEWS} active={view} />
               <Box height={1} />
               {tableLoading && !table
-                ? <Text dimColor>Loading 6 months of history...</Text>
-                : <TableView rows={tableData} scroll={scroll} maxRows={rows - 12} wide={cols > 90} />
+                ? <Spinner label="Loading 6 months of history" />
+                : <TableView rows={tableData} cursor={cursor} expanded={expanded} maxRows={rows - 12} wide={cols > 90} />
               }
             </>
           )}
@@ -313,7 +316,7 @@ function SummaryRow({ label, summary }: { label: string; summary: UsageSummary }
   )
 }
 
-function TableView({ rows: allRows, scroll, maxRows, wide }: { rows: TableRow[]; scroll: number; maxRows: number; wide: boolean }) {
+function TableView({ rows: allRows, cursor, expanded, maxRows, wide }: { rows: TableRow[]; cursor: number; expanded: number; maxRows: number; wide: boolean }) {
   const W = wide
     ? { label: 10, models: 18, input: 8, output: 8, cc: 8, cr: 9, total: 9, cost: 10 }
     : { label: 8, models: 14, input: 7, output: 7, cc: 7, cr: 8, total: 0, cost: 9 }
@@ -325,14 +328,14 @@ function TableView({ rows: allRows, scroll, maxRows, wide }: { rows: TableRow[];
     totals.cacheCreate += r.cacheCreate; totals.cacheRead += r.cacheRead; totals.cost += r.cost
   }
 
-  const clampedScroll = Math.min(scroll, Math.max(0, allRows.length - maxRows))
-  const visible = allRows.slice(clampedScroll, clampedScroll + maxRows)
-  const more = allRows.length - clampedScroll - maxRows
+  const clampedCursor = Math.min(cursor, allRows.length - 1)
+  const scrollStart = Math.max(0, Math.min(clampedCursor - Math.floor(maxRows / 2), allRows.length - maxRows))
+  const visible = allRows.slice(scrollStart, scrollStart + maxRows)
 
   return (
     <Box flexDirection="column">
       <Text>
-        <Text bold>{fmt.col('Date', W.label, 'left')}</Text>
+        <Text bold>  {fmt.col('Date', W.label, 'left')}</Text>
         <Text bold>{fmt.col('Models', W.models, 'left')}</Text>
         <Text bold>{fmt.col('Input', W.input)}</Text>
         <Text bold>{fmt.col('Output', W.output)}</Text>
@@ -341,23 +344,30 @@ function TableView({ rows: allRows, scroll, maxRows, wide }: { rows: TableRow[];
         {W.total > 0 && <Text bold>{fmt.col('Total', W.total)}</Text>}
         <Text bold>{fmt.col('Cost', W.cost)}</Text>
       </Text>
-      <Text dimColor>{'─'.repeat(lineW)}</Text>
-      {visible.map(r => (
-        <Text key={r.label}>
-          <Text color="cyan">{fmt.col(fmtLabel(r.label), W.label, 'left')}</Text>
-          <Text dimColor>{fmt.col(r.models.join(', '), W.models, 'left')}</Text>
-          <Text>{fmt.col(fmt.tokens(r.input), W.input)}</Text>
-          <Text>{fmt.col(fmt.tokens(r.output), W.output)}</Text>
-          <Text>{fmt.col(fmt.tokens(r.cacheCreate), W.cc)}</Text>
-          <Text>{fmt.col(fmt.tokens(r.cacheRead), W.cr)}</Text>
-          {W.total > 0 && <Text>{fmt.col(fmt.tokens(r.total), W.total)}</Text>}
-          <Text bold color="yellow">{fmt.col(fmt.currency(r.cost), W.cost)}</Text>
-        </Text>
-      ))}
-      {more > 0 && <Text dimColor>  ↓ {more} more</Text>}
-      <Text dimColor>{'─'.repeat(lineW)}</Text>
+      <Text dimColor>{'─'.repeat(lineW + 2)}</Text>
+      {visible.map((r, vi) => {
+        const idx = scrollStart + vi
+        const selected = idx === clampedCursor
+        const isExpanded = idx === expanded
+        return (
+          <Box key={r.label} flexDirection="column">
+            <Text inverse={selected}>
+              <Text color={selected ? undefined : 'cyan'}>{selected ? '▸ ' : '  '}{fmt.col(fmtLabel(r.label), W.label, 'left')}</Text>
+              <Text dimColor={!selected}>{fmt.col(r.models.join(', '), W.models, 'left')}</Text>
+              <Text>{fmt.col(fmt.tokens(r.input), W.input)}</Text>
+              <Text>{fmt.col(fmt.tokens(r.output), W.output)}</Text>
+              <Text>{fmt.col(fmt.tokens(r.cacheCreate), W.cc)}</Text>
+              <Text>{fmt.col(fmt.tokens(r.cacheRead), W.cr)}</Text>
+              {W.total > 0 && <Text>{fmt.col(fmt.tokens(r.total), W.total)}</Text>}
+              <Text bold color={selected ? undefined : 'yellow'}>{fmt.col(fmt.currency(r.cost), W.cost)}</Text>
+            </Text>
+            {isExpanded && <RowDetail row={r} indent={W.label + 2} />}
+          </Box>
+        )
+      })}
+      <Text dimColor>{'─'.repeat(lineW + 2)}</Text>
       <Text>
-        <Text bold color="greenBright">{fmt.col('Total', W.label, 'left')}</Text>
+        <Text bold color="greenBright">  {fmt.col('Total', W.label, 'left')}</Text>
         <Text>{fmt.col('', W.models, 'left')}</Text>
         <Text bold color="yellow">{fmt.col(fmt.tokens(totals.input), W.input)}</Text>
         <Text bold color="yellow">{fmt.col(fmt.tokens(totals.output), W.output)}</Text>
@@ -367,8 +377,46 @@ function TableView({ rows: allRows, scroll, maxRows, wide }: { rows: TableRow[];
         <Text bold color="yellowBright">{fmt.col(fmt.currency(totals.cost), W.cost)}</Text>
       </Text>
       <Box marginTop={1}>
-        <Text dimColor>↑↓ PgUp/Dn scroll  ·  {allRows.length} rows  ·  {clampedScroll + 1}-{Math.min(clampedScroll + maxRows, allRows.length)}</Text>
+        <Text dimColor>↑↓ navigate  Enter=detail  Esc=close  ·  {allRows.length} rows  ·  {clampedCursor + 1}/{allRows.length}</Text>
       </Box>
+    </Box>
+  )
+}
+
+function RowDetail({ row, indent }: { row: TableRow; indent: number }) {
+  const pad = ' '.repeat(indent)
+  return (
+    <Box flexDirection="column" paddingLeft={indent} marginY={0}>
+      {row.breakdown.map((m, i) => {
+        const last = i === row.breakdown.length - 1
+        const prefix = last ? '└─' : '├─'
+        return (
+          <Text key={m.name}>
+            <Text dimColor>{prefix} </Text>
+            <Text bold>{fmt.col(m.name, 16, 'left')}</Text>
+            <Text>{fmt.col(fmt.tokens(m.input), 8)} in  </Text>
+            <Text>{fmt.col(fmt.tokens(m.output), 8)} out  </Text>
+            <Text>{fmt.col(fmt.tokens(m.cacheCreate), 8)} cc  </Text>
+            <Text>{fmt.col(fmt.tokens(m.cacheRead), 9)} cr  </Text>
+            <Text bold color="yellow">{fmt.currency(m.cost)}</Text>
+          </Text>
+        )
+      })}
+    </Box>
+  )
+}
+
+function Spinner({ label }: { label: string }) {
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setI(n => (n + 1) % frames.length), 80)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <Box>
+      <Text color="green">{frames[i]} </Text>
+      <Text dimColor>{label}</Text>
     </Box>
   )
 }
