@@ -3,14 +3,6 @@ export interface UsageSummary {
   tokens: number
 }
 
-export interface BlockInfo {
-  spent: number
-  projected: number
-  burnRate: number
-  percent: number
-  remaining: string
-}
-
 export interface TableRow {
   label: string
   models: string[]
@@ -26,7 +18,6 @@ export interface AppData {
   today: UsageSummary
   week: UsageSummary
   month: UsageSummary
-  block: BlockInfo | null
   daily: TableRow[]
   weekly: TableRow[]
   monthly: TableRow[]

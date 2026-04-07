@@ -3,7 +3,6 @@ import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { minutes } from './format'
 import type { AppData, UsageSummary, TableRow } from './types'
 
 const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> = {
@@ -184,29 +183,10 @@ function monthLabel(ts: number): string {
   return new Date(ts).toISOString().slice(0, 7)
 }
 
-function findBlockStart(entries: Entry[], now: number): number {
-  const recent = entries.filter(e => e.ts <= now).sort((a, b) => a.ts - b.ts)
-  if (recent.length === 0) return 0
-
-  const GAP = 30 * 60_000
-  let blockStart = recent[0].ts
-
-  for (let i = 1; i < recent.length; i++) {
-    if (recent[i].ts - recent[i - 1].ts > GAP) {
-      blockStart = recent[i].ts
-    }
-  }
-
-  if (now - blockStart > 5 * 3_600_000) return 0
-
-  return blockStart
-}
-
 export interface DashboardData {
   today: UsageSummary
   week: UsageSummary
   month: UsageSummary
-  block: AppData['block']
 }
 
 export interface TableData {
@@ -216,7 +196,6 @@ export interface TableData {
 }
 
 export async function fetchDashboard(): Promise<DashboardData> {
-  const now = Date.now()
   const d = new Date()
   const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime()
   const todayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
@@ -225,27 +204,10 @@ export async function fetchDashboard(): Promise<DashboardData> {
 
   const entries = await loadEntries(monthStart)
 
-  let block: AppData['block'] = null
-  const blockStart = findBlockStart(entries, now)
-  if (blockStart > 0) {
-    const blockEnd = blockStart + 5 * 3_600_000
-    const blockEntries = entries.filter(e => e.ts >= blockStart && e.ts < blockEnd)
-    if (blockEntries.length > 0) {
-      const spent = blockEntries.reduce((s, e) => s + e.cost, 0)
-      const elapsedMs = now - blockStart
-      const elapsedHrs = elapsedMs / 3_600_000
-      const burnRate = elapsedHrs > 0 ? spent / elapsedHrs : 0
-      const remainMs = Math.max(0, blockEnd - now)
-      const percent = Math.min(100, (elapsedMs / (5 * 3_600_000)) * 100)
-      block = { spent, projected: burnRate * 5, burnRate, percent, remaining: minutes(remainMs / 60_000) }
-    }
-  }
-
   return {
     today: sum(entries.filter(e => e.ts >= todayStart)),
     week: sum(entries.filter(e => e.ts >= weekStart)),
     month: sum(entries.filter(e => e.ts >= monthStart)),
-    block,
   }
 }
 

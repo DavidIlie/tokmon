@@ -1,15 +1,17 @@
 import { useState, useEffect, useRef } from 'react'
 import { Box, Text, useInput, useStdout, useApp } from 'ink'
 import { fetchDashboard, fetchTable, type DashboardData, type TableData } from './data'
+import { fetchBilling, type BillingData } from './billing'
 import { loadConfig, saveConfig, configLocation, type Config } from './config'
 import * as fmt from './format'
-import type { UsageSummary, BlockInfo, TableRow } from './types'
+import type { UsageSummary, TableRow } from './types'
 
 const TABS = ['Dashboard', 'Table'] as const
 const VIEWS = ['Daily', 'Weekly', 'Monthly'] as const
 
 export function App({ interval: cliInterval }: { interval?: number }) {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
+  const [billing, setBilling] = useState<BillingData | null>(null)
   const [table, setTable] = useState<TableData | null>(null)
   const [tableLoading, setTableLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -22,9 +24,11 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const [settingsCursor, setSettingsCursor] = useState(0)
   const tableLoadedOnce = useRef(false)
   const { stdout } = useStdout()
+  const { exit } = useApp()
   const rows = stdout?.rows ?? 24
   const cols = stdout?.columns ?? 80
   const interval = cliInterval ?? (config?.interval ?? 2) * 1000
+  const cfg = config ?? { interval: 2, clearScreen: true }
 
   useEffect(() => {
     loadConfig().then(c => {
@@ -32,7 +36,6 @@ export function App({ interval: cliInterval }: { interval?: number }) {
       setConfig(c)
     })
   }, [])
-
 
   useEffect(() => {
     let active = true
@@ -48,6 +51,14 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     const id = setInterval(load, interval)
     return () => { active = false; clearInterval(id) }
   }, [interval])
+
+  useEffect(() => {
+    let active = true
+    const load = () => fetchBilling().then(b => { if (active && b) setBilling(b) }).catch(() => {})
+    load()
+    const id = setInterval(load, 120_000)
+    return () => { active = false; clearInterval(id) }
+  }, [])
 
   useEffect(() => {
     if (tab !== 1) return
@@ -67,31 +78,24 @@ export function App({ interval: cliInterval }: { interval?: number }) {
       try {
         const result = await fetchTable()
         if (active) setTable(result)
-      } catch { /* skip */ }
+      } catch {}
     }, Math.max(interval, 10000))
     return () => { active = false; clearInterval(id) }
   }, [tab, interval])
 
-  const { exit } = useApp()
   const isTTY = process.stdin.isTTY === true
-  const settingsItems = 2
-  const cfg = config ?? { interval: 2, clearScreen: true }
 
   useInput((input, key) => {
     if (showSettings) {
       if (key.escape || input === 's') setShowSettings(false)
       if (key.upArrow) setSettingsCursor(c => Math.max(0, c - 1))
-      if (key.downArrow) setSettingsCursor(c => Math.min(settingsItems - 1, c + 1))
+      if (key.downArrow) setSettingsCursor(c => Math.min(1, c + 1))
       if (settingsCursor === 0) {
-        if (key.leftArrow) {
-          setConfig(c => { const next = { ...c!, interval: Math.max(1, c!.interval - 1) }; saveConfig(next); return next })
-        }
-        if (key.rightArrow) {
-          setConfig(c => { const next = { ...c!, interval: c!.interval + 1 }; saveConfig(next); return next })
-        }
+        if (key.leftArrow) setConfig(c => { const n = { ...c!, interval: Math.max(1, c!.interval - 1) }; saveConfig(n); return n })
+        if (key.rightArrow) setConfig(c => { const n = { ...c!, interval: c!.interval + 1 }; saveConfig(n); return n })
       }
       if (settingsCursor === 1 && (key.leftArrow || key.rightArrow || key.return)) {
-        setConfig(c => { const next = { ...c!, clearScreen: !c!.clearScreen }; saveConfig(next); return next })
+        setConfig(c => { const n = { ...c!, clearScreen: !c!.clearScreen }; saveConfig(n); return n })
       }
       return
     }
@@ -142,7 +146,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
             <Text dimColor>  Tab/←→</Text>
           </Box>
           <Box height={1} />
-          {tab === 0 && <DashboardView data={dashboard} />}
+          {tab === 0 && <DashboardView data={dashboard} billing={billing} />}
           {tab === 1 && (
             <>
               <ViewBar views={VIEWS} active={view} />
@@ -161,8 +165,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
         <Text>David Ilie</Text>
         <Text dimColor> (</Text>
         <Text color="cyan">davidilie.com</Text>
-        <Text dimColor>)  ·  </Text>
-        <Text dimColor>s=settings  q=quit</Text>
+        <Text dimColor>)  ·  s=settings  q=quit</Text>
       </Box>
     </Box>
   )
@@ -173,10 +176,7 @@ function TabBar({ tabs, active }: { tabs: readonly string[]; active: number }) {
     <Box>
       {tabs.map((t, i) => (
         <Box key={t} marginRight={1}>
-          {i === active
-            ? <Text bold inverse> {t} </Text>
-            : <Text dimColor> {t} </Text>
-          }
+          {i === active ? <Text bold inverse> {t} </Text> : <Text dimColor> {t} </Text>}
         </Box>
       ))}
     </Box>
@@ -188,10 +188,7 @@ function ViewBar({ views, active }: { views: readonly string[]; active: number }
     <Box>
       {views.map((v, i) => (
         <Box key={v} marginRight={2}>
-          {i === active
-            ? <Text bold color="cyan">[{v}]</Text>
-            : <Text dimColor>{v}</Text>
-          }
+          {i === active ? <Text bold color="cyan">[{v}]</Text> : <Text dimColor>{v}</Text>}
         </Box>
       ))}
       <Text dimColor>  d/w/m or ←→</Text>
@@ -223,7 +220,7 @@ function SettingsView({ config, cursor }: { config: Config; cursor: number }) {
   )
 }
 
-function DashboardView({ data }: { data: DashboardData }) {
+function DashboardView({ data, billing }: { data: DashboardData; billing: BillingData | null }) {
   return (
     <>
       <Box
@@ -242,10 +239,37 @@ function DashboardView({ data }: { data: DashboardData }) {
         <SummaryRow label="This Month" summary={data.month} />
       </Box>
 
-      {data.block && (
+      {billing && (
         <>
           <Box height={1} />
-          <BlockView block={data.block} />
+          <Box
+            flexDirection="column"
+            paddingLeft={1}
+            borderStyle="bold"
+            borderColor="yellow"
+            borderRight={false}
+            borderTop={false}
+            borderBottom={false}
+          >
+            <Text bold>Rate Limits</Text>
+            <Box height={1} />
+            {billing.session && (
+              <LimitBar label="Session" pct={billing.session.utilization} resets={billing.session.resetsAt} />
+            )}
+            {billing.weekly && (
+              <LimitBar label="Weekly" pct={billing.weekly.utilization} resets={billing.weekly.resetsAt} />
+            )}
+            {billing.sonnet && (
+              <LimitBar label="Sonnet" pct={billing.sonnet.utilization} resets={billing.sonnet.resetsAt} />
+            )}
+            {billing.extraUsage && (
+              <Box>
+                <Box width={10}><Text dimColor>Extra</Text></Box>
+                <Text color="yellow">${billing.extraUsage.used.toFixed(2)}</Text>
+                <Text dimColor> / ${billing.extraUsage.limit.toFixed(2)} limit</Text>
+              </Box>
+            )}
+          </Box>
         </>
       )}
 
@@ -259,35 +283,18 @@ function DashboardView({ data }: { data: DashboardData }) {
   )
 }
 
-function BlockView({ block }: { block: BlockInfo }) {
+function LimitBar({ label, pct, resets }: { label: string; pct: number; resets: string }) {
+  const width = 30
+  const filled = Math.round((pct / 100) * width)
+  const color = pct >= 80 ? 'red' : pct >= 50 ? 'yellow' : 'green'
   return (
-    <Box
-      flexDirection="column"
-      paddingLeft={1}
-      borderStyle="bold"
-      borderColor="yellow"
-      borderRight={false}
-      borderTop={false}
-      borderBottom={false}
-    >
-      <Box>
-        <Text bold>Active Block</Text>
-        <Text dimColor>  {block.remaining} remaining</Text>
-      </Box>
-      <Box height={1} />
-      <Box>
-        <ProgressBar percent={block.percent} width={36} />
-        <Text> </Text>
-        <Text bold>{Math.round(block.percent)}%</Text>
-      </Box>
-      <Box marginTop={1}>
-        <Text color="yellow">{fmt.currency(block.spent)}</Text>
-        <Text dimColor> spent  ·  ~</Text>
-        <Text>{fmt.currency(block.projected)}</Text>
-        <Text dimColor> proj  ·  </Text>
-        <Text color="red">{fmt.currency(block.burnRate)}</Text>
-        <Text dimColor>/hr</Text>
-      </Box>
+    <Box>
+      <Box width={10}><Text dimColor>{label}</Text></Box>
+      <Text color={color}>{'━'.repeat(filled)}</Text>
+      <Text dimColor>{'─'.repeat(width - filled)}</Text>
+      <Text> </Text>
+      <Text bold>{Math.round(pct)}%</Text>
+      <Text dimColor>  resets {resets}</Text>
     </Box>
   )
 }
@@ -302,30 +309,16 @@ function SummaryRow({ label, summary }: { label: string; summary: UsageSummary }
   )
 }
 
-function ProgressBar({ percent, width = 36 }: { percent: number; width?: number }) {
-  const filled = Math.round((percent / 100) * width)
-  return (
-    <Text>
-      <Text color="greenBright">{'━'.repeat(filled)}</Text>
-      <Text dimColor>{'─'.repeat(width - filled)}</Text>
-    </Text>
-  )
-}
-
 function TableView({ rows: allRows, scroll, maxRows, wide }: { rows: TableRow[]; scroll: number; maxRows: number; wide: boolean }) {
   const W = wide
     ? { label: 10, models: 18, input: 8, output: 8, cc: 8, cr: 9, total: 9, cost: 10 }
     : { label: 8, models: 14, input: 7, output: 7, cc: 7, cr: 8, total: 0, cost: 9 }
-
   const lineW = W.label + W.models + W.input + W.output + W.cc + W.cr + W.total + W.cost
 
   const totals = { input: 0, output: 0, cacheCreate: 0, cacheRead: 0, cost: 0 }
   for (const r of allRows) {
-    totals.input += r.input
-    totals.output += r.output
-    totals.cacheCreate += r.cacheCreate
-    totals.cacheRead += r.cacheRead
-    totals.cost += r.cost
+    totals.input += r.input; totals.output += r.output
+    totals.cacheCreate += r.cacheCreate; totals.cacheRead += r.cacheRead; totals.cost += r.cost
   }
 
   const clampedScroll = Math.min(scroll, Math.max(0, allRows.length - maxRows))
@@ -345,7 +338,6 @@ function TableView({ rows: allRows, scroll, maxRows, wide }: { rows: TableRow[];
         <Text bold>{fmt.col('Cost', W.cost)}</Text>
       </Text>
       <Text dimColor>{'─'.repeat(lineW)}</Text>
-
       {visible.map(r => (
         <Text key={r.label}>
           <Text color="cyan">{fmt.col(fmtLabel(r.label), W.label, 'left')}</Text>
@@ -358,9 +350,7 @@ function TableView({ rows: allRows, scroll, maxRows, wide }: { rows: TableRow[];
           <Text bold color="yellow">{fmt.col(fmt.currency(r.cost), W.cost)}</Text>
         </Text>
       ))}
-
       {more > 0 && <Text dimColor>  ↓ {more} more</Text>}
-
       <Text dimColor>{'─'.repeat(lineW)}</Text>
       <Text>
         <Text bold color="greenBright">{fmt.col('Total', W.label, 'left')}</Text>
@@ -372,7 +362,6 @@ function TableView({ rows: allRows, scroll, maxRows, wide }: { rows: TableRow[];
         {W.total > 0 && <Text bold color="yellow">{fmt.col(fmt.tokens(totals.input + totals.output + totals.cacheCreate + totals.cacheRead), W.total)}</Text>}
         <Text bold color="yellowBright">{fmt.col(fmt.currency(totals.cost), W.cost)}</Text>
       </Text>
-
       <Box marginTop={1}>
         <Text dimColor>↑↓ PgUp/Dn scroll  ·  {allRows.length} rows  ·  {clampedScroll + 1}-{Math.min(clampedScroll + maxRows, allRows.length)}</Text>
       </Box>
