@@ -4,31 +4,7 @@ Terminal dashboard for Claude Code usage, costs, and rate limits.
 
 Built with [Ink](https://github.com/vadimdemedes/ink), TypeScript.
 
-```
-  ◉ tokmon  ·  2s                                    02:48:39 AM
-
-   Dashboard   Table    Tab/←→
-
-  ┃ Claude
-  ┃
-  ┃ Today              $372.55     614.9M tokens
-  ┃ This Week          $606.23     970.5M tokens
-  ┃ This Month        $1543.48       2.5B tokens
-  ┃
-  ┃ Burn rate          $132.65/hr
-
-  ┃ Rate Limits
-  ┃
-  ┃ Session   ━━━━────────────────────────── 13%  resets 4h 11m
-  ┃ Weekly    ━━━━━━━━━━━━━───────────────── 44%  resets 17h 11m
-  ┃ Sonnet    ━───────────────────────────── 3%  resets 2d 20h
-  ┃ Extra     $0.00 / $42.50 limit
-
-  ──────────────────────────────────────────────────
-  Total $1543.48
-
-  by David Ilie (davidilie.com)  ·  s=settings  q=quit
-```
+![tokmon dashboard](screenshot.png)
 
 ## Quick Start
 
