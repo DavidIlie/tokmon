@@ -73,6 +73,7 @@ Then just run `tokmon`. Press `q` to quit.
 - **Today / This Week / This Month** — cost and token summaries
 - **Burn rate** — current $/hr
 - **Rate Limits** — real-time session (5h), weekly (7d), and Sonnet utilization with reset countdowns, fetched from Anthropic's OAuth API
+- **Peak / Off-Peak badge** — shown in the header, fetched from [promoclock.co](https://promoclock.co) (peak hours drain session limits faster)
 
 ### Table
 

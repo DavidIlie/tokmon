@@ -11,11 +11,18 @@ export interface RateLimit {
   resetsAt: string
 }
 
+export interface PeakStatus {
+  state: 'peak' | 'off-peak' | 'weekend'
+  label: string
+  minutesUntilChange: number | null
+}
+
 export interface BillingData {
   session: RateLimit | null
   weekly: RateLimit | null
   sonnet: RateLimit | null
   extraUsage: { limit: number; used: number } | null
+  peak: PeakStatus | null
   error: string | null
 }
 
@@ -61,12 +68,22 @@ async function getAccessToken(): Promise<string | null> {
   return readCredentialsFile()
 }
 
-const EMPTY: BillingData = { session: null, weekly: null, sonnet: null, extraUsage: null, error: null }
+const EMPTY: BillingData = { session: null, weekly: null, sonnet: null, extraUsage: null, peak: null, error: null }
 
 export async function fetchBilling(): Promise<BillingData> {
   const token = await getAccessToken()
   if (!token) return { ...EMPTY, error: 'No OAuth token — run claude and log in' }
 
+  const [usageRes, peak] = await Promise.all([
+    fetchUsage(token),
+    fetchPeakStatus(),
+  ])
+
+  if ('error' in usageRes) return { ...EMPTY, peak, error: usageRes.error }
+  return { ...usageRes.data, peak, error: null }
+}
+
+async function fetchUsage(token: string): Promise<{ data: Omit<BillingData, 'peak' | 'error'> } | { error: string }> {
   try {
     const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
       headers: {
@@ -77,32 +94,67 @@ export async function fetchBilling(): Promise<BillingData> {
       signal: AbortSignal.timeout(10000),
     })
 
-    if (res.status === 429) return { ...EMPTY, error: 'Rate limited — retrying next poll' }
-    if (res.status === 401) return { ...EMPTY, error: 'Token expired — restart Claude Code' }
-    if (!res.ok) return { ...EMPTY, error: `API ${res.status}` }
+    if (res.status === 429) return { error: 'Rate limited — retrying next poll' }
+    if (res.status === 401) return { error: 'Token expired — restart Claude Code' }
+    if (!res.ok) return { error: `API ${res.status}` }
 
     const data = await res.json() as OAuthResponse
     return {
-      session: data.five_hour ? {
-        utilization: data.five_hour.utilization,
-        resetsAt: formatReset(data.five_hour.resets_at),
-      } : null,
-      weekly: data.seven_day ? {
-        utilization: data.seven_day.utilization,
-        resetsAt: formatReset(data.seven_day.resets_at),
-      } : null,
-      sonnet: data.seven_day_sonnet ? {
-        utilization: data.seven_day_sonnet.utilization,
-        resetsAt: formatReset(data.seven_day_sonnet.resets_at),
-      } : null,
-      extraUsage: data.extra_usage?.is_enabled ? {
-        limit: data.extra_usage.monthly_limit / 100,
-        used: data.extra_usage.used_credits / 100,
-      } : null,
-      error: null,
+      data: {
+        session: data.five_hour ? {
+          utilization: data.five_hour.utilization,
+          resetsAt: formatReset(data.five_hour.resets_at),
+        } : null,
+        weekly: data.seven_day ? {
+          utilization: data.seven_day.utilization,
+          resetsAt: formatReset(data.seven_day.resets_at),
+        } : null,
+        sonnet: data.seven_day_sonnet ? {
+          utilization: data.seven_day_sonnet.utilization,
+          resetsAt: formatReset(data.seven_day_sonnet.resets_at),
+        } : null,
+        extraUsage: data.extra_usage?.is_enabled ? {
+          limit: data.extra_usage.monthly_limit / 100,
+          used: data.extra_usage.used_credits / 100,
+        } : null,
+      },
     }
   } catch {
-    return { ...EMPTY, error: 'Network error' }
+    return { error: 'Network error' }
+  }
+}
+
+interface PromoClockResponse {
+  status?: string
+  isPeak?: boolean
+  isOffPeak?: boolean
+  isWeekend?: boolean
+  label?: string
+  minutesUntilChange?: number
+}
+
+async function fetchPeakStatus(): Promise<PeakStatus | null> {
+  try {
+    const res = await fetch('https://promoclock.co/api/status', {
+      headers: { 'Accept': 'application/json', 'User-Agent': 'tokmon' },
+      signal: AbortSignal.timeout(3000),
+    })
+    if (!res.ok) return null
+    const data = await res.json() as PromoClockResponse
+
+    let state: PeakStatus['state']
+    if (data.isPeak === true || data.status === 'peak') state = 'peak'
+    else if (data.isWeekend === true || data.status === 'weekend') state = 'weekend'
+    else if (data.isOffPeak === true || data.status === 'off_peak' || data.status === 'off-peak') state = 'off-peak'
+    else return null
+
+    return {
+      state,
+      label: state === 'peak' ? 'Peak' : state === 'weekend' ? 'Weekend' : 'Off-Peak',
+      minutesUntilChange: typeof data.minutesUntilChange === 'number' ? data.minutesUntilChange : null,
+    }
+  } catch {
+    return null
   }
 }
 

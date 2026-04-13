@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Box, Text, useInput, useStdout, useApp, type DOMElement } from 'ink'
 import { useMouse, useOnMouseClick } from '@zenobius/ink-mouse'
 import { fetchDashboard, fetchTable, type DashboardData, type TableData } from './data'
-import { fetchBilling, type BillingData } from './billing'
+import { fetchBilling, type BillingData, type PeakStatus } from './billing'
 import { loadConfig, saveConfig, configLocation, type Config } from './config'
 import * as fmt from './format'
 import type { UsageSummary, TableRow } from './types'
@@ -178,7 +178,15 @@ export function App({ interval: cliInterval }: { interval?: number }) {
           <Text bold color="greenBright">{'◉'} tokmon</Text>
           <Text dimColor>  ·  every {cliInterval ? cliInterval / 1000 : cfg.interval}s</Text>
         </Box>
-        <Text dimColor>{fmt.time(updated)}</Text>
+        <Box>
+          {billing?.peak && (
+            <>
+              <PeakBadge peak={billing.peak} />
+              <Text dimColor>  ·  </Text>
+            </>
+          )}
+          <Text dimColor>{fmt.time(updated)}</Text>
+        </Box>
       </Box>
 
       {showSettings ? (
@@ -364,6 +372,26 @@ function DashboardView({ data, billing }: { data: DashboardData; billing: Billin
       </Box>
     </>
   )
+}
+
+function PeakBadge({ peak }: { peak: PeakStatus }) {
+  const color = peak.state === 'peak' ? 'red' : 'green'
+  return (
+    <Box>
+      <Text color={color}>● </Text>
+      <Text bold color={color}>{peak.label}</Text>
+      {peak.minutesUntilChange !== null && peak.minutesUntilChange > 0 && (
+        <Text dimColor> ({fmtMinutes(peak.minutesUntilChange)})</Text>
+      )}
+    </Box>
+  )
+}
+
+function fmtMinutes(mins: number): string {
+  if (mins < 60) return `${mins}m`
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  return m === 0 ? `${h}h` : `${h}h ${m}m`
 }
 
 function LimitBar({ label, pct, resets }: { label: string; pct: number; resets: string }) {
