@@ -4,6 +4,7 @@ import { useMouse, useOnMouseClick } from '@zenobius/ink-mouse'
 import { fetchDashboard, fetchTable, type DashboardData, type TableData } from './data'
 import { fetchBilling, type BillingData, type PeakStatus } from './billing'
 import { loadConfig, saveConfig, configLocation, type Config } from './config'
+import { resolveTimezone, isValidTimezone, systemTimezone } from './tz'
 import * as fmt from './format'
 import type { UsageSummary, TableRow } from './types'
 
@@ -12,7 +13,8 @@ const VIEWS = ['Daily', 'Weekly', 'Monthly'] as const
 const SORTS = ['date ↑', 'date ↓', 'cost ↑', 'cost ↓'] as const
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-const DEFAULT_CONFIG: Config = { interval: 2, billingInterval: 5, clearScreen: true }
+const DEFAULT_CONFIG: Config = { interval: 2, billingInterval: 5, clearScreen: true, timezone: null }
+const SETTINGS_ROWS = 4
 const IS_TTY = process.stdin.isTTY === true
 
 export function App({ interval: cliInterval }: { interval?: number }) {
@@ -26,10 +28,12 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const [view, setView] = useState(0)
   const [cursor, setCursor] = useState(0)
   const [expanded, setExpanded] = useState(-1)
-  const [sort, setSort] = useState(0)
+  const [sort, setSort] = useState(1)
   const [showSettings, setShowSettings] = useState(false)
   const [config, setConfig] = useState<Config | null>(null)
   const [settingsCursor, setSettingsCursor] = useState(0)
+  const [tzEdit, setTzEdit] = useState<string | null>(null)
+  const [tzError, setTzError] = useState<string | null>(null)
   const tableLoadedOnce = useRef(false)
   const { stdout } = useStdout()
   const { exit } = useApp()
@@ -37,6 +41,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const cols = stdout?.columns ?? 80
   const interval = cliInterval ?? (config?.interval ?? 2) * 1000
   const cfg = config ?? DEFAULT_CONFIG
+  const tz = resolveTimezone(cfg.timezone)
 
   useEffect(() => {
     loadConfig().then(c => {
@@ -49,7 +54,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     let active = true
     const load = async () => {
       try {
-        const result = await fetchDashboard()
+        const result = await fetchDashboard(tz)
         if (active) { setDashboard(result); setError(null); setUpdated(new Date()) }
       } catch (e) {
         if (active) setError(e instanceof Error ? e.message : String(e))
@@ -58,7 +63,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     load()
     const id = setInterval(load, interval)
     return () => { active = false; clearInterval(id) }
-  }, [interval])
+  }, [interval, tz])
 
   const billingMs = cfg.billingInterval * 60_000
 
@@ -71,27 +76,32 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   }, [billingMs])
 
   useEffect(() => {
+    tableLoadedOnce.current = false
+    setTable(null)
+  }, [tz])
+
+  useEffect(() => {
     if (tab !== 1) return
     if (tableLoadedOnce.current && table) return
     let active = true
     setTableLoading(true)
-    fetchTable().then(result => {
+    fetchTable(tz).then(result => {
       if (active) { setTable(result); setTableLoading(false); tableLoadedOnce.current = true }
     }).catch(() => { if (active) setTableLoading(false) })
     return () => { active = false }
-  }, [tab])
+  }, [tab, tz])
 
   useEffect(() => {
     if (tab !== 1 || !tableLoadedOnce.current) return
     let active = true
     const id = setInterval(async () => {
       try {
-        const result = await fetchTable()
+        const result = await fetchTable(tz)
         if (active) setTable(result)
       } catch {}
     }, Math.max(interval, 10000))
     return () => { active = false; clearInterval(id) }
-  }, [tab, interval])
+  }, [tab, interval, tz])
 
   const resetView = useCallback(() => {
     setCursor(0)
@@ -113,12 +123,32 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   }, [tab])
 
   useInput((input, key) => {
+    if (showSettings && tzEdit !== null) {
+      if (key.escape) { setTzEdit(null); setTzError(null); return }
+      if (key.return) {
+        const val = tzEdit.trim()
+        if (val === '' || val.toLowerCase() === 'system') {
+          updateConfig(c => ({ ...c, timezone: null }))
+          setTzEdit(null); setTzError(null)
+        } else if (isValidTimezone(val)) {
+          updateConfig(c => ({ ...c, timezone: val }))
+          setTzEdit(null); setTzError(null)
+        } else {
+          setTzError(`Invalid: ${val}`)
+        }
+        return
+      }
+      if (key.backspace || key.delete) { setTzEdit(s => (s ?? '').slice(0, -1)); setTzError(null); return }
+      if (input && !key.ctrl && !key.meta) { setTzEdit(s => (s ?? '') + input); setTzError(null); return }
+      return
+    }
+
     if (input === 'q') { exit(); return }
 
     if (showSettings) {
       if (key.escape || input === 's') setShowSettings(false)
       if (key.upArrow) setSettingsCursor(c => Math.max(0, c - 1))
-      if (key.downArrow) setSettingsCursor(c => Math.min(2, c + 1))
+      if (key.downArrow) setSettingsCursor(c => Math.min(SETTINGS_ROWS - 1, c + 1))
       if (settingsCursor === 0) {
         if (key.leftArrow) updateConfig(c => ({ ...c, interval: Math.max(1, c.interval - 1) }))
         if (key.rightArrow) updateConfig(c => ({ ...c, interval: c.interval + 1 }))
@@ -129,6 +159,12 @@ export function App({ interval: cliInterval }: { interval?: number }) {
       }
       if (settingsCursor === 2 && (key.leftArrow || key.rightArrow || key.return)) {
         updateConfig(c => ({ ...c, clearScreen: !c.clearScreen }))
+      }
+      if (settingsCursor === 3) {
+        if (key.return) { setTzEdit(cfg.timezone ?? ''); setTzError(null) }
+        if (key.leftArrow || key.rightArrow) {
+          updateConfig(c => ({ ...c, timezone: c.timezone === null ? systemTimezone() : null }))
+        }
       }
       return
     }
@@ -185,12 +221,12 @@ export function App({ interval: cliInterval }: { interval?: number }) {
               <Text dimColor>  ·  </Text>
             </>
           )}
-          <Text dimColor>{fmt.time(updated)}</Text>
+          <Text dimColor>{fmt.time(updated, tz)}</Text>
         </Box>
       </Box>
 
       {showSettings ? (
-        <SettingsView config={cfg} cursor={settingsCursor} />
+        <SettingsView config={cfg} cursor={settingsCursor} tzEdit={tzEdit} tzError={tzError} resolvedTz={tz} />
       ) : (
         <>
           <Box marginTop={1}>
@@ -273,7 +309,9 @@ function sortRows(rows: TableRow[], sortIdx: number): TableRow[] {
   }
 }
 
-function SettingsView({ config, cursor }: { config: Config; cursor: number }) {
+function SettingsView({ config, cursor, tzEdit, tzError, resolvedTz }: { config: Config; cursor: number; tzEdit: string | null; tzError: string | null; resolvedTz: string }) {
+  const editing = tzEdit !== null
+  const tzDisplay = config.timezone === null ? `System (${resolvedTz})` : config.timezone
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text bold>Settings</Text>
@@ -298,8 +336,27 @@ function SettingsView({ config, cursor }: { config: Config; cursor: number }) {
         <Text>Clear screen        </Text>
         <Text bold color={config.clearScreen ? 'green' : 'red'}>{config.clearScreen ? 'on' : 'off'}</Text>
       </Box>
+      <Box>
+        <Text color={cursor === 3 ? 'green' : undefined}>{cursor === 3 ? '▸' : ' '} </Text>
+        <Text>Timezone            </Text>
+        {editing ? (
+          <>
+            <Text dimColor>[</Text>
+            <Text bold color="cyan">{tzEdit}</Text>
+            <Text color="cyan">_</Text>
+            <Text dimColor>]</Text>
+          </>
+        ) : (
+          <Text bold color="yellow">{tzDisplay}</Text>
+        )}
+      </Box>
+      {cursor === 3 && tzError && <Text color="red">  {tzError}</Text>}
       <Box height={1} />
-      <Text dimColor>↑↓ select  ←→ adjust  s/Esc close</Text>
+      {editing ? (
+        <Text dimColor>type IANA name (e.g. Europe/London) · empty = System · Enter save · Esc cancel</Text>
+      ) : (
+        <Text dimColor>↑↓ select  ←→ adjust  Enter edit tz  s/Esc close</Text>
+      )}
     </Box>
   )
 }

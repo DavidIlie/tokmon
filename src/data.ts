@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { UsageSummary, TableRow, ModelDetail } from './types'
+import { dayKey, monthKey, weekKey, startOfDay, startOfMonth, startOfWeek, monthsAgoStart } from './tz'
 
 const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> = {
   'claude-opus-4': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
@@ -197,19 +198,6 @@ function groupBy(entries: Entry[], keyFn: (e: Entry) => string): TableRow[] {
   return rows.sort((a, b) => a.label.localeCompare(b.label))
 }
 
-function isoWeekLabel(ts: number): string {
-  const d = new Date(ts)
-  const day = d.getDay()
-  const mondayOffset = day === 0 ? 6 : day - 1
-  const monday = new Date(d)
-  monday.setDate(d.getDate() - mondayOffset)
-  return monday.toISOString().slice(0, 10)
-}
-
-function monthLabel(ts: number): string {
-  return new Date(ts).toISOString().slice(0, 7)
-}
-
 export interface DashboardData {
   today: UsageSummary
   week: UsageSummary
@@ -223,14 +211,12 @@ export interface TableData {
   monthly: TableRow[]
 }
 
-export async function fetchDashboard(): Promise<DashboardData> {
-  const d = new Date()
-  const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime()
-  const todayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
-  const weekDay = d.getDay()
-  const weekStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() - (weekDay === 0 ? 6 : weekDay - 1)).getTime()
-
+export async function fetchDashboard(tz: string): Promise<DashboardData> {
   const now = Date.now()
+  const monthStart = startOfMonth(now, tz)
+  const todayStart = startOfDay(now, tz)
+  const weekStart = startOfWeek(now, tz)
+
   const entries = await loadEntries(monthStart)
   const todayEntries = entries.filter(e => e.ts >= todayStart)
 
@@ -254,14 +240,13 @@ export async function fetchDashboard(): Promise<DashboardData> {
   }
 }
 
-export async function fetchTable(): Promise<TableData> {
-  const d = new Date()
-  const lookback = new Date(d.getFullYear(), d.getMonth() - 6, 1).getTime()
+export async function fetchTable(tz: string): Promise<TableData> {
+  const lookback = monthsAgoStart(Date.now(), 6, tz)
   const entries = await loadEntries(lookback)
 
   return {
-    daily: groupBy(entries, e => new Date(e.ts).toISOString().slice(0, 10)),
-    weekly: groupBy(entries, e => isoWeekLabel(e.ts)),
-    monthly: groupBy(entries, e => monthLabel(e.ts)),
+    daily: groupBy(entries, e => dayKey(e.ts, tz)),
+    weekly: groupBy(entries, e => weekKey(e.ts, tz)),
+    monthly: groupBy(entries, e => monthKey(e.ts, tz)),
   }
 }

@@ -6,9 +6,10 @@ export interface Config {
   interval: number
   billingInterval: number
   clearScreen: boolean
+  timezone: string | null
 }
 
-const DEFAULTS: Config = { interval: 2, billingInterval: 5, clearScreen: true }
+const DEFAULTS: Config = { interval: 2, billingInterval: 5, clearScreen: true, timezone: null }
 
 function configDir(): string {
   if (process.platform === 'win32') {

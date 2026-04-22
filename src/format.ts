@@ -9,11 +9,12 @@ export function tokens(value: number): string {
   return String(value)
 }
 
-export function time(date: Date): string {
+export function time(date: Date, tz?: string): string {
   return date.toLocaleTimeString(undefined, {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
+    timeZone: tz,
   })
 }
 
