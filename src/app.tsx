@@ -241,7 +241,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
               <Box height={1} />
               {tableLoading && !table
                 ? <Spinner label="Loading 6 months of history" />
-                : <TableView rows={tableData} cursor={cursor} expanded={expanded} maxRows={rows - 12} wide={cols > 90}
+                : <TableView rows={tableData} cursor={cursor} expanded={expanded} maxRows={rows - 12} cols={cols}
                     onRowClick={(idx) => {
                       if (idx === cursor) setExpanded(e => e === idx ? -1 : idx)
                       else setCursor(idx)
@@ -477,10 +477,15 @@ function SummaryRow({ label, summary }: { label: string; summary: UsageSummary }
   )
 }
 
-function TableView({ rows: allRows, cursor, expanded, maxRows, wide, onRowClick }: { rows: TableRow[]; cursor: number; expanded: number; maxRows: number; wide: boolean; onRowClick: (idx: number) => void }) {
-  const W = wide
-    ? { label: 10, models: 18, input: 8, output: 8, cc: 8, cr: 9, total: 9, cost: 10 }
-    : { label: 8, models: 14, input: 7, output: 7, cc: 7, cr: 8, total: 0, cost: 9 }
+function TableView({ rows: allRows, cursor, expanded, maxRows, cols, onRowClick }: { rows: TableRow[]; cursor: number; expanded: number; maxRows: number; cols: number; onRowClick: (idx: number) => void }) {
+  const wide = cols > 90
+  const base = wide
+    ? { label: 12, input: 10, output: 10, cc: 10, cr: 11, total: 11, cost: 13 }
+    : { label: 8, input: 7, output: 7, cc: 7, cr: 8, total: 0, cost: 11 }
+  const fixed = base.label + base.input + base.output + base.cc + base.cr + base.total + base.cost
+  const minModels = wide ? 22 : 14
+  const available = cols - fixed - 6
+  const W = { ...base, models: Math.max(minModels, available) }
   const lineW = W.label + W.models + W.input + W.output + W.cc + W.cr + W.total + W.cost
 
   const totals = { input: 0, output: 0, cacheCreate: 0, cacheRead: 0, cost: 0 }
