@@ -1,4 +1,7 @@
 export function currency(value: number): string {
+  if (value >= 10000) {
+    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
   return `$${value.toFixed(2)}`
 }
 
