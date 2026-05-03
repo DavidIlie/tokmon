@@ -480,7 +480,7 @@ function SummaryRow({ label, summary }: { label: string; summary: UsageSummary }
 function TableView({ rows: allRows, cursor, expanded, maxRows, cols, onRowClick }: { rows: TableRow[]; cursor: number; expanded: number; maxRows: number; cols: number; onRowClick: (idx: number) => void }) {
   const wide = cols > 90
   const base = wide
-    ? { label: 12, input: 10, output: 10, cc: 10, cr: 11, total: 11, cost: 13 }
+    ? { label: 12, input: 10, output: 10, cc: 14, cr: 12, total: 11, cost: 13 }
     : { label: 8, input: 7, output: 7, cc: 7, cr: 8, total: 0, cost: 11 }
   const fixed = base.label + base.input + base.output + base.cc + base.cr + base.total + base.cost
   const minModels = wide ? 22 : 14
@@ -505,8 +505,8 @@ function TableView({ rows: allRows, cursor, expanded, maxRows, cols, onRowClick 
         <Text bold>{fmt.col('Models', W.models, 'left')}</Text>
         <Text bold>{fmt.col('Input', W.input)}</Text>
         <Text bold>{fmt.col('Output', W.output)}</Text>
-        <Text bold>{fmt.col('CchCrt', W.cc)}</Text>
-        <Text bold>{fmt.col('CchRd', W.cr)}</Text>
+        <Text bold>{fmt.col(wide ? 'Cache Create' : 'CchCrt', W.cc)}</Text>
+        <Text bold>{fmt.col(wide ? 'Cache Read' : 'CchRd', W.cr)}</Text>
         {W.total > 0 && <Text bold>{fmt.col('Total', W.total)}</Text>}
         <Text bold>{fmt.col('Cost', W.cost)}</Text>
       </Text>
