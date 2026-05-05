@@ -101,15 +101,17 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   }, [])
 
   const billingMs = cfg.billingInterval * 60_000
-  // always fetch every real slot — switching focus only filters the view, never refetches
-  const dataSlots: AccountSlot[] = cfg.accounts.length > 0 ? slots.slice(1) : slots
-  const dataSlotsKey = dataSlots.map(s => s.id ?? '__default__').join(',')
+  // always fetch every real slot — switching focus only filters view
+  const configReady = config !== null
+  const accountsKey = cfg.accounts.map(a => `${a.id}:${a.homeDir}`).join('|')
+  const dataSlotsRef = useRef<AccountSlot[]>([])
+  dataSlotsRef.current = cfg.accounts.length > 0 ? slots.slice(1) : slots
 
   useEffect(() => {
-    if (!config) return
+    if (!configReady) return
     let active = true
     const load = async () => {
-      await Promise.all(dataSlots.map(async (slot) => {
+      await Promise.all(dataSlotsRef.current.map(async (slot) => {
         try {
           const dashboard = await fetchDashboard(tz, slot.homeDir)
           if (!active) return
@@ -128,13 +130,13 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     load()
     const id = setInterval(load, interval)
     return () => { active = false; clearInterval(id) }
-  }, [interval, tz, config, dataSlotsKey])
+  }, [interval, tz, configReady, accountsKey])
 
   useEffect(() => {
-    if (!config) return
+    if (!configReady) return
     let active = true
     const load = async () => {
-      await Promise.all(dataSlots.map(async (slot) => {
+      await Promise.all(dataSlotsRef.current.map(async (slot) => {
         try {
           const billing = await fetchBilling(slot.homeDir)
           if (!active) return
@@ -150,7 +152,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     load()
     const id = setInterval(load, billingMs)
     return () => { active = false; clearInterval(id) }
-  }, [billingMs, config, dataSlotsKey])
+  }, [billingMs, configReady, accountsKey])
 
   useEffect(() => {
     tableLoadedOnce.current = false
@@ -501,11 +503,10 @@ export function App({ interval: cliInterval }: { interval?: number }) {
         />
       ) : (
         <>
-          <Box marginTop={1}>
+          <Box marginTop={1} marginBottom={1}>
             <TabBar tabs={TABS} active={tab} onSelect={(i) => { setTab(i); resetView() }} />
             <Text dimColor>  Tab/←→</Text>
           </Box>
-          <Box height={1} />
           {tab === 0 && (
             <>
               <DashboardView
@@ -514,19 +515,17 @@ export function App({ interval: cliInterval }: { interval?: number }) {
                 compact={visibleSlots.length > 1}
               />
               {slots.length > 1 && (
-                <Box marginTop={1} flexDirection="column">
-                  <Text bold>Accounts</Text>
-                  <Box marginTop={0}>
-                    <AccountStrip
-                      slots={slots}
-                      activeIdx={activeSlotIdx}
-                      onSelect={(i) => {
-                        const id = slots[i].id
-                        updateConfig(c => ({ ...c, activeAccountId: id }))
-                        resetView()
-                      }}
-                    />
-                  </Box>
+                <Box marginTop={1}>
+                  <Text dimColor>focus  </Text>
+                  <AccountStrip
+                    slots={slots}
+                    activeIdx={activeSlotIdx}
+                    onSelect={(i) => {
+                      const id = slots[i].id
+                      updateConfig(c => ({ ...c, activeAccountId: id }))
+                      resetView()
+                    }}
+                  />
                 </Box>
               )}
             </>
@@ -586,6 +585,7 @@ function AccountStrip({ slots, activeIdx, onSelect }: { slots: AccountSlot[]; ac
       {slots.map((s, i) => {
         const active = i === activeIdx
         const dot = s.id === null ? '✦' : '●'
+        const label = truncateName(s.name, 16)
         return (
           <ClickableBox key={s.id ?? '__all__'} onClick={() => onSelect(i)} marginRight={2}>
             <Text dimColor={!active}>{i}</Text>
@@ -593,9 +593,9 @@ function AccountStrip({ slots, activeIdx, onSelect }: { slots: AccountSlot[]; ac
             <Text color={s.color} bold={active} dimColor={!active}>{dot}</Text>
             <Text>{' '}</Text>
             {active ? (
-              <Text bold color={s.color}>{s.name}</Text>
+              <Text bold color={s.color}>{label}</Text>
             ) : (
-              <Text dimColor>{s.name}</Text>
+              <Text dimColor>{label}</Text>
             )}
           </ClickableBox>
         )
@@ -726,9 +726,8 @@ function SettingsView({
           <Box key={acc.id}>
             <Text color={selected ? 'green' : undefined}>{selected ? '▸' : ' '} </Text>
             <Text color={acc.color || 'cyan'}>{isActive ? '●' : '○'} </Text>
-            <Box width={16}><Text bold>{acc.name}</Text></Box>
-            <Box width={14}><Text dimColor>{acc.id}</Text></Box>
-            <Text dimColor>{acc.homeDir}</Text>
+            <Text bold>{truncateName(acc.name, 24)}</Text>
+            <Text dimColor>  {truncateName(acc.homeDir, 28)}</Text>
           </Box>
         )
       })}
@@ -957,34 +956,19 @@ function DashboardView({ slots, stats, compact: _compact }: { slots: AccountSlot
         borderTop={false}
         borderBottom={false}
       >
-        <Box>
-          <Text bold>Claude</Text>
-          {isMulti && <Text dimColor>   all accounts ({items.length})</Text>}
-          {!isMulti && items[0].slot.id && (
-            <>
-              <Text dimColor>   </Text>
-              <Text color={items[0].slot.color}>● </Text>
-              <Text dimColor>{items[0].slot.name}</Text>
-            </>
-          )}
-        </Box>
-        <Box height={1} />
+        <Text bold>Claude</Text>
         <SummaryRow label="Today" summary={agg.today} />
         <SummaryRow label="This Week" summary={agg.week} />
         <SummaryRow label="This Month" summary={agg.month} />
         {agg.burnRate > 0 && (
-          <>
-            <Box height={1} />
-            <Box>
-              <Box width={14}><Text dimColor>Burn rate</Text></Box>
-              <Box width={12} justifyContent="flex-end"><Text color="red">{fmt.currency(agg.burnRate)}</Text></Box>
-              <Text dimColor>/hr</Text>
-            </Box>
-          </>
+          <Box>
+            <Box width={14}><Text dimColor>Burn rate</Text></Box>
+            <Box width={12} justifyContent="flex-end"><Text color="red">{fmt.currency(agg.burnRate)}</Text></Box>
+            <Text dimColor>/hr</Text>
+          </Box>
         )}
       </Box>
 
-      <Box height={1} />
       <RateLimitsCard items={items} />
     </Box>
   )
@@ -1032,7 +1016,6 @@ function RateLimitsCard({ items }: { items: { slot: AccountSlot; s: AccountStats
       borderBottom={false}
     >
       <Text bold>Rate Limits</Text>
-      <Box height={1} />
       {!anyData ? (
         anyError ? (
           <Box flexDirection="column">
@@ -1047,12 +1030,12 @@ function RateLimitsCard({ items }: { items: { slot: AccountSlot; s: AccountStats
         ) : <Text dimColor>Fetching...</Text>
       ) : (
         <Box flexDirection="column">
-          <MetricBlock label="Total Usage" sublabel="5h session" pick={b => b?.session} items={items} showResets />
-          <MetricBlock label="This Week" sublabel="7-day" pick={b => b?.weekly} items={items} showResets />
-          <MetricBlock label="Sonnet" sublabel="7-day sonnet" pick={b => b?.sonnet} items={items} />
+          <MetricBlock label="5h" pick={b => b?.session} items={items} showResets />
+          <MetricBlock label="Week" pick={b => b?.weekly} items={items} showResets />
+          <MetricBlock label="Sonnet" pick={b => b?.sonnet} items={items} />
           {items.some(i => i.s.billing?.extraUsage) && (
-            <Box flexDirection="column" marginTop={1}>
-              <Text bold dimColor>Extra Usage</Text>
+            <Box flexDirection="column">
+              <Text bold dimColor>Extra</Text>
               {items.map(({ slot, s }) => {
                 const e = s.billing?.extraUsage
                 if (!e) return null
@@ -1077,10 +1060,9 @@ function RateLimitsCard({ items }: { items: { slot: AccountSlot; s: AccountStats
 }
 
 function MetricBlock({
-  label, sublabel, pick, items, showResets,
+  label, pick, items, showResets,
 }: {
   label: string
-  sublabel: string
   pick: (b: BillingData | null) => { utilization: number; resetsAt: string } | null | undefined
   items: { slot: AccountSlot; s: AccountStats }[]
   showResets?: boolean
@@ -1093,11 +1075,8 @@ function MetricBlock({
   if (rows.every(r => r.lim === null && !r.error)) return null
 
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Box>
-        <Text bold>{label}</Text>
-        <Text dimColor>  {sublabel}</Text>
-      </Box>
+    <Box flexDirection="column">
+      <Text bold>{label}</Text>
       {rows.map(({ slot, lim, error }) => {
         if (lim) {
           return (

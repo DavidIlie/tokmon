@@ -1,6 +1,6 @@
 {
   "name": "tokmon",
-  "version": "0.12.4",
+  "version": "0.12.5",
   "description": "Terminal dashboard for Claude Code usage and costs",
   "type": "module",
   "bin": {
