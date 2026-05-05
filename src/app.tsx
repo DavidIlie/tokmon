@@ -957,18 +957,23 @@ function DashboardView({ slots, stats, compact: _compact }: { slots: AccountSlot
         borderBottom={false}
       >
         <Text bold>Claude</Text>
+        <Box height={1} />
         <SummaryRow label="Today" summary={agg.today} />
         <SummaryRow label="This Week" summary={agg.week} />
         <SummaryRow label="This Month" summary={agg.month} />
         {agg.burnRate > 0 && (
-          <Box>
-            <Box width={14}><Text dimColor>Burn rate</Text></Box>
-            <Box width={12} justifyContent="flex-end"><Text color="red">{fmt.currency(agg.burnRate)}</Text></Box>
-            <Text dimColor>/hr</Text>
-          </Box>
+          <>
+            <Box height={1} />
+            <Box>
+              <Box width={14}><Text dimColor>Burn rate</Text></Box>
+              <Box width={12} justifyContent="flex-end"><Text color="red">{fmt.currency(agg.burnRate)}</Text></Box>
+              <Text dimColor>/hr</Text>
+            </Box>
+          </>
         )}
       </Box>
 
+      <Box height={1} />
       <RateLimitsCard items={items} />
     </Box>
   )
@@ -1016,6 +1021,7 @@ function RateLimitsCard({ items }: { items: { slot: AccountSlot; s: AccountStats
       borderBottom={false}
     >
       <Text bold>Rate Limits</Text>
+      <Box height={1} />
       {!anyData ? (
         anyError ? (
           <Box flexDirection="column">
@@ -1031,10 +1037,12 @@ function RateLimitsCard({ items }: { items: { slot: AccountSlot; s: AccountStats
       ) : (
         <Box flexDirection="column">
           <MetricBlock label="5h" pick={b => b?.session} items={items} showResets />
+          <Box height={1} />
           <MetricBlock label="Week" pick={b => b?.weekly} items={items} showResets />
+          <Box height={1} />
           <MetricBlock label="Sonnet" pick={b => b?.sonnet} items={items} />
           {items.some(i => i.s.billing?.extraUsage) && (
-            <Box flexDirection="column">
+            <Box flexDirection="column" marginTop={1}>
               <Text bold dimColor>Extra</Text>
               {items.map(({ slot, s }) => {
                 const e = s.billing?.extraUsage
