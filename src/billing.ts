@@ -62,16 +62,15 @@ async function readMacKeychain(): Promise<string | null> {
 }
 
 async function getAccessToken(homeDir?: string): Promise<string | null> {
-  if (homeDir) {
-    const fromFile = await readCredentialsFile(homeDir)
-    if (fromFile) return fromFile
-    return null
+  const isDefault = !homeDir || homeDir === homedir()
+  if (isDefault) {
+    if (process.platform === 'darwin') {
+      const token = await readMacKeychain()
+      if (token) return token
+    }
+    return readCredentialsFile(homeDir)
   }
-  if (process.platform === 'darwin') {
-    const token = await readMacKeychain()
-    if (token) return token
-  }
-  return readCredentialsFile()
+  return readCredentialsFile(homeDir)
 }
 
 const EMPTY: BillingData = { session: null, weekly: null, sonnet: null, extraUsage: null, peak: null, error: null }

@@ -26,6 +26,10 @@ const IS_TTY = process.stdin.isTTY === true
 
 type AccountSlot = { id: string | null; name: string; homeDir: string | undefined; color: string }
 
+function truncateName(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n - 1) + '…' : s
+}
+
 function buildSlots(config: Config): AccountSlot[] {
   const slots: AccountSlot[] = []
   if (config.accounts.length === 0) {
@@ -96,33 +100,58 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     })
   }, [])
 
+  const billingMs = cfg.billingInterval * 60_000
+  const slotIdsKey = (activeSlot.id === null && cfg.accounts.length > 0 ? slots.slice(1) : [activeSlot])
+    .map(s => s.id ?? '__default__').join(',')
+
   useEffect(() => {
     if (!config) return
     let active = true
     const slotsToLoad = activeSlot.id === null && cfg.accounts.length > 0 ? slots.slice(1) : [activeSlot]
     const load = async () => {
-      try {
-        const next = new Map<string, AccountStats>()
-        await Promise.all(slotsToLoad.map(async (slot) => {
-          const [dashboard, billing] = await Promise.all([
-            fetchDashboard(tz, slot.homeDir),
-            fetchBilling(slot.homeDir),
-          ])
-          next.set(slotKey(slot), { slot, dashboard, billing })
-        }))
-        if (active) {
-          setStats(next)
-          setError(null)
-          setUpdated(new Date())
+      await Promise.all(slotsToLoad.map(async (slot) => {
+        try {
+          const dashboard = await fetchDashboard(tz, slot.homeDir)
+          if (!active) return
+          setStats(prev => {
+            const next = new Map(prev)
+            const cur = next.get(slotKey(slot)) ?? { slot, dashboard: null, billing: null }
+            next.set(slotKey(slot), { ...cur, slot, dashboard })
+            return next
+          })
+        } catch (e) {
+          if (active) setError(e instanceof Error ? e.message : String(e))
         }
-      } catch (e) {
-        if (active) setError(e instanceof Error ? e.message : String(e))
-      }
+      }))
+      if (active) { setError(null); setUpdated(new Date()) }
     }
     load()
     const id = setInterval(load, interval)
     return () => { active = false; clearInterval(id) }
-  }, [interval, tz, config, activeSlot.id])
+  }, [interval, tz, config, slotIdsKey])
+
+  useEffect(() => {
+    if (!config) return
+    let active = true
+    const slotsToLoad = activeSlot.id === null && cfg.accounts.length > 0 ? slots.slice(1) : [activeSlot]
+    const load = async () => {
+      await Promise.all(slotsToLoad.map(async (slot) => {
+        try {
+          const billing = await fetchBilling(slot.homeDir)
+          if (!active) return
+          setStats(prev => {
+            const next = new Map(prev)
+            const cur = next.get(slotKey(slot)) ?? { slot, dashboard: null, billing: null }
+            next.set(slotKey(slot), { ...cur, slot, billing })
+            return next
+          })
+        } catch {}
+      }))
+    }
+    load()
+    const id = setInterval(load, billingMs)
+    return () => { active = false; clearInterval(id) }
+  }, [billingMs, config, slotIdsKey])
 
   useEffect(() => {
     tableLoadedOnce.current = false
@@ -263,6 +292,22 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     }))
   }
 
+  function moveAccount(idx: number, dir: -1 | 1): void {
+    updateConfig(c => {
+      const next = [...c.accounts]
+      const target = idx + dir
+      if (target < 0 || target >= next.length) return c
+      ;[next[idx], next[target]] = [next[target], next[idx]]
+      return { ...c, accounts: next }
+    })
+    setSettingsCursor(c => {
+      const target = c + dir
+      const min = accountRowsStart
+      const max = accountRowsStart + cfg.accounts.length - 1
+      return Math.max(min, Math.min(max, target))
+    })
+  }
+
   // Settings rows = general (4) + accounts list + add row
   const accountRowsStart = GENERAL_ROWS
   const totalSettingsRows = GENERAL_ROWS + cfg.accounts.length + 1
@@ -333,6 +378,13 @@ export function App({ interval: cliInterval }: { interval?: number }) {
 
     if (showSettings) {
       if (key.escape || input === 's') { setShowSettings(false); return }
+      // Reorder accounts: Shift+↑/↓ on account row
+      const accIdxNav = settingsCursor - accountRowsStart
+      const onAccountRow = accIdxNav >= 0 && accIdxNav < cfg.accounts.length
+      if (onAccountRow && key.shift && (key.upArrow || key.downArrow)) {
+        moveAccount(accIdxNav, key.upArrow ? -1 : 1)
+        return
+      }
       if (key.upArrow) { setSettingsCursor(c => Math.max(0, c - 1)); return }
       if (key.downArrow) { setSettingsCursor(c => Math.min(totalSettingsRows - 1, c + 1)); return }
 
@@ -688,7 +740,7 @@ function SettingsView({
       {editingTz ? (
         <Text dimColor>type IANA name (e.g. Europe/London) · empty = System · Enter save · Esc cancel</Text>
       ) : cursor >= accountRowsStart && cursor < accountRowsStart + config.accounts.length ? (
-        <Text dimColor>↑↓ select  ·  Enter edit  ·  space activate  ·  d delete  ·  s/Esc close</Text>
+        <Text dimColor>↑↓ select  ·  ⇧↑↓ reorder  ·  Enter edit  ·  space activate  ·  d delete  ·  s/Esc close</Text>
       ) : cursor === accountRowsStart + config.accounts.length ? (
         <Text dimColor>↑↓ select  ·  Enter add account  ·  s/Esc close</Text>
       ) : (
@@ -983,7 +1035,7 @@ function RateLimitsCard({ items }: { items: { slot: AccountSlot; s: AccountStats
             {items.map(({ slot, s }) => s.billing?.error && (
               <Box key={slot.id ?? '__default__'}>
                 <Text color={slot.color}>● </Text>
-                <Box width={12}><Text dimColor>{slot.name}</Text></Box>
+                <Box width={22}><Text dimColor>{truncateName(slot.name, 20)}</Text></Box>
                 <Text color="red">{s.billing.error}</Text>
               </Box>
             ))}
@@ -1003,7 +1055,7 @@ function RateLimitsCard({ items }: { items: { slot: AccountSlot; s: AccountStats
                 return (
                   <Box key={slot.id ?? '__default__'}>
                     <Text color={slot.color}>● </Text>
-                    <Box width={12}><Text dimColor>{slot.name}</Text></Box>
+                    <Box width={22}><Text dimColor>{truncateName(slot.name, 20)}</Text></Box>
                     <Text color="yellow">${e.used.toFixed(2)}</Text>
                     <Text dimColor> / ${e.limit.toFixed(2)}</Text>
                   </Box>
@@ -1065,7 +1117,7 @@ function AccountLimitBar({
     <Box>
       <Text color={slot.color}>● </Text>
       {showName ? (
-        <Box width={12}><Text dimColor>{slot.name}</Text></Box>
+        <Box width={22}><Text dimColor>{truncateName(slot.name, 20)}</Text></Box>
       ) : (
         <Box width={2}><Text> </Text></Box>
       )}
