@@ -879,69 +879,49 @@ function ColorField({ value, focused }: { value: string; focused: boolean }) {
   )
 }
 
-function DashboardView({ slots, stats, compact }: { slots: AccountSlot[]; stats: Map<string, AccountStats>; compact: boolean }) {
+function DashboardView({ slots, stats, compact: _compact }: { slots: AccountSlot[]; stats: Map<string, AccountStats>; compact: boolean }) {
   const slotKey = (s: AccountSlot) => s.id ?? '__default__'
-  if (compact) {
-    const accountStats = slots
-      .map(slot => ({ slot, s: stats.get(slotKey(slot)) }))
-      .filter((x): x is { slot: AccountSlot; s: AccountStats } => !!x.s?.dashboard)
-    return <ComparisonView accountStats={accountStats} />
-  }
-  const slot = slots[0]
-  const s = stats.get(slotKey(slot))
-  if (!s?.dashboard) {
-    return (
-      <Box>
-        <Text color={slot.color} bold>● {slot.name} </Text>
-        <Text dimColor>loading...</Text>
-      </Box>
-    )
-  }
-  return <SoloAccountCard slot={slot} dashboard={s.dashboard} billing={s.billing} />
-}
+  const items = slots
+    .map(slot => ({ slot, s: stats.get(slotKey(slot)) }))
+    .filter((x): x is { slot: AccountSlot; s: AccountStats } => !!x.s?.dashboard)
 
-function bar(value: number, max: number, width: number): { filled: number; empty: number } {
-  if (max <= 0) return { filled: 0, empty: width }
-  const filled = Math.max(0, Math.min(width, Math.round((value / max) * width)))
-  return { filled, empty: width - filled }
-}
+  if (items.length === 0) return <Text dimColor>Loading...</Text>
 
-function SoloAccountCard({ slot, dashboard, billing }: { slot: AccountSlot; dashboard: DashboardData; billing: BillingData | null }) {
-  const maxCost = Math.max(dashboard.today.cost, dashboard.week.cost, dashboard.month.cost, 0.01)
-  const maxTokens = Math.max(dashboard.today.tokens, dashboard.week.tokens, dashboard.month.tokens, 1)
-  const rows = [
-    { label: 'Today', s: dashboard.today },
-    { label: 'This Week', s: dashboard.week },
-    { label: 'This Month', s: dashboard.month },
-  ]
+  const agg = aggregateUsage(items.map(i => i.s.dashboard!))
+  const isMulti = items.length > 1
+
   return (
     <Box flexDirection="column">
-      <Box>
-        <Text color={slot.color} bold>● {slot.name}</Text>
-        {slot.id && <Text dimColor>   {slot.id}</Text>}
-      </Box>
-
       <Box
         flexDirection="column"
-        marginTop={1}
         paddingLeft={1}
         borderStyle="bold"
-        borderColor={slot.color}
+        borderColor={isMulti ? 'green' : items[0].slot.color}
         borderRight={false}
         borderTop={false}
         borderBottom={false}
       >
-        <Text bold>Usage</Text>
+        <Box>
+          <Text bold>Claude</Text>
+          {isMulti && <Text dimColor>   all accounts ({items.length})</Text>}
+          {!isMulti && items[0].slot.id && (
+            <>
+              <Text dimColor>   </Text>
+              <Text color={items[0].slot.color}>● </Text>
+              <Text dimColor>{items[0].slot.name}</Text>
+            </>
+          )}
+        </Box>
         <Box height={1} />
-        {rows.map(r => (
-          <DualBarRow key={r.label} label={r.label} cost={r.s.cost} tokens={r.s.tokens} maxCost={maxCost} maxTokens={maxTokens} color={slot.color} />
-        ))}
-        {dashboard.burnRate > 0 && (
+        <SummaryRow label="Today" summary={agg.today} />
+        <SummaryRow label="This Week" summary={agg.week} />
+        <SummaryRow label="This Month" summary={agg.month} />
+        {agg.burnRate > 0 && (
           <>
             <Box height={1} />
             <Box>
               <Box width={14}><Text dimColor>Burn rate</Text></Box>
-              <Box width={12} justifyContent="flex-end"><Text color="red">{fmt.currency(dashboard.burnRate)}</Text></Box>
+              <Box width={12} justifyContent="flex-end"><Text color="red">{fmt.currency(agg.burnRate)}</Text></Box>
               <Text dimColor>/hr</Text>
             </Box>
           </>
@@ -949,187 +929,151 @@ function SoloAccountCard({ slot, dashboard, billing }: { slot: AccountSlot; dash
       </Box>
 
       <Box height={1} />
-      <Box
-        flexDirection="column"
-        paddingLeft={1}
-        borderStyle="bold"
-        borderColor={billing?.error ? 'red' : 'yellow'}
-        borderRight={false}
-        borderTop={false}
-        borderBottom={false}
-      >
-        <Text bold>Rate Limits</Text>
-        <Box height={1} />
-        {billing?.error ? (
-          <Text color="red">{billing.error}</Text>
-        ) : billing?.session || billing?.weekly ? (
-          <>
-            {billing.session && <LimitBar label="Session" pct={billing.session.utilization} resets={billing.session.resetsAt} />}
-            {billing.weekly && <LimitBar label="Weekly" pct={billing.weekly.utilization} resets={billing.weekly.resetsAt} />}
-            {billing.sonnet && <LimitBar label="Sonnet" pct={billing.sonnet.utilization} resets={billing.sonnet.resetsAt} />}
-            {billing.extraUsage && (
-              <Box>
-                <Box width={10}><Text dimColor>Extra</Text></Box>
-                <Text color="yellow">${billing.extraUsage.used.toFixed(2)}</Text>
-                <Text dimColor> / ${billing.extraUsage.limit.toFixed(2)} limit</Text>
-              </Box>
-            )}
-          </>
-        ) : (
-          <Text dimColor>Fetching...</Text>
-        )}
-      </Box>
+      <RateLimitsCard items={items} />
     </Box>
   )
 }
 
-function DualBarRow({
-  label, cost, tokens, maxCost, maxTokens, color,
-}: {
-  label: string
-  cost: number
-  tokens: number
-  maxCost: number
-  maxTokens: number
-  color: string
-}) {
-  const W = 18
-  const c = bar(cost, maxCost, W)
-  const t = bar(tokens, maxTokens, W)
-  return (
-    <Box flexDirection="column" marginBottom={0}>
-      <Box>
-        <Box width={12}><Text dimColor>{label}</Text></Box>
-        <Text color={color}>{'█'.repeat(c.filled)}</Text>
-        <Text dimColor>{'░'.repeat(c.empty)}</Text>
-        <Text>  </Text>
-        <Box width={11} justifyContent="flex-end">
-          <Text bold color="yellow">{fmt.currency(cost)}</Text>
-        </Box>
-      </Box>
-      <Box>
-        <Box width={12}><Text> </Text></Box>
-        <Text color={color} dimColor>{'▓'.repeat(t.filled)}</Text>
-        <Text dimColor>{'░'.repeat(t.empty)}</Text>
-        <Text>  </Text>
-        <Box width={11} justifyContent="flex-end">
-          <Text dimColor>{fmt.tokens(tokens)} tk</Text>
-        </Box>
-      </Box>
-    </Box>
-  )
-}
-
-function ComparisonView({ accountStats }: { accountStats: { slot: AccountSlot; s: AccountStats }[] }) {
-  if (accountStats.length === 0) {
-    return <Text dimColor>No accounts loaded yet...</Text>
+function aggregateUsage(list: DashboardData[]): DashboardData {
+  const z: DashboardData = {
+    today: { cost: 0, tokens: 0 },
+    week: { cost: 0, tokens: 0 },
+    month: { cost: 0, tokens: 0 },
+    burnRate: 0,
   }
-  const periods = [
-    { key: 'Today', pick: (d: DashboardData) => d.today },
-    { key: 'This Week', pick: (d: DashboardData) => d.week },
-    { key: 'This Month', pick: (d: DashboardData) => d.month },
-  ] as const
+  for (const d of list) {
+    z.today.cost += d.today.cost; z.today.tokens += d.today.tokens
+    z.week.cost += d.week.cost; z.week.tokens += d.week.tokens
+    z.month.cost += d.month.cost; z.month.tokens += d.month.tokens
+    z.burnRate += d.burnRate
+  }
+  return z
+}
+
+function SummaryRow({ label, summary }: { label: string; summary: UsageSummary }) {
+  return (
+    <Box>
+      <Box width={14}><Text dimColor>{label}</Text></Box>
+      <Box width={12} justifyContent="flex-end"><Text bold color="yellow">{fmt.currency(summary.cost)}</Text></Box>
+      <Box width={18} justifyContent="flex-end"><Text dimColor>{fmt.tokens(summary.tokens)} tokens</Text></Box>
+    </Box>
+  )
+}
+
+function RateLimitsCard({ items }: { items: { slot: AccountSlot; s: AccountStats }[] }) {
+  const anyData = items.some(i => i.s.billing?.session || i.s.billing?.weekly || i.s.billing?.sonnet)
+  const anyError = items.some(i => i.s.billing?.error)
+  const borderColor = !anyData && anyError ? 'red' : 'yellow'
 
   return (
-    <Box flexDirection="column">
-      {periods.map((p, i) => {
-        const rows = accountStats.map(({ slot, s }) => ({
-          slot,
-          summary: p.pick(s.dashboard!),
-        }))
-        const maxCost = Math.max(0.01, ...rows.map(r => r.summary.cost))
-        const maxTokens = Math.max(1, ...rows.map(r => r.summary.tokens))
-        return (
-          <Box key={p.key} flexDirection="column" marginBottom={i < periods.length - 1 ? 1 : 0}>
-            <Box>
-              <Text bold dimColor>{p.key.toUpperCase()}</Text>
-            </Box>
-            {rows.map(({ slot, summary }) => (
-              <ComparisonRow
-                key={slot.id ?? '__default__'}
-                slot={slot}
-                cost={summary.cost}
-                tokens={summary.tokens}
-                maxCost={maxCost}
-                maxTokens={maxTokens}
-              />
+    <Box
+      flexDirection="column"
+      paddingLeft={1}
+      borderStyle="bold"
+      borderColor={borderColor}
+      borderRight={false}
+      borderTop={false}
+      borderBottom={false}
+    >
+      <Text bold>Rate Limits</Text>
+      <Box height={1} />
+      {!anyData ? (
+        anyError ? (
+          <Box flexDirection="column">
+            {items.map(({ slot, s }) => s.billing?.error && (
+              <Box key={slot.id ?? '__default__'}>
+                <Text color={slot.color}>● </Text>
+                <Box width={12}><Text dimColor>{slot.name}</Text></Box>
+                <Text color="red">{s.billing.error}</Text>
+              </Box>
             ))}
           </Box>
-        )
-      })}
-
-      <Box height={1} />
-      <Box flexDirection="column">
-        <Text bold dimColor>RATE LIMITS</Text>
-        {accountStats.map(({ slot, s }) => (
-          <CompactLimitsRow key={slot.id ?? '__default__'} slot={slot} billing={s.billing} />
-        ))}
-      </Box>
+        ) : <Text dimColor>Fetching...</Text>
+      ) : (
+        <Box flexDirection="column">
+          <MetricBlock label="Total Usage" sublabel="5h session" pick={b => b?.session} items={items} showResets />
+          <MetricBlock label="This Week" sublabel="7-day" pick={b => b?.weekly} items={items} showResets />
+          <MetricBlock label="Sonnet" sublabel="7-day sonnet" pick={b => b?.sonnet} items={items} />
+          {items.some(i => i.s.billing?.extraUsage) && (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold dimColor>Extra Usage</Text>
+              {items.map(({ slot, s }) => {
+                const e = s.billing?.extraUsage
+                if (!e) return null
+                return (
+                  <Box key={slot.id ?? '__default__'}>
+                    <Text color={slot.color}>● </Text>
+                    <Box width={12}><Text dimColor>{slot.name}</Text></Box>
+                    <Text color="yellow">${e.used.toFixed(2)}</Text>
+                    <Text dimColor> / ${e.limit.toFixed(2)}</Text>
+                  </Box>
+                )
+              })}
+            </Box>
+          )}
+        </Box>
+      )}
     </Box>
   )
 }
 
-function ComparisonRow({
-  slot, cost, tokens, maxCost, maxTokens,
+function MetricBlock({
+  label, sublabel, pick, items, showResets,
+}: {
+  label: string
+  sublabel: string
+  pick: (b: BillingData | null) => { utilization: number; resetsAt: string } | null | undefined
+  items: { slot: AccountSlot; s: AccountStats }[]
+  showResets?: boolean
+}) {
+  const rows = items
+    .map(i => ({ slot: i.slot, lim: pick(i.s.billing) ?? null }))
+    .filter(r => r.lim !== null) as { slot: AccountSlot; lim: { utilization: number; resetsAt: string } }[]
+
+  if (rows.length === 0) return null
+
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box>
+        <Text bold>{label}</Text>
+        <Text dimColor>  {sublabel}</Text>
+      </Box>
+      {rows.map(({ slot, lim }) => (
+        <AccountLimitBar
+          key={slot.id ?? '__default__'}
+          slot={slot}
+          pct={lim.utilization}
+          resets={showResets ? lim.resetsAt : null}
+          showName={items.length > 1}
+        />
+      ))}
+    </Box>
+  )
+}
+
+function AccountLimitBar({
+  slot, pct, resets, showName,
 }: {
   slot: AccountSlot
-  cost: number
-  tokens: number
-  maxCost: number
-  maxTokens: number
+  pct: number
+  resets: string | null
+  showName: boolean
 }) {
-  const W = 22
-  const c = bar(cost, maxCost, W)
-  const t = bar(tokens, maxTokens, W)
+  const width = 28
+  const filled = Math.max(0, Math.min(width, Math.round((pct / 100) * width)))
   return (
     <Box>
-      <Box width={14}>
-        <Text color={slot.color}>● </Text>
-        <Text dimColor>{slot.name}</Text>
-      </Box>
-      <Text color={slot.color}>{'█'.repeat(c.filled)}</Text>
-      <Text dimColor>{'░'.repeat(c.empty)}</Text>
-      <Text>  </Text>
-      <Box width={10} justifyContent="flex-end"><Text bold color="yellow">{fmt.currency(cost)}</Text></Box>
-      <Text>  </Text>
-      <Text color={slot.color} dimColor>{'▓'.repeat(t.filled)}</Text>
-      <Text dimColor>{'░'.repeat(t.empty)}</Text>
-      <Text>  </Text>
-      <Box width={10} justifyContent="flex-end"><Text dimColor>{fmt.tokens(tokens)} tk</Text></Box>
-    </Box>
-  )
-}
-
-function CompactLimitsRow({ slot, billing }: { slot: AccountSlot; billing: BillingData | null }) {
-  if (billing?.error) {
-    return (
-      <Box>
-        <Box width={14}>
-          <Text color={slot.color}>● </Text>
-          <Text dimColor>{slot.name}</Text>
-        </Box>
-        <Text color="red">{billing.error}</Text>
-      </Box>
-    )
-  }
-  const fmtPct = (p?: { utilization: number } | null) =>
-    p ? `${Math.round(p.utilization)}%` : '—'
-  const colorFor = (p?: { utilization: number } | null) => {
-    if (!p) return undefined
-    return p.utilization >= 80 ? 'red' : p.utilization >= 50 ? 'yellow' : 'green'
-  }
-  return (
-    <Box>
-      <Box width={14}>
-        <Text color={slot.color}>● </Text>
-        <Text dimColor>{slot.name}</Text>
-      </Box>
-      <Text dimColor>S </Text>
-      <Box width={6}><Text bold color={colorFor(billing?.session)}>{fmtPct(billing?.session)}</Text></Box>
-      <Text dimColor>W </Text>
-      <Box width={6}><Text bold color={colorFor(billing?.weekly)}>{fmtPct(billing?.weekly)}</Text></Box>
-      <Text dimColor>Sonnet </Text>
-      <Box width={6}><Text bold color={colorFor(billing?.sonnet)}>{fmtPct(billing?.sonnet)}</Text></Box>
+      <Text color={slot.color}>● </Text>
+      {showName ? (
+        <Box width={12}><Text dimColor>{slot.name}</Text></Box>
+      ) : (
+        <Box width={2}><Text> </Text></Box>
+      )}
+      <Text color={slot.color}>{'━'.repeat(filled)}</Text>
+      <Text dimColor>{'─'.repeat(width - filled)}</Text>
+      <Text> </Text>
+      <Box width={5} justifyContent="flex-end"><Text bold>{Math.round(pct)}%</Text></Box>
+      {resets && <Text dimColor>  resets {resets}</Text>}
     </Box>
   )
 }
@@ -1152,22 +1096,6 @@ function fmtMinutes(mins: number): string {
   const h = Math.floor(mins / 60)
   const m = mins % 60
   return m === 0 ? `${h}h` : `${h}h ${m}m`
-}
-
-function LimitBar({ label, pct, resets }: { label: string; pct: number; resets: string }) {
-  const width = 30
-  const filled = Math.round((pct / 100) * width)
-  const color = pct >= 80 ? 'red' : pct >= 50 ? 'yellow' : 'green'
-  return (
-    <Box>
-      <Box width={10}><Text dimColor>{label}</Text></Box>
-      <Text color={color}>{'━'.repeat(filled)}</Text>
-      <Text dimColor>{'─'.repeat(width - filled)}</Text>
-      <Text> </Text>
-      <Text bold>{Math.round(pct)}%</Text>
-      <Text dimColor>  resets {resets}</Text>
-    </Box>
-  )
 }
 
 function TableView({ rows: allRows, cursor, expanded, maxRows, cols, onRowClick }: { rows: TableRow[]; cursor: number; expanded: number; maxRows: number; cols: number; onRowClick: (idx: number) => void }) {
