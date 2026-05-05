@@ -380,8 +380,12 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     if (input === 'a') { cycleAccount(1); return }
     if (input === 'A') { cycleAccount(-1); return }
     if (key.tab) { setTab(t => (t + 1) % TABS.length); resetView(); return }
-    if (input === '1') { setTab(0); resetView(); return }
-    if (input === '2') { setTab(1); resetView(); return }
+    // number-key direct jump: 0=All, 1..N=account by index
+    if (input && /^[0-9]$/.test(input) && slots.length > 1) {
+      const target = slots[parseInt(input, 10)]
+      if (target) { updateConfig(c => ({ ...c, activeAccountId: target.id })); resetView() }
+      return
+    }
 
     if (tab === 1) {
       if (input === 'd') { setView(0); resetView(); return }
@@ -502,7 +506,7 @@ function Footer({ hasAccounts }: { hasAccounts: boolean }) {
       <Text dimColor> (</Text>
       <Text color="cyan">davidilie.com</Text>
       <Text dimColor>)  ·  s=settings  </Text>
-      {hasAccounts && <Text dimColor>a/A=cycle account  </Text>}
+      {hasAccounts && <Text dimColor>0-9=jump  a/A=cycle  </Text>}
       <Text dimColor>q=quit</Text>
     </Box>
   )
@@ -522,20 +526,20 @@ function TabBar({ tabs, active, onSelect }: { tabs: readonly string[]; active: n
 
 function AccountStrip({ slots, activeIdx, onSelect }: { slots: AccountSlot[]; activeIdx: number; onSelect: (i: number) => void }) {
   return (
-    <Box>
-      <Text dimColor>account  </Text>
+    <Box flexWrap="wrap">
       {slots.map((s, i) => {
         const active = i === activeIdx
         const dot = s.id === null ? '✦' : '●'
         return (
           <ClickableBox key={s.id ?? '__all__'} onClick={() => onSelect(i)} marginRight={2}>
+            <Text dimColor={!active}>{i}</Text>
+            <Text>{' '}</Text>
+            <Text color={s.color} bold={active} dimColor={!active}>{dot}</Text>
+            <Text>{' '}</Text>
             {active ? (
-              <Text bold color={s.color}>
-                <Text>{dot} </Text>
-                <Text inverse> {s.name} </Text>
-              </Text>
+              <Text bold color={s.color}>{s.name}</Text>
             ) : (
-              <Text dimColor>{dot} {s.name}</Text>
+              <Text dimColor>{s.name}</Text>
             )}
           </ClickableBox>
         )
@@ -877,114 +881,255 @@ function ColorField({ value, focused }: { value: string; focused: boolean }) {
 
 function DashboardView({ slots, stats, compact }: { slots: AccountSlot[]; stats: Map<string, AccountStats>; compact: boolean }) {
   const slotKey = (s: AccountSlot) => s.id ?? '__default__'
-  return (
-    <Box flexDirection="column">
-      {slots.map((slot, i) => {
-        const s = stats.get(slotKey(slot))
-        if (!s?.dashboard) {
-          return (
-            <Box key={slotKey(slot)}>
-              <Text color={slot.color} bold>● {slot.name} </Text>
-              <Text dimColor>loading...</Text>
-            </Box>
-          )
-        }
-        return (
-          <Box key={slotKey(slot)} flexDirection="column">
-            <AccountCard
-              slot={slot}
-              dashboard={s.dashboard}
-              billing={s.billing}
-              compact={compact}
-            />
-            {i < slots.length - 1 && <Box height={1} />}
-          </Box>
-        )
-      })}
-    </Box>
-  )
+  if (compact) {
+    const accountStats = slots
+      .map(slot => ({ slot, s: stats.get(slotKey(slot)) }))
+      .filter((x): x is { slot: AccountSlot; s: AccountStats } => !!x.s?.dashboard)
+    return <ComparisonView accountStats={accountStats} />
+  }
+  const slot = slots[0]
+  const s = stats.get(slotKey(slot))
+  if (!s?.dashboard) {
+    return (
+      <Box>
+        <Text color={slot.color} bold>● {slot.name} </Text>
+        <Text dimColor>loading...</Text>
+      </Box>
+    )
+  }
+  return <SoloAccountCard slot={slot} dashboard={s.dashboard} billing={s.billing} />
 }
 
-function AccountCard({ slot, dashboard, billing, compact }: { slot: AccountSlot; dashboard: DashboardData; billing: BillingData | null; compact: boolean }) {
+function bar(value: number, max: number, width: number): { filled: number; empty: number } {
+  if (max <= 0) return { filled: 0, empty: width }
+  const filled = Math.max(0, Math.min(width, Math.round((value / max) * width)))
+  return { filled, empty: width - filled }
+}
+
+function SoloAccountCard({ slot, dashboard, billing }: { slot: AccountSlot; dashboard: DashboardData; billing: BillingData | null }) {
+  const maxCost = Math.max(dashboard.today.cost, dashboard.week.cost, dashboard.month.cost, 0.01)
+  const maxTokens = Math.max(dashboard.today.tokens, dashboard.week.tokens, dashboard.month.tokens, 1)
+  const rows = [
+    { label: 'Today', s: dashboard.today },
+    { label: 'This Week', s: dashboard.week },
+    { label: 'This Month', s: dashboard.month },
+  ]
   return (
     <Box flexDirection="column">
       <Box>
         <Text color={slot.color} bold>● {slot.name}</Text>
-        {slot.id && <Text dimColor>  {slot.id}</Text>}
+        {slot.id && <Text dimColor>   {slot.id}</Text>}
       </Box>
-      <Box flexDirection={compact ? 'row' : 'column'} marginTop={compact ? 0 : 0}>
-        <Box
-          flexDirection="column"
-          paddingLeft={1}
-          marginRight={compact ? 2 : 0}
-          borderStyle="bold"
-          borderColor={slot.color}
-          borderRight={false}
-          borderTop={false}
-          borderBottom={false}
-        >
-          <Text bold>Usage</Text>
-          {!compact && <Box height={1} />}
-          <SummaryRow label="Today" summary={dashboard.today} compact={compact} />
-          <SummaryRow label={compact ? 'Week' : 'This Week'} summary={dashboard.week} compact={compact} />
-          <SummaryRow label={compact ? 'Month' : 'This Month'} summary={dashboard.month} compact={compact} />
-          {dashboard.burnRate > 0 && !compact && (
-            <>
-              <Box height={1} />
-              <Box>
-                <Box width={14}><Text dimColor>Burn rate</Text></Box>
-                <Box width={12} justifyContent="flex-end"><Text color="red">{fmt.currency(dashboard.burnRate)}</Text></Box>
-                <Text dimColor>/hr</Text>
-              </Box>
-            </>
-          )}
-          {dashboard.burnRate > 0 && compact && (
+
+      <Box
+        flexDirection="column"
+        marginTop={1}
+        paddingLeft={1}
+        borderStyle="bold"
+        borderColor={slot.color}
+        borderRight={false}
+        borderTop={false}
+        borderBottom={false}
+      >
+        <Text bold>Usage</Text>
+        <Box height={1} />
+        {rows.map(r => (
+          <DualBarRow key={r.label} label={r.label} cost={r.s.cost} tokens={r.s.tokens} maxCost={maxCost} maxTokens={maxTokens} color={slot.color} />
+        ))}
+        {dashboard.burnRate > 0 && (
+          <>
+            <Box height={1} />
             <Box>
-              <Box width={10}><Text dimColor>Burn</Text></Box>
-              <Text color="red">{fmt.currency(dashboard.burnRate)}</Text>
+              <Box width={14}><Text dimColor>Burn rate</Text></Box>
+              <Box width={12} justifyContent="flex-end"><Text color="red">{fmt.currency(dashboard.burnRate)}</Text></Box>
               <Text dimColor>/hr</Text>
             </Box>
-          )}
-        </Box>
+          </>
+        )}
+      </Box>
 
-        {!compact && <Box height={1} />}
-        <Box
-          flexDirection="column"
-          paddingLeft={1}
-          borderStyle="bold"
-          borderColor={billing?.error ? 'red' : 'yellow'}
-          borderRight={false}
-          borderTop={false}
-          borderBottom={false}
-        >
-          <Text bold>Rate Limits</Text>
-          {!compact && <Box height={1} />}
-          {billing?.error ? (
-            <Text color="red">{billing.error}</Text>
-          ) : billing?.session || billing?.weekly ? (
-            <>
-              {billing.session && (
-                <LimitBar label="Session" pct={billing.session.utilization} resets={billing.session.resetsAt} compact={compact} />
-              )}
-              {billing.weekly && (
-                <LimitBar label="Weekly" pct={billing.weekly.utilization} resets={billing.weekly.resetsAt} compact={compact} />
-              )}
-              {billing.sonnet && (
-                <LimitBar label="Sonnet" pct={billing.sonnet.utilization} resets={billing.sonnet.resetsAt} compact={compact} />
-              )}
-              {billing.extraUsage && (
-                <Box>
-                  <Box width={10}><Text dimColor>Extra</Text></Box>
-                  <Text color="yellow">${billing.extraUsage.used.toFixed(2)}</Text>
-                  <Text dimColor> / ${billing.extraUsage.limit.toFixed(2)} limit</Text>
-                </Box>
-              )}
-            </>
-          ) : (
-            <Text dimColor>Fetching...</Text>
-          )}
+      <Box height={1} />
+      <Box
+        flexDirection="column"
+        paddingLeft={1}
+        borderStyle="bold"
+        borderColor={billing?.error ? 'red' : 'yellow'}
+        borderRight={false}
+        borderTop={false}
+        borderBottom={false}
+      >
+        <Text bold>Rate Limits</Text>
+        <Box height={1} />
+        {billing?.error ? (
+          <Text color="red">{billing.error}</Text>
+        ) : billing?.session || billing?.weekly ? (
+          <>
+            {billing.session && <LimitBar label="Session" pct={billing.session.utilization} resets={billing.session.resetsAt} />}
+            {billing.weekly && <LimitBar label="Weekly" pct={billing.weekly.utilization} resets={billing.weekly.resetsAt} />}
+            {billing.sonnet && <LimitBar label="Sonnet" pct={billing.sonnet.utilization} resets={billing.sonnet.resetsAt} />}
+            {billing.extraUsage && (
+              <Box>
+                <Box width={10}><Text dimColor>Extra</Text></Box>
+                <Text color="yellow">${billing.extraUsage.used.toFixed(2)}</Text>
+                <Text dimColor> / ${billing.extraUsage.limit.toFixed(2)} limit</Text>
+              </Box>
+            )}
+          </>
+        ) : (
+          <Text dimColor>Fetching...</Text>
+        )}
+      </Box>
+    </Box>
+  )
+}
+
+function DualBarRow({
+  label, cost, tokens, maxCost, maxTokens, color,
+}: {
+  label: string
+  cost: number
+  tokens: number
+  maxCost: number
+  maxTokens: number
+  color: string
+}) {
+  const W = 18
+  const c = bar(cost, maxCost, W)
+  const t = bar(tokens, maxTokens, W)
+  return (
+    <Box flexDirection="column" marginBottom={0}>
+      <Box>
+        <Box width={12}><Text dimColor>{label}</Text></Box>
+        <Text color={color}>{'█'.repeat(c.filled)}</Text>
+        <Text dimColor>{'░'.repeat(c.empty)}</Text>
+        <Text>  </Text>
+        <Box width={11} justifyContent="flex-end">
+          <Text bold color="yellow">{fmt.currency(cost)}</Text>
         </Box>
       </Box>
+      <Box>
+        <Box width={12}><Text> </Text></Box>
+        <Text color={color} dimColor>{'▓'.repeat(t.filled)}</Text>
+        <Text dimColor>{'░'.repeat(t.empty)}</Text>
+        <Text>  </Text>
+        <Box width={11} justifyContent="flex-end">
+          <Text dimColor>{fmt.tokens(tokens)} tk</Text>
+        </Box>
+      </Box>
+    </Box>
+  )
+}
+
+function ComparisonView({ accountStats }: { accountStats: { slot: AccountSlot; s: AccountStats }[] }) {
+  if (accountStats.length === 0) {
+    return <Text dimColor>No accounts loaded yet...</Text>
+  }
+  const periods = [
+    { key: 'Today', pick: (d: DashboardData) => d.today },
+    { key: 'This Week', pick: (d: DashboardData) => d.week },
+    { key: 'This Month', pick: (d: DashboardData) => d.month },
+  ] as const
+
+  return (
+    <Box flexDirection="column">
+      {periods.map((p, i) => {
+        const rows = accountStats.map(({ slot, s }) => ({
+          slot,
+          summary: p.pick(s.dashboard!),
+        }))
+        const maxCost = Math.max(0.01, ...rows.map(r => r.summary.cost))
+        const maxTokens = Math.max(1, ...rows.map(r => r.summary.tokens))
+        return (
+          <Box key={p.key} flexDirection="column" marginBottom={i < periods.length - 1 ? 1 : 0}>
+            <Box>
+              <Text bold dimColor>{p.key.toUpperCase()}</Text>
+            </Box>
+            {rows.map(({ slot, summary }) => (
+              <ComparisonRow
+                key={slot.id ?? '__default__'}
+                slot={slot}
+                cost={summary.cost}
+                tokens={summary.tokens}
+                maxCost={maxCost}
+                maxTokens={maxTokens}
+              />
+            ))}
+          </Box>
+        )
+      })}
+
+      <Box height={1} />
+      <Box flexDirection="column">
+        <Text bold dimColor>RATE LIMITS</Text>
+        {accountStats.map(({ slot, s }) => (
+          <CompactLimitsRow key={slot.id ?? '__default__'} slot={slot} billing={s.billing} />
+        ))}
+      </Box>
+    </Box>
+  )
+}
+
+function ComparisonRow({
+  slot, cost, tokens, maxCost, maxTokens,
+}: {
+  slot: AccountSlot
+  cost: number
+  tokens: number
+  maxCost: number
+  maxTokens: number
+}) {
+  const W = 22
+  const c = bar(cost, maxCost, W)
+  const t = bar(tokens, maxTokens, W)
+  return (
+    <Box>
+      <Box width={14}>
+        <Text color={slot.color}>● </Text>
+        <Text dimColor>{slot.name}</Text>
+      </Box>
+      <Text color={slot.color}>{'█'.repeat(c.filled)}</Text>
+      <Text dimColor>{'░'.repeat(c.empty)}</Text>
+      <Text>  </Text>
+      <Box width={10} justifyContent="flex-end"><Text bold color="yellow">{fmt.currency(cost)}</Text></Box>
+      <Text>  </Text>
+      <Text color={slot.color} dimColor>{'▓'.repeat(t.filled)}</Text>
+      <Text dimColor>{'░'.repeat(t.empty)}</Text>
+      <Text>  </Text>
+      <Box width={10} justifyContent="flex-end"><Text dimColor>{fmt.tokens(tokens)} tk</Text></Box>
+    </Box>
+  )
+}
+
+function CompactLimitsRow({ slot, billing }: { slot: AccountSlot; billing: BillingData | null }) {
+  if (billing?.error) {
+    return (
+      <Box>
+        <Box width={14}>
+          <Text color={slot.color}>● </Text>
+          <Text dimColor>{slot.name}</Text>
+        </Box>
+        <Text color="red">{billing.error}</Text>
+      </Box>
+    )
+  }
+  const fmtPct = (p?: { utilization: number } | null) =>
+    p ? `${Math.round(p.utilization)}%` : '—'
+  const colorFor = (p?: { utilization: number } | null) => {
+    if (!p) return undefined
+    return p.utilization >= 80 ? 'red' : p.utilization >= 50 ? 'yellow' : 'green'
+  }
+  return (
+    <Box>
+      <Box width={14}>
+        <Text color={slot.color}>● </Text>
+        <Text dimColor>{slot.name}</Text>
+      </Box>
+      <Text dimColor>S </Text>
+      <Box width={6}><Text bold color={colorFor(billing?.session)}>{fmtPct(billing?.session)}</Text></Box>
+      <Text dimColor>W </Text>
+      <Box width={6}><Text bold color={colorFor(billing?.weekly)}>{fmtPct(billing?.weekly)}</Text></Box>
+      <Text dimColor>Sonnet </Text>
+      <Box width={6}><Text bold color={colorFor(billing?.sonnet)}>{fmtPct(billing?.sonnet)}</Text></Box>
     </Box>
   )
 }
@@ -1009,8 +1154,8 @@ function fmtMinutes(mins: number): string {
   return m === 0 ? `${h}h` : `${h}h ${m}m`
 }
 
-function LimitBar({ label, pct, resets, compact }: { label: string; pct: number; resets: string; compact?: boolean }) {
-  const width = compact ? 16 : 30
+function LimitBar({ label, pct, resets }: { label: string; pct: number; resets: string }) {
+  const width = 30
   const filled = Math.round((pct / 100) * width)
   const color = pct >= 80 ? 'red' : pct >= 50 ? 'yellow' : 'green'
   return (
@@ -1020,26 +1165,7 @@ function LimitBar({ label, pct, resets, compact }: { label: string; pct: number;
       <Text dimColor>{'─'.repeat(width - filled)}</Text>
       <Text> </Text>
       <Text bold>{Math.round(pct)}%</Text>
-      {!compact && <Text dimColor>  resets {resets}</Text>}
-    </Box>
-  )
-}
-
-function SummaryRow({ label, summary, compact }: { label: string; summary: UsageSummary; compact?: boolean }) {
-  if (compact) {
-    return (
-      <Box>
-        <Box width={10}><Text dimColor>{label}</Text></Box>
-        <Box width={10} justifyContent="flex-end"><Text bold color="yellow">{fmt.currency(summary.cost)}</Text></Box>
-        <Box width={14} justifyContent="flex-end"><Text dimColor>{fmt.tokens(summary.tokens)} tk</Text></Box>
-      </Box>
-    )
-  }
-  return (
-    <Box>
-      <Box width={14}><Text dimColor>{label}</Text></Box>
-      <Box width={12} justifyContent="flex-end"><Text bold color="yellow">{fmt.currency(summary.cost)}</Text></Box>
-      <Box width={18} justifyContent="flex-end"><Text dimColor>{fmt.tokens(summary.tokens)} tokens</Text></Box>
+      <Text dimColor>  resets {resets}</Text>
     </Box>
   )
 }
