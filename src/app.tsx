@@ -3,7 +3,11 @@ import { Box, Text, useInput, useStdout, useApp, type DOMElement } from 'ink'
 import { useMouse, useOnMouseClick } from '@zenobius/ink-mouse'
 import { fetchDashboard, fetchTable, type DashboardData, type TableData } from './data'
 import { fetchBilling, type BillingData, type PeakStatus } from './billing'
-import { loadConfig, saveConfig, configLocation, type Config } from './config'
+import {
+  loadConfig, saveConfig, configLocation,
+  generateAccountId, pickAccentColor, expandHome,
+  type Config, type Account,
+} from './config'
 import { resolveTimezone, isValidTimezone, systemTimezone } from './tz'
 import * as fmt from './format'
 import type { UsageSummary, TableRow } from './types'
@@ -13,13 +17,42 @@ const VIEWS = ['Daily', 'Weekly', 'Monthly'] as const
 const SORTS = ['date ↑', 'date ↓', 'cost ↑', 'cost ↓'] as const
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-const DEFAULT_CONFIG: Config = { interval: 2, billingInterval: 5, clearScreen: true, timezone: null }
-const SETTINGS_ROWS = 4
+const DEFAULT_CONFIG: Config = {
+  interval: 2, billingInterval: 5, clearScreen: true, timezone: null,
+  accounts: [], activeAccountId: null,
+}
+const GENERAL_ROWS = 4
 const IS_TTY = process.stdin.isTTY === true
 
+type AccountSlot = { id: string | null; name: string; homeDir: string | undefined; color: string }
+
+function buildSlots(config: Config): AccountSlot[] {
+  const slots: AccountSlot[] = []
+  if (config.accounts.length === 0) {
+    slots.push({ id: null, name: 'Default', homeDir: undefined, color: 'green' })
+    return slots
+  }
+  slots.push({ id: null, name: 'All', homeDir: undefined, color: 'whiteBright' })
+  for (const a of config.accounts) {
+    slots.push({
+      id: a.id,
+      name: a.name,
+      homeDir: expandHome(a.homeDir),
+      color: a.color || 'cyan',
+    })
+  }
+  return slots
+}
+
+interface AccountStats {
+  slot: AccountSlot
+  dashboard: DashboardData | null
+  billing: BillingData | null
+}
+
 export function App({ interval: cliInterval }: { interval?: number }) {
-  const [dashboard, setDashboard] = useState<DashboardData | null>(null)
-  const [billing, setBilling] = useState<BillingData | null>(null)
+  const [config, setConfig] = useState<Config | null>(null)
+  const [stats, setStats] = useState<Map<string, AccountStats>>(new Map())
   const [table, setTable] = useState<TableData | null>(null)
   const [tableLoading, setTableLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -30,18 +63,31 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const [expanded, setExpanded] = useState(-1)
   const [sort, setSort] = useState(1)
   const [showSettings, setShowSettings] = useState(false)
-  const [config, setConfig] = useState<Config | null>(null)
   const [settingsCursor, setSettingsCursor] = useState(0)
   const [tzEdit, setTzEdit] = useState<string | null>(null)
   const [tzError, setTzError] = useState<string | null>(null)
+  const [accountForm, setAccountForm] = useState<AccountForm | null>(null)
   const tableLoadedOnce = useRef(false)
   const { stdout } = useStdout()
   const { exit } = useApp()
   const rows = stdout?.rows ?? 24
   const cols = stdout?.columns ?? 80
-  const interval = cliInterval ?? (config?.interval ?? 2) * 1000
+
   const cfg = config ?? DEFAULT_CONFIG
+  const interval = cliInterval ?? cfg.interval * 1000
   const tz = resolveTimezone(cfg.timezone)
+  const slots = buildSlots(cfg)
+  const activeSlotIdx = (() => {
+    if (cfg.accounts.length === 0) return 0
+    if (cfg.activeAccountId === null) return 0
+    const i = slots.findIndex(s => s.id === cfg.activeAccountId)
+    return i < 0 ? 0 : i
+  })()
+  const activeSlot = slots[activeSlotIdx]
+  const slotKey = (s: AccountSlot) => s.id ?? '__default__'
+  const visibleSlots: AccountSlot[] = activeSlot.id === null && cfg.accounts.length > 0
+    ? slots.slice(1)
+    : [activeSlot]
 
   useEffect(() => {
     loadConfig().then(c => {
@@ -51,11 +97,24 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   }, [])
 
   useEffect(() => {
+    if (!config) return
     let active = true
+    const slotsToLoad = activeSlot.id === null && cfg.accounts.length > 0 ? slots.slice(1) : [activeSlot]
     const load = async () => {
       try {
-        const result = await fetchDashboard(tz)
-        if (active) { setDashboard(result); setError(null); setUpdated(new Date()) }
+        const next = new Map<string, AccountStats>()
+        await Promise.all(slotsToLoad.map(async (slot) => {
+          const [dashboard, billing] = await Promise.all([
+            fetchDashboard(tz, slot.homeDir),
+            fetchBilling(slot.homeDir),
+          ])
+          next.set(slotKey(slot), { slot, dashboard, billing })
+        }))
+        if (active) {
+          setStats(next)
+          setError(null)
+          setUpdated(new Date())
+        }
       } catch (e) {
         if (active) setError(e instanceof Error ? e.message : String(e))
       }
@@ -63,45 +122,35 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     load()
     const id = setInterval(load, interval)
     return () => { active = false; clearInterval(id) }
-  }, [interval, tz])
-
-  const billingMs = cfg.billingInterval * 60_000
-
-  useEffect(() => {
-    let active = true
-    const load = () => fetchBilling().then(b => { if (active) setBilling(b) }).catch(() => {})
-    load()
-    const id = setInterval(load, billingMs)
-    return () => { active = false; clearInterval(id) }
-  }, [billingMs])
+  }, [interval, tz, config, activeSlot.id])
 
   useEffect(() => {
     tableLoadedOnce.current = false
     setTable(null)
-  }, [tz])
+  }, [tz, activeSlot.id])
 
   useEffect(() => {
     if (tab !== 1) return
     if (tableLoadedOnce.current && table) return
     let active = true
     setTableLoading(true)
-    fetchTable(tz).then(result => {
+    fetchTable(tz, activeSlot.id === null ? undefined : activeSlot.homeDir).then(result => {
       if (active) { setTable(result); setTableLoading(false); tableLoadedOnce.current = true }
     }).catch(() => { if (active) setTableLoading(false) })
     return () => { active = false }
-  }, [tab, tz])
+  }, [tab, tz, activeSlot.id])
 
   useEffect(() => {
     if (tab !== 1 || !tableLoadedOnce.current) return
     let active = true
     const id = setInterval(async () => {
       try {
-        const result = await fetchTable(tz)
+        const result = await fetchTable(tz, activeSlot.id === null ? undefined : activeSlot.homeDir)
         if (active) setTable(result)
       } catch {}
     }, Math.max(interval, 10000))
     return () => { active = false; clearInterval(id) }
-  }, [tab, interval, tz])
+  }, [tab, interval, tz, activeSlot.id])
 
   const resetView = useCallback(() => {
     setCursor(0)
@@ -122,7 +171,144 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     return () => { mouse.events.off('scroll', onScroll) }
   }, [tab])
 
+  function updateConfig(fn: (prev: Config) => Config): void {
+    setConfig(prev => {
+      const next = fn(prev ?? DEFAULT_CONFIG)
+      saveConfig(next)
+      return next
+    })
+  }
+
+  function cycleAccount(dir: 1 | -1): void {
+    if (slots.length <= 1) return
+    const next = (activeSlotIdx + dir + slots.length) % slots.length
+    const targetId = slots[next].id
+    updateConfig(c => ({ ...c, activeAccountId: targetId }))
+    resetView()
+  }
+
+  // Account form handlers
+  function openAddAccount(): void {
+    setAccountForm({
+      mode: 'add', field: 'name',
+      name: '', homeDir: '~',
+      color: pickAccentColor(cfg.accounts),
+      editingId: null, error: null,
+    })
+  }
+  function openEditAccount(acc: Account): void {
+    setAccountForm({
+      mode: 'edit', field: 'name',
+      name: acc.name, homeDir: acc.homeDir,
+      color: acc.color || 'cyan',
+      editingId: acc.id, error: null,
+    })
+  }
+
+  function commitAccountForm(): void {
+    if (!accountForm) return
+    const name = accountForm.name.trim()
+    const homeDir = accountForm.homeDir.trim() || '~'
+    const color = accountForm.color
+    if (!name) {
+      setAccountForm({ ...accountForm, error: 'Name required', field: 'name' })
+      return
+    }
+    updateConfig(c => {
+      if (accountForm.mode === 'add') {
+        const id = generateAccountId(name, c.accounts)
+        const account: Account = { id, name, homeDir, color }
+        return {
+          ...c,
+          accounts: [...c.accounts, account],
+          activeAccountId: c.accounts.length === 0 ? id : c.activeAccountId,
+        }
+      } else {
+        return {
+          ...c,
+          accounts: c.accounts.map(a =>
+            a.id === accountForm.editingId ? { ...a, name, homeDir, color } : a,
+          ),
+        }
+      }
+    })
+    setAccountForm(null)
+  }
+
+  function cycleFormField(dir: 1 | -1): void {
+    const order: FormField[] = ['name', 'homeDir', 'color']
+    setAccountForm(f => {
+      if (!f) return f
+      const i = order.indexOf(f.field)
+      const next = order[(i + dir + order.length) % order.length]
+      return { ...f, field: next }
+    })
+  }
+
+  function cycleColor(dir: 1 | -1): void {
+    setAccountForm(f => {
+      if (!f) return f
+      const i = COLOR_PALETTE.indexOf(f.color as typeof COLOR_PALETTE[number])
+      const idx = i < 0 ? 0 : i
+      const next = COLOR_PALETTE[(idx + dir + COLOR_PALETTE.length) % COLOR_PALETTE.length]
+      return { ...f, color: next }
+    })
+  }
+
+  function deleteAccount(id: string): void {
+    updateConfig(c => ({
+      ...c,
+      accounts: c.accounts.filter(a => a.id !== id),
+      activeAccountId: c.activeAccountId === id ? null : c.activeAccountId,
+    }))
+  }
+
+  // Settings rows = general (4) + accounts list + add row
+  const accountRowsStart = GENERAL_ROWS
+  const totalSettingsRows = GENERAL_ROWS + cfg.accounts.length + 1
+
   useInput((input, key) => {
+    // Account form input handling
+    if (showSettings && accountForm) {
+      if (key.escape) { setAccountForm(null); return }
+      if (key.tab) { cycleFormField(key.shift ? -1 : 1); return }
+      if (key.upArrow) { cycleFormField(-1); return }
+      if (key.downArrow) { cycleFormField(1); return }
+
+      if (accountForm.field === 'color') {
+        if (key.leftArrow) { cycleColor(-1); return }
+        if (key.rightArrow) { cycleColor(1); return }
+        if (key.return) { commitAccountForm(); return }
+        // ignore typing on color field
+        return
+      }
+
+      if (key.return) {
+        if (accountForm.field === 'name') {
+          setAccountForm(f => f && { ...f, field: 'homeDir' })
+        } else if (accountForm.field === 'homeDir') {
+          setAccountForm(f => f && { ...f, field: 'color' })
+        }
+        return
+      }
+      if (key.backspace || key.delete) {
+        setAccountForm(f => {
+          if (!f || f.field === 'color') return f
+          const cur = f[f.field]
+          return { ...f, [f.field]: cur.slice(0, -1), error: null }
+        })
+        return
+      }
+      if (input && !key.ctrl && !key.meta) {
+        setAccountForm(f => {
+          if (!f || f.field === 'color') return f
+          return { ...f, [f.field]: f[f.field] + input, error: null }
+        })
+        return
+      }
+      return
+    }
+
     if (showSettings && tzEdit !== null) {
       if (key.escape) { setTzEdit(null); setTzError(null); return }
       if (key.return) {
@@ -146,30 +332,53 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     if (input === 'q') { exit(); return }
 
     if (showSettings) {
-      if (key.escape || input === 's') setShowSettings(false)
-      if (key.upArrow) setSettingsCursor(c => Math.max(0, c - 1))
-      if (key.downArrow) setSettingsCursor(c => Math.min(SETTINGS_ROWS - 1, c + 1))
+      if (key.escape || input === 's') { setShowSettings(false); return }
+      if (key.upArrow) { setSettingsCursor(c => Math.max(0, c - 1)); return }
+      if (key.downArrow) { setSettingsCursor(c => Math.min(totalSettingsRows - 1, c + 1)); return }
+
+      // General settings
       if (settingsCursor === 0) {
         if (key.leftArrow) updateConfig(c => ({ ...c, interval: Math.max(1, c.interval - 1) }))
         if (key.rightArrow) updateConfig(c => ({ ...c, interval: c.interval + 1 }))
+        return
       }
       if (settingsCursor === 1) {
         if (key.leftArrow) updateConfig(c => ({ ...c, billingInterval: Math.max(1, c.billingInterval - 1) }))
         if (key.rightArrow) updateConfig(c => ({ ...c, billingInterval: c.billingInterval + 1 }))
+        return
       }
       if (settingsCursor === 2 && (key.leftArrow || key.rightArrow || key.return)) {
         updateConfig(c => ({ ...c, clearScreen: !c.clearScreen }))
+        return
       }
       if (settingsCursor === 3) {
         if (key.return) { setTzEdit(cfg.timezone ?? ''); setTzError(null) }
         if (key.leftArrow || key.rightArrow) {
           updateConfig(c => ({ ...c, timezone: c.timezone === null ? systemTimezone() : null }))
         }
+        return
+      }
+
+      // Account rows
+      const accIdx = settingsCursor - accountRowsStart
+      if (accIdx >= 0 && accIdx < cfg.accounts.length) {
+        const acc = cfg.accounts[accIdx]
+        if (key.return) { openEditAccount(acc); return }
+        if (input === 'd' || input === 'x') { deleteAccount(acc.id); return }
+        if (input === ' ') { updateConfig(c => ({ ...c, activeAccountId: acc.id })); return }
+        return
+      }
+      // Add new account row
+      if (accIdx === cfg.accounts.length && key.return) {
+        openAddAccount()
+        return
       }
       return
     }
 
-    if (input === 's') { setShowSettings(true); return }
+    if (input === 's') { setShowSettings(true); setSettingsCursor(0); return }
+    if (input === 'a') { cycleAccount(1); return }
+    if (input === 'A') { cycleAccount(-1); return }
     if (key.tab) { setTab(t => (t + 1) % TABS.length); resetView(); return }
     if (input === '1') { setTab(0); resetView(); return }
     if (input === '2') { setTab(1); resetView(); return }
@@ -193,17 +402,13 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     if (key.pageUp || input === 'g') { setCursor(c => input === 'g' ? 0 : Math.max(0, c - Math.max(1, rows - 12))); return }
   }, { isActive: IS_TTY })
 
-  function updateConfig(fn: (prev: Config) => Config): void {
-    setConfig(prev => {
-      const next = fn(prev ?? DEFAULT_CONFIG)
-      saveConfig(next)
-      return next
-    })
-  }
-
   if (error) return <Box padding={1}><Text color="red">{error}</Text></Box>
-  if (!dashboard) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
+  if (!config) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
 
+  const firstStats = stats.size > 0 ? [...stats.values()][0] : null
+  if (!firstStats?.dashboard) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
+
+  const peakBilling = firstStats.billing
   const rawTableData = table ? [table.daily, table.weekly, table.monthly][view] : []
   const tableData = sortRows(rawTableData, sort)
 
@@ -212,12 +417,12 @@ export function App({ interval: cliInterval }: { interval?: number }) {
       <Box justifyContent="space-between">
         <Box>
           <Text bold color="greenBright">{'◉'} tokmon</Text>
-          <Text dimColor>  ·  every {cliInterval ? cliInterval / 1000 : cfg.interval}s</Text>
+          <Text dimColor>  ·  every {cfg.interval}s</Text>
         </Box>
         <Box>
-          {billing?.peak && (
+          {peakBilling?.peak && (
             <>
-              <PeakBadge peak={billing.peak} />
+              <PeakBadge peak={peakBilling.peak} />
               <Text dimColor>  ·  </Text>
             </>
           )}
@@ -226,22 +431,53 @@ export function App({ interval: cliInterval }: { interval?: number }) {
       </Box>
 
       {showSettings ? (
-        <SettingsView config={cfg} cursor={settingsCursor} tzEdit={tzEdit} tzError={tzError} resolvedTz={tz} />
+        <SettingsView
+          config={cfg}
+          cursor={settingsCursor}
+          tzEdit={tzEdit}
+          tzError={tzError}
+          resolvedTz={tz}
+          accountForm={accountForm}
+          onSettingsClick={(i) => setSettingsCursor(i)}
+          onAddAccount={openAddAccount}
+          onEditAccount={openEditAccount}
+          onActivateAccount={(id) => updateConfig(c => ({ ...c, activeAccountId: id }))}
+          activeAccountId={cfg.activeAccountId}
+        />
       ) : (
         <>
-          <Box marginTop={1}>
+          {slots.length > 1 && (
+            <Box marginTop={1}>
+              <AccountStrip
+                slots={slots}
+                activeIdx={activeSlotIdx}
+                onSelect={(i) => {
+                  const id = slots[i].id
+                  updateConfig(c => ({ ...c, activeAccountId: id }))
+                  resetView()
+                }}
+              />
+            </Box>
+          )}
+          <Box marginTop={slots.length > 1 ? 0 : 1}>
             <TabBar tabs={TABS} active={tab} onSelect={(i) => { setTab(i); resetView() }} />
             <Text dimColor>  Tab/←→</Text>
           </Box>
           <Box height={1} />
-          {tab === 0 && <DashboardView data={dashboard} billing={billing} />}
+          {tab === 0 && (
+            <DashboardView
+              slots={visibleSlots}
+              stats={stats}
+              compact={visibleSlots.length > 1}
+            />
+          )}
           {tab === 1 && (
             <>
               <ViewBar views={VIEWS} active={view} sort={SORTS[sort]} onSelect={(i) => { setView(i); resetView() }} />
               <Box height={1} />
               {tableLoading && !table
                 ? <Spinner label="Loading 6 months of history" />
-                : <TableView rows={tableData} cursor={cursor} expanded={expanded} maxRows={rows - 12} cols={cols}
+                : <TableView rows={tableData} cursor={cursor} expanded={expanded} maxRows={rows - 14} cols={cols}
                     onRowClick={(idx) => {
                       if (idx === cursor) setExpanded(e => e === idx ? -1 : idx)
                       else setCursor(idx)
@@ -253,19 +489,21 @@ export function App({ interval: cliInterval }: { interval?: number }) {
         </>
       )}
 
-      {(tab === 0 || showSettings) && <Footer />}
+      {(tab === 0 || showSettings) && <Footer hasAccounts={slots.length > 1} />}
     </Box>
   )
 }
 
-function Footer() {
+function Footer({ hasAccounts }: { hasAccounts: boolean }) {
   return (
     <Box marginTop={1}>
       <Text dimColor>by </Text>
       <Text>David Ilie</Text>
       <Text dimColor> (</Text>
       <Text color="cyan">davidilie.com</Text>
-      <Text dimColor>)  ·  s=settings  q=quit</Text>
+      <Text dimColor>)  ·  s=settings  </Text>
+      {hasAccounts && <Text dimColor>a/A=cycle account  </Text>}
+      <Text dimColor>q=quit</Text>
     </Box>
   )
 }
@@ -278,6 +516,30 @@ function TabBar({ tabs, active, onSelect }: { tabs: readonly string[]; active: n
           {i === active ? <Text bold inverse> {t} </Text> : <Text dimColor> {t} </Text>}
         </ClickableBox>
       ))}
+    </Box>
+  )
+}
+
+function AccountStrip({ slots, activeIdx, onSelect }: { slots: AccountSlot[]; activeIdx: number; onSelect: (i: number) => void }) {
+  return (
+    <Box>
+      <Text dimColor>account  </Text>
+      {slots.map((s, i) => {
+        const active = i === activeIdx
+        const dot = s.id === null ? '✦' : '●'
+        return (
+          <ClickableBox key={s.id ?? '__all__'} onClick={() => onSelect(i)} marginRight={2}>
+            {active ? (
+              <Text bold color={s.color}>
+                <Text>{dot} </Text>
+                <Text inverse> {s.name} </Text>
+              </Text>
+            ) : (
+              <Text dimColor>{dot} {s.name}</Text>
+            )}
+          </ClickableBox>
+        )
+      })}
     </Box>
   )
 }
@@ -309,14 +571,53 @@ function sortRows(rows: TableRow[], sortIdx: number): TableRow[] {
   }
 }
 
-function SettingsView({ config, cursor, tzEdit, tzError, resolvedTz }: { config: Config; cursor: number; tzEdit: string | null; tzError: string | null; resolvedTz: string }) {
-  const editing = tzEdit !== null
+type FormField = 'name' | 'homeDir' | 'color'
+
+interface AccountForm {
+  mode: 'add' | 'edit'
+  field: FormField
+  name: string
+  homeDir: string
+  color: string
+  editingId: string | null
+  error: string | null
+}
+
+const COLOR_PALETTE = [
+  'cyan', 'magenta', 'green', 'yellow', 'blue', 'red',
+  'cyanBright', 'magentaBright', 'greenBright',
+] as const
+
+function SettingsView({
+  config, cursor, tzEdit, tzError, resolvedTz, accountForm,
+  onAddAccount, onEditAccount, onActivateAccount, activeAccountId,
+}: {
+  config: Config
+  cursor: number
+  tzEdit: string | null
+  tzError: string | null
+  resolvedTz: string
+  accountForm: AccountForm | null
+  onSettingsClick: (i: number) => void
+  onAddAccount: () => void
+  onEditAccount: (a: Account) => void
+  onActivateAccount: (id: string) => void
+  activeAccountId: string | null
+}) {
+  const editingTz = tzEdit !== null
   const tzDisplay = config.timezone === null ? `System (${resolvedTz})` : config.timezone
+  const accountRowsStart = GENERAL_ROWS
+
+  if (accountForm) {
+    return <AccountFormView form={accountForm} accounts={config.accounts} />
+  }
+
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text bold>Settings</Text>
       <Text dimColor>{configLocation()}</Text>
       <Box height={1} />
+      <Text bold dimColor>General</Text>
       <Box>
         <Text color={cursor === 0 ? 'green' : undefined}>{cursor === 0 ? '▸' : ' '} </Text>
         <Text>Refresh interval    </Text>
@@ -339,7 +640,7 @@ function SettingsView({ config, cursor, tzEdit, tzError, resolvedTz }: { config:
       <Box>
         <Text color={cursor === 3 ? 'green' : undefined}>{cursor === 3 ? '▸' : ' '} </Text>
         <Text>Timezone            </Text>
-        {editing ? (
+        {editingTz ? (
           <>
             <Text dimColor>[</Text>
             <Text bold color="cyan">{tzEdit}</Text>
@@ -351,83 +652,340 @@ function SettingsView({ config, cursor, tzEdit, tzError, resolvedTz }: { config:
         )}
       </Box>
       {cursor === 3 && tzError && <Text color="red">  {tzError}</Text>}
+
       <Box height={1} />
-      {editing ? (
+      <Text bold dimColor>Claude accounts</Text>
+      {config.accounts.length === 0 && (
+        <Text dimColor>  none — using default Claude HOME</Text>
+      )}
+      {config.accounts.map((acc, i) => {
+        const idx = accountRowsStart + i
+        const selected = cursor === idx
+        const isActive = acc.id === activeAccountId
+        return (
+          <Box key={acc.id}>
+            <Text color={selected ? 'green' : undefined}>{selected ? '▸' : ' '} </Text>
+            <Text color={acc.color || 'cyan'}>{isActive ? '●' : '○'} </Text>
+            <Box width={16}><Text bold>{acc.name}</Text></Box>
+            <Box width={14}><Text dimColor>{acc.id}</Text></Box>
+            <Text dimColor>{acc.homeDir}</Text>
+          </Box>
+        )
+      })}
+      <Box>
+        <Text color={cursor === accountRowsStart + config.accounts.length ? 'green' : undefined}>
+          {cursor === accountRowsStart + config.accounts.length ? '▸' : ' '}{' '}
+        </Text>
+        <Text color="greenBright">+ </Text>
+        <Text>Add account</Text>
+      </Box>
+
+      <Box height={1} />
+      {editingTz ? (
         <Text dimColor>type IANA name (e.g. Europe/London) · empty = System · Enter save · Esc cancel</Text>
+      ) : cursor >= accountRowsStart && cursor < accountRowsStart + config.accounts.length ? (
+        <Text dimColor>↑↓ select  ·  Enter edit  ·  space activate  ·  d delete  ·  s/Esc close</Text>
+      ) : cursor === accountRowsStart + config.accounts.length ? (
+        <Text dimColor>↑↓ select  ·  Enter add account  ·  s/Esc close</Text>
       ) : (
-        <Text dimColor>↑↓ select  ←→ adjust  Enter edit tz  s/Esc close</Text>
+        <Text dimColor>↑↓ select  ←→ adjust  Enter edit  s/Esc close</Text>
       )}
     </Box>
   )
 }
 
-function DashboardView({ data, billing }: { data: DashboardData; billing: BillingData | null }) {
+function AccountFormView({ form, accounts }: { form: AccountForm; accounts: Account[] }) {
+  const previewId = form.mode === 'add'
+    ? generateAccountId(form.name || 'account', accounts)
+    : form.editingId ?? ''
+  const accent = form.color
+  const stepIndex: Record<FormField, number> = { name: 1, homeDir: 2, color: 3 }
+  const step = stepIndex[form.field]
+
   return (
-    <>
-      <Box
-        flexDirection="column"
-        paddingLeft={1}
-        borderStyle="bold"
-        borderColor="green"
-        borderRight={false}
-        borderTop={false}
-        borderBottom={false}
-      >
-        <Text bold>Claude</Text>
-        <Box height={1} />
-        <SummaryRow label="Today" summary={data.today} />
-        <SummaryRow label="This Week" summary={data.week} />
-        <SummaryRow label="This Month" summary={data.month} />
-        {data.burnRate > 0 && (
-          <>
-            <Box height={1} />
-            <Box>
-              <Box width={14}><Text dimColor>Burn rate</Text></Box>
-              <Box width={12} justifyContent="flex-end"><Text color="red">{fmt.currency(data.burnRate)}</Text></Box>
-              <Text dimColor>/hr</Text>
-            </Box>
-          </>
-        )}
+    <Box flexDirection="column" marginTop={1}>
+      <Box>
+        <Text color={accent} bold>▍</Text>
+        <Text bold>{' '}{form.mode === 'add' ? 'NEW ACCOUNT' : 'EDIT ACCOUNT'}</Text>
+        <Text dimColor>   step {step} of 3</Text>
+      </Box>
+      <Box marginTop={1}>
+        <Stepper active={form.field} accent={accent} />
       </Box>
 
-      <Box height={1} />
-      <Box
+      <Box marginTop={1}
         flexDirection="column"
-        paddingLeft={1}
-        borderStyle="bold"
-        borderColor={billing?.error ? 'red' : 'yellow'}
-        borderRight={false}
-        borderTop={false}
-        borderBottom={false}
+        borderStyle="round"
+        borderColor={accent}
+        paddingX={2}
+        paddingY={1}
       >
-        <Text bold>Rate Limits</Text>
+        <FormField
+          label="Name"
+          hint="display name for this Claude account"
+          value={form.name}
+          focused={form.field === 'name'}
+          accent={accent}
+          placeholder="e.g. Work, Personal"
+        />
         <Box height={1} />
-        {billing?.error ? (
-          <Text color="red">{billing.error}</Text>
-        ) : billing?.session || billing?.weekly ? (
-          <>
-            {billing.session && (
-              <LimitBar label="Session" pct={billing.session.utilization} resets={billing.session.resetsAt} />
-            )}
-            {billing.weekly && (
-              <LimitBar label="Weekly" pct={billing.weekly.utilization} resets={billing.weekly.resetsAt} />
-            )}
-            {billing.sonnet && (
-              <LimitBar label="Sonnet" pct={billing.sonnet.utilization} resets={billing.sonnet.resetsAt} />
-            )}
-            {billing.extraUsage && (
-              <Box>
-                <Box width={10}><Text dimColor>Extra</Text></Box>
-                <Text color="yellow">${billing.extraUsage.used.toFixed(2)}</Text>
-                <Text dimColor> / ${billing.extraUsage.limit.toFixed(2)} limit</Text>
-              </Box>
-            )}
-          </>
-        ) : (
-          <Text dimColor>Fetching...</Text>
-        )}
+        <FormField
+          label="Home directory"
+          hint="path containing .claude/  ·  ~ for default"
+          value={form.homeDir}
+          focused={form.field === 'homeDir'}
+          accent={accent}
+          placeholder="~/claude-work"
+          mono
+        />
+        <Box height={1} />
+        <ColorField
+          value={form.color}
+          focused={form.field === 'color'}
+        />
+        <Box height={1} />
+        <Box>
+          <Text dimColor>id  </Text>
+          <Text dimColor>┤ </Text>
+          <Text bold color={accent}>{previewId || 'account'}</Text>
+          <Text dimColor> ├</Text>
+          <Text dimColor>   auto-generated from name</Text>
+        </Box>
       </Box>
-    </>
+
+      {form.error && (
+        <Box marginTop={1}>
+          <Text color="red">⚠ {form.error}</Text>
+        </Box>
+      )}
+
+      <Box marginTop={1}>
+        <Text dimColor>tab/↑↓ </Text>
+        <Text>switch field</Text>
+        <Text dimColor>  ·  </Text>
+        <Text dimColor>enter </Text>
+        <Text>{form.field === 'color' ? 'save' : 'next'}</Text>
+        <Text dimColor>  ·  </Text>
+        {form.field === 'color' && (
+          <>
+            <Text dimColor>←→ </Text>
+            <Text>pick color</Text>
+            <Text dimColor>  ·  </Text>
+          </>
+        )}
+        <Text dimColor>esc </Text>
+        <Text>cancel</Text>
+      </Box>
+    </Box>
+  )
+}
+
+function Stepper({ active, accent }: { active: FormField; accent: string }) {
+  const steps: { id: FormField; label: string }[] = [
+    { id: 'name', label: 'Name' },
+    { id: 'homeDir', label: 'Home' },
+    { id: 'color', label: 'Color' },
+  ]
+  const order = steps.map(s => s.id)
+  const activeIdx = order.indexOf(active)
+  return (
+    <Box>
+      {steps.map((s, i) => {
+        const done = i < activeIdx
+        const cur = i === activeIdx
+        const dot = done ? '●' : cur ? '◉' : '○'
+        return (
+          <Box key={s.id}>
+            <Text color={cur ? accent : done ? accent : undefined} dimColor={!cur && !done}>{dot} </Text>
+            <Text bold={cur} color={cur ? accent : undefined} dimColor={!cur}>{s.label}</Text>
+            {i < steps.length - 1 && <Text dimColor>  ─  </Text>}
+          </Box>
+        )
+      })}
+    </Box>
+  )
+}
+
+function FormField({
+  label, hint, value, focused, accent, placeholder, mono,
+}: {
+  label: string
+  hint: string
+  value: string
+  focused: boolean
+  accent: string
+  placeholder: string
+  mono?: boolean
+}) {
+  const display = value === '' ? placeholder : value
+  const isPlaceholder = value === ''
+  return (
+    <Box flexDirection="column">
+      <Box>
+        <Text color={focused ? accent : undefined} bold={focused} dimColor={!focused}>
+          {focused ? '▸' : ' '} {label}
+        </Text>
+      </Box>
+      <Box marginTop={0}>
+        <Text color={focused ? accent : undefined}>  {focused ? '▌' : ' '} </Text>
+        <Text
+          bold={focused && !isPlaceholder}
+          color={focused && !isPlaceholder ? accent : undefined}
+          dimColor={isPlaceholder}
+          italic={mono && isPlaceholder}
+        >
+          {display}
+        </Text>
+        {focused && <Text color={accent}>▏</Text>}
+      </Box>
+      <Box>
+        <Text dimColor>      {hint}</Text>
+      </Box>
+    </Box>
+  )
+}
+
+function ColorField({ value, focused }: { value: string; focused: boolean }) {
+  return (
+    <Box flexDirection="column">
+      <Box>
+        <Text color={focused ? value : undefined} bold={focused} dimColor={!focused}>
+          {focused ? '▸' : ' '} Accent color
+        </Text>
+      </Box>
+      <Box marginTop={0}>
+        <Text>  {focused ? '▌' : ' '} </Text>
+        {COLOR_PALETTE.map((c, i) => {
+          const selected = c === value
+          return (
+            <Box key={c} marginRight={1}>
+              {selected ? (
+                <Text bold color={c}>[●]</Text>
+              ) : (
+                <Text color={c} dimColor={!focused}>{i === COLOR_PALETTE.length - 1 ? ' ●' : ' ●'}</Text>
+              )}
+            </Box>
+          )
+        })}
+      </Box>
+      <Box>
+        <Text dimColor>      shows on dashboard, account strip, borders</Text>
+      </Box>
+    </Box>
+  )
+}
+
+function DashboardView({ slots, stats, compact }: { slots: AccountSlot[]; stats: Map<string, AccountStats>; compact: boolean }) {
+  const slotKey = (s: AccountSlot) => s.id ?? '__default__'
+  return (
+    <Box flexDirection="column">
+      {slots.map((slot, i) => {
+        const s = stats.get(slotKey(slot))
+        if (!s?.dashboard) {
+          return (
+            <Box key={slotKey(slot)}>
+              <Text color={slot.color} bold>● {slot.name} </Text>
+              <Text dimColor>loading...</Text>
+            </Box>
+          )
+        }
+        return (
+          <Box key={slotKey(slot)} flexDirection="column">
+            <AccountCard
+              slot={slot}
+              dashboard={s.dashboard}
+              billing={s.billing}
+              compact={compact}
+            />
+            {i < slots.length - 1 && <Box height={1} />}
+          </Box>
+        )
+      })}
+    </Box>
+  )
+}
+
+function AccountCard({ slot, dashboard, billing, compact }: { slot: AccountSlot; dashboard: DashboardData; billing: BillingData | null; compact: boolean }) {
+  return (
+    <Box flexDirection="column">
+      <Box>
+        <Text color={slot.color} bold>● {slot.name}</Text>
+        {slot.id && <Text dimColor>  {slot.id}</Text>}
+      </Box>
+      <Box flexDirection={compact ? 'row' : 'column'} marginTop={compact ? 0 : 0}>
+        <Box
+          flexDirection="column"
+          paddingLeft={1}
+          marginRight={compact ? 2 : 0}
+          borderStyle="bold"
+          borderColor={slot.color}
+          borderRight={false}
+          borderTop={false}
+          borderBottom={false}
+        >
+          <Text bold>Usage</Text>
+          {!compact && <Box height={1} />}
+          <SummaryRow label="Today" summary={dashboard.today} compact={compact} />
+          <SummaryRow label={compact ? 'Week' : 'This Week'} summary={dashboard.week} compact={compact} />
+          <SummaryRow label={compact ? 'Month' : 'This Month'} summary={dashboard.month} compact={compact} />
+          {dashboard.burnRate > 0 && !compact && (
+            <>
+              <Box height={1} />
+              <Box>
+                <Box width={14}><Text dimColor>Burn rate</Text></Box>
+                <Box width={12} justifyContent="flex-end"><Text color="red">{fmt.currency(dashboard.burnRate)}</Text></Box>
+                <Text dimColor>/hr</Text>
+              </Box>
+            </>
+          )}
+          {dashboard.burnRate > 0 && compact && (
+            <Box>
+              <Box width={10}><Text dimColor>Burn</Text></Box>
+              <Text color="red">{fmt.currency(dashboard.burnRate)}</Text>
+              <Text dimColor>/hr</Text>
+            </Box>
+          )}
+        </Box>
+
+        {!compact && <Box height={1} />}
+        <Box
+          flexDirection="column"
+          paddingLeft={1}
+          borderStyle="bold"
+          borderColor={billing?.error ? 'red' : 'yellow'}
+          borderRight={false}
+          borderTop={false}
+          borderBottom={false}
+        >
+          <Text bold>Rate Limits</Text>
+          {!compact && <Box height={1} />}
+          {billing?.error ? (
+            <Text color="red">{billing.error}</Text>
+          ) : billing?.session || billing?.weekly ? (
+            <>
+              {billing.session && (
+                <LimitBar label="Session" pct={billing.session.utilization} resets={billing.session.resetsAt} compact={compact} />
+              )}
+              {billing.weekly && (
+                <LimitBar label="Weekly" pct={billing.weekly.utilization} resets={billing.weekly.resetsAt} compact={compact} />
+              )}
+              {billing.sonnet && (
+                <LimitBar label="Sonnet" pct={billing.sonnet.utilization} resets={billing.sonnet.resetsAt} compact={compact} />
+              )}
+              {billing.extraUsage && (
+                <Box>
+                  <Box width={10}><Text dimColor>Extra</Text></Box>
+                  <Text color="yellow">${billing.extraUsage.used.toFixed(2)}</Text>
+                  <Text dimColor> / ${billing.extraUsage.limit.toFixed(2)} limit</Text>
+                </Box>
+              )}
+            </>
+          ) : (
+            <Text dimColor>Fetching...</Text>
+          )}
+        </Box>
+      </Box>
+    </Box>
   )
 }
 
@@ -451,8 +1009,8 @@ function fmtMinutes(mins: number): string {
   return m === 0 ? `${h}h` : `${h}h ${m}m`
 }
 
-function LimitBar({ label, pct, resets }: { label: string; pct: number; resets: string }) {
-  const width = 30
+function LimitBar({ label, pct, resets, compact }: { label: string; pct: number; resets: string; compact?: boolean }) {
+  const width = compact ? 16 : 30
   const filled = Math.round((pct / 100) * width)
   const color = pct >= 80 ? 'red' : pct >= 50 ? 'yellow' : 'green'
   return (
@@ -462,12 +1020,21 @@ function LimitBar({ label, pct, resets }: { label: string; pct: number; resets: 
       <Text dimColor>{'─'.repeat(width - filled)}</Text>
       <Text> </Text>
       <Text bold>{Math.round(pct)}%</Text>
-      <Text dimColor>  resets {resets}</Text>
+      {!compact && <Text dimColor>  resets {resets}</Text>}
     </Box>
   )
 }
 
-function SummaryRow({ label, summary }: { label: string; summary: UsageSummary }) {
+function SummaryRow({ label, summary, compact }: { label: string; summary: UsageSummary; compact?: boolean }) {
+  if (compact) {
+    return (
+      <Box>
+        <Box width={10}><Text dimColor>{label}</Text></Box>
+        <Box width={10} justifyContent="flex-end"><Text bold color="yellow">{fmt.currency(summary.cost)}</Text></Box>
+        <Box width={14} justifyContent="flex-end"><Text dimColor>{fmt.tokens(summary.tokens)} tk</Text></Box>
+      </Box>
+    )
+  }
   return (
     <Box>
       <Box width={14}><Text dimColor>{label}</Text></Box>
@@ -547,7 +1114,7 @@ function TableView({ rows: allRows, cursor, expanded, maxRows, cols, onRowClick 
       <Box height={1} />
       <Text dimColor>↑↓ navigate  ·  Enter detail  ·  o sort  ·  g/G top/bottom  ·  {clampedCursor + 1}/{allRows.length}</Text>
       <Box height={1} />
-      <Footer />
+      <Footer hasAccounts={false} />
     </Box>
   )
 }

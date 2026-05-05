@@ -27,7 +27,13 @@ interface Entry {
 
 const fileCache = new Map<string, { mtimeMs: number; data: Entry[] }>()
 
-function getClaudeDirs(): string[] {
+function getClaudeDirs(homeDir?: string): string[] {
+  if (homeDir) {
+    return [
+      join(homeDir, '.claude', 'projects'),
+      join(homeDir, '.config', 'claude', 'projects'),
+    ]
+  }
   const home = homedir()
   const dirs = [join(home, '.claude', 'projects')]
   if (process.env.XDG_CONFIG_HOME) {
@@ -98,11 +104,11 @@ async function parseFile(path: string, since: number): Promise<Entry[]> {
   return entries
 }
 
-async function loadEntries(since: number): Promise<Entry[]> {
+async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   const chunks: Entry[][] = []
   const seen = new Set<string>()
 
-  for (const dir of getClaudeDirs()) {
+  for (const dir of getClaudeDirs(homeDir)) {
     let listing: string[]
     try {
       listing = await readdir(dir, { recursive: true })
@@ -211,13 +217,13 @@ export interface TableData {
   monthly: TableRow[]
 }
 
-export async function fetchDashboard(tz: string): Promise<DashboardData> {
+export async function fetchDashboard(tz: string, homeDir?: string): Promise<DashboardData> {
   const now = Date.now()
   const monthStart = startOfMonth(now, tz)
   const todayStart = startOfDay(now, tz)
   const weekStart = startOfWeek(now, tz)
 
-  const entries = await loadEntries(monthStart)
+  const entries = await loadEntries(monthStart, homeDir)
   const todayEntries = entries.filter(e => e.ts >= todayStart)
 
   let burnRate = 0
@@ -240,9 +246,9 @@ export async function fetchDashboard(tz: string): Promise<DashboardData> {
   }
 }
 
-export async function fetchTable(tz: string): Promise<TableData> {
+export async function fetchTable(tz: string, homeDir?: string): Promise<TableData> {
   const lookback = monthsAgoStart(Date.now(), 6, tz)
-  const entries = await loadEntries(lookback)
+  const entries = await loadEntries(lookback, homeDir)
 
   return {
     daily: groupBy(entries, e => dayKey(e.ts, tz)),

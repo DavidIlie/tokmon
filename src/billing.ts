@@ -33,14 +33,15 @@ interface OAuthResponse {
   extra_usage?: { is_enabled: boolean; monthly_limit: number; used_credits: number } | null
 }
 
-function credentialsFilePath(): string {
+function credentialsFilePath(homeDir?: string): string {
+  if (homeDir) return join(homeDir, '.claude', '.credentials.json')
   const base = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
   return join(base, '.credentials.json')
 }
 
-async function readCredentialsFile(): Promise<string | null> {
+async function readCredentialsFile(homeDir?: string): Promise<string | null> {
   try {
-    const raw = await readFile(credentialsFilePath(), 'utf-8')
+    const raw = await readFile(credentialsFilePath(homeDir), 'utf-8')
     const creds = JSON.parse(raw)
     return creds?.claudeAiOauth?.accessToken ?? creds?.accessToken ?? null
   } catch {
@@ -60,7 +61,12 @@ async function readMacKeychain(): Promise<string | null> {
   }
 }
 
-async function getAccessToken(): Promise<string | null> {
+async function getAccessToken(homeDir?: string): Promise<string | null> {
+  if (homeDir) {
+    const fromFile = await readCredentialsFile(homeDir)
+    if (fromFile) return fromFile
+    return null
+  }
   if (process.platform === 'darwin') {
     const token = await readMacKeychain()
     if (token) return token
@@ -70,8 +76,8 @@ async function getAccessToken(): Promise<string | null> {
 
 const EMPTY: BillingData = { session: null, weekly: null, sonnet: null, extraUsage: null, peak: null, error: null }
 
-export async function fetchBilling(): Promise<BillingData> {
-  const token = await getAccessToken()
+export async function fetchBilling(homeDir?: string): Promise<BillingData> {
+  const token = await getAccessToken(homeDir)
   if (!token) return { ...EMPTY, error: 'No OAuth token — run claude and log in' }
 
   const [usageRes, peak] = await Promise.all([
