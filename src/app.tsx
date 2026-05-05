@@ -101,15 +101,15 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   }, [])
 
   const billingMs = cfg.billingInterval * 60_000
-  const slotIdsKey = (activeSlot.id === null && cfg.accounts.length > 0 ? slots.slice(1) : [activeSlot])
-    .map(s => s.id ?? '__default__').join(',')
+  // always fetch every real slot — switching focus only filters the view, never refetches
+  const dataSlots: AccountSlot[] = cfg.accounts.length > 0 ? slots.slice(1) : slots
+  const dataSlotsKey = dataSlots.map(s => s.id ?? '__default__').join(',')
 
   useEffect(() => {
     if (!config) return
     let active = true
-    const slotsToLoad = activeSlot.id === null && cfg.accounts.length > 0 ? slots.slice(1) : [activeSlot]
     const load = async () => {
-      await Promise.all(slotsToLoad.map(async (slot) => {
+      await Promise.all(dataSlots.map(async (slot) => {
         try {
           const dashboard = await fetchDashboard(tz, slot.homeDir)
           if (!active) return
@@ -128,14 +128,13 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     load()
     const id = setInterval(load, interval)
     return () => { active = false; clearInterval(id) }
-  }, [interval, tz, config, slotIdsKey])
+  }, [interval, tz, config, dataSlotsKey])
 
   useEffect(() => {
     if (!config) return
     let active = true
-    const slotsToLoad = activeSlot.id === null && cfg.accounts.length > 0 ? slots.slice(1) : [activeSlot]
     const load = async () => {
-      await Promise.all(slotsToLoad.map(async (slot) => {
+      await Promise.all(dataSlots.map(async (slot) => {
         try {
           const billing = await fetchBilling(slot.homeDir)
           if (!active) return
@@ -151,7 +150,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     load()
     const id = setInterval(load, billingMs)
     return () => { active = false; clearInterval(id) }
-  }, [billingMs, config, slotIdsKey])
+  }, [billingMs, config, dataSlotsKey])
 
   useEffect(() => {
     tableLoadedOnce.current = false
@@ -502,30 +501,35 @@ export function App({ interval: cliInterval }: { interval?: number }) {
         />
       ) : (
         <>
-          {slots.length > 1 && (
-            <Box marginTop={1}>
-              <AccountStrip
-                slots={slots}
-                activeIdx={activeSlotIdx}
-                onSelect={(i) => {
-                  const id = slots[i].id
-                  updateConfig(c => ({ ...c, activeAccountId: id }))
-                  resetView()
-                }}
-              />
-            </Box>
-          )}
-          <Box marginTop={slots.length > 1 ? 0 : 1}>
+          <Box marginTop={1}>
             <TabBar tabs={TABS} active={tab} onSelect={(i) => { setTab(i); resetView() }} />
             <Text dimColor>  Tab/←→</Text>
           </Box>
           <Box height={1} />
           {tab === 0 && (
-            <DashboardView
-              slots={visibleSlots}
-              stats={stats}
-              compact={visibleSlots.length > 1}
-            />
+            <>
+              <DashboardView
+                slots={visibleSlots}
+                stats={stats}
+                compact={visibleSlots.length > 1}
+              />
+              {slots.length > 1 && (
+                <Box marginTop={1} flexDirection="column">
+                  <Text bold>Accounts</Text>
+                  <Box marginTop={0}>
+                    <AccountStrip
+                      slots={slots}
+                      activeIdx={activeSlotIdx}
+                      onSelect={(i) => {
+                        const id = slots[i].id
+                        updateConfig(c => ({ ...c, activeAccountId: id }))
+                        resetView()
+                      }}
+                    />
+                  </Box>
+                </Box>
+              )}
+            </>
           )}
           {tab === 1 && (
             <>
@@ -1052,12 +1056,15 @@ function RateLimitsCard({ items }: { items: { slot: AccountSlot; s: AccountStats
               {items.map(({ slot, s }) => {
                 const e = s.billing?.extraUsage
                 if (!e) return null
+                const sym = e.currency === 'EUR' ? '€' : '$'
                 return (
                   <Box key={slot.id ?? '__default__'}>
                     <Text color={slot.color}>● </Text>
                     <Box width={22}><Text dimColor>{truncateName(slot.name, 20)}</Text></Box>
-                    <Text color="yellow">${e.used.toFixed(2)}</Text>
-                    <Text dimColor> / ${e.limit.toFixed(2)}</Text>
+                    <Text color="yellow">{sym}{e.used.toFixed(2)}</Text>
+                    {e.limit != null
+                      ? <Text dimColor> / {sym}{e.limit.toFixed(2)}</Text>
+                      : <Text dimColor> used</Text>}
                   </Box>
                 )
               })}
@@ -1078,11 +1085,12 @@ function MetricBlock({
   items: { slot: AccountSlot; s: AccountStats }[]
   showResets?: boolean
 }) {
-  const rows = items
-    .map(i => ({ slot: i.slot, lim: pick(i.s.billing) ?? null }))
-    .filter(r => r.lim !== null) as { slot: AccountSlot; lim: { utilization: number; resetsAt: string } }[]
-
-  if (rows.length === 0) return null
+  const rows = items.map(i => ({
+    slot: i.slot,
+    lim: pick(i.s.billing) ?? null,
+    error: i.s.billing?.error ?? null,
+  }))
+  if (rows.every(r => r.lim === null && !r.error)) return null
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -1090,15 +1098,28 @@ function MetricBlock({
         <Text bold>{label}</Text>
         <Text dimColor>  {sublabel}</Text>
       </Box>
-      {rows.map(({ slot, lim }) => (
-        <AccountLimitBar
-          key={slot.id ?? '__default__'}
-          slot={slot}
-          pct={lim.utilization}
-          resets={showResets ? lim.resetsAt : null}
-          showName={items.length > 1}
-        />
-      ))}
+      {rows.map(({ slot, lim, error }) => {
+        if (lim) {
+          return (
+            <AccountLimitBar
+              key={slot.id ?? '__default__'}
+              slot={slot}
+              pct={lim.utilization}
+              resets={showResets ? lim.resetsAt : null}
+              showName={items.length > 1}
+            />
+          )
+        }
+        return (
+          <Box key={slot.id ?? '__default__'}>
+            <Text color={slot.color}>● </Text>
+            <Box width={22}><Text dimColor>{truncateName(slot.name, 20)}</Text></Box>
+            <Text color={error ? 'red' : undefined} dimColor={!error}>
+              {error ?? 'no data'}
+            </Text>
+          </Box>
+        )
+      })}
     </Box>
   )
 }

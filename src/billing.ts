@@ -21,7 +21,7 @@ export interface BillingData {
   session: RateLimit | null
   weekly: RateLimit | null
   sonnet: RateLimit | null
-  extraUsage: { limit: number; used: number } | null
+  extraUsage: { limit: number | null; used: number; currency: string } | null
   peak: PeakStatus | null
   error: string | null
 }
@@ -30,7 +30,12 @@ interface OAuthResponse {
   five_hour?: { utilization: number; resets_at: string }
   seven_day?: { utilization: number; resets_at: string }
   seven_day_sonnet?: { utilization: number; resets_at: string } | null
-  extra_usage?: { is_enabled: boolean; monthly_limit: number; used_credits: number } | null
+  extra_usage?: {
+    is_enabled: boolean
+    monthly_limit: number | null
+    used_credits: number | null
+    currency?: string | null
+  } | null
 }
 
 function credentialsFilePath(homeDir?: string): string {
@@ -119,8 +124,9 @@ async function fetchUsage(token: string): Promise<{ data: Omit<BillingData, 'pea
           resetsAt: formatReset(data.seven_day_sonnet.resets_at),
         } : null,
         extraUsage: data.extra_usage?.is_enabled ? {
-          limit: data.extra_usage.monthly_limit / 100,
-          used: data.extra_usage.used_credits / 100,
+          limit: data.extra_usage.monthly_limit != null ? data.extra_usage.monthly_limit / 100 : null,
+          used: (data.extra_usage.used_credits ?? 0) / 100,
+          currency: data.extra_usage.currency ?? 'USD',
         } : null,
       },
     }
