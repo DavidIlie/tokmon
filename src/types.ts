@@ -1,6 +1,10 @@
 export interface UsageSummary {
   cost: number
   tokens: number
+  /** Cache-read tokens included in `tokens` (Codex re-reads dominate this). */
+  cacheRead: number
+  /** USD the cache saved vs paying full input rate for those reads. */
+  cacheSavings: number
 }
 
 export interface ModelDetail {
@@ -22,4 +26,19 @@ export interface TableRow {
   total: number
   cost: number
   breakdown: ModelDetail[]
+}
+
+export interface DashboardData {
+  today: UsageSummary
+  week: UsageSummary
+  month: UsageSummary
+  burnRate: number
+  /** Daily cost for the last N days (oldest→newest) for the history sparkline. */
+  series: number[]
+}
+
+export interface TableData {
+  daily: TableRow[]
+  weekly: TableRow[]
+  monthly: TableRow[]
 }

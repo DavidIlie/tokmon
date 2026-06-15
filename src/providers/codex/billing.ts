@@ -1,0 +1,192 @@
+import { execFile as execFileCb } from 'node:child_process'
+import { readFile, readdir, stat as fsStat } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { createInterface } from 'node:readline'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
+import { resetIn } from '../../format'
+import { readJson } from '../../http'
+import type { Account, BillingResult, Metric } from '../types'
+import { codexHomes } from './usage'
+
+const execFile = promisify(execFileCb)
+const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
+const CREDIT_USD_RATE = 0.04
+
+interface CodexAuth { accessToken: string; accountId?: string }
+
+async function readAuthFile(home: string): Promise<CodexAuth | null> {
+  try {
+    const raw = await readFile(join(home, 'auth.json'), 'utf-8')
+    const auth = JSON.parse(raw)
+    const accessToken = auth?.tokens?.access_token
+    if (!accessToken) return null
+    return { accessToken, accountId: auth?.tokens?.account_id }
+  } catch {
+    return null
+  }
+}
+
+async function readKeychainAuth(): Promise<CodexAuth | null> {
+  try {
+    const { stdout } = await execFile('security', [
+      'find-generic-password', '-s', 'Codex Auth', '-w',
+    ], { timeout: 5000 })
+    const auth = JSON.parse(stdout.trim())
+    const accessToken = auth?.tokens?.access_token
+    if (!accessToken) return null
+    return { accessToken, accountId: auth?.tokens?.account_id }
+  } catch {
+    return null
+  }
+}
+
+async function getAuth(homeDir?: string): Promise<CodexAuth | null> {
+  for (const home of codexHomes(homeDir)) {
+    const auth = await readAuthFile(home)
+    if (auth) return auth
+  }
+  if (process.platform === 'darwin') return readKeychainAuth()
+  return null
+}
+
+function planLabel(planType: unknown): string | null {
+  if (typeof planType !== 'string' || !planType.trim()) return null
+  const p = planType.trim().toLowerCase()
+  if (p === 'prolite') return 'Pro 5x'
+  if (p === 'pro') return 'Pro 20x'
+  return planType.charAt(0).toUpperCase() + planType.slice(1)
+}
+
+// Bounded ISO conversion: a corrupt/far-future epoch would make toISOString()
+// throw RangeError, which (in snapshotBilling) runs outside a try and would drop
+// the fallback. Reject anything outside the Date range (±8.64e15 ms).
+function isoOrNull(ms: number): string | null {
+  return Number.isFinite(ms) && Math.abs(ms) <= 8.64e15 ? new Date(ms).toISOString() : null
+}
+
+function resetFrom(window: any): string | null {
+  if (!window) return null
+  let iso: string | null = null
+  if (typeof window.reset_at === 'number') iso = isoOrNull(window.reset_at * 1000)
+  else if (typeof window.resets_at === 'number') iso = isoOrNull(window.resets_at * 1000)
+  else if (typeof window.reset_after_seconds === 'number') iso = isoOrNull(Date.now() + window.reset_after_seconds * 1000)
+  return iso ? resetIn(iso) : null
+}
+
+function percentMetric(label: string, used: number, resets: string | null, primary?: boolean): Metric {
+  return { label, used, limit: 100, format: { kind: 'percent' }, resetsAt: resets, primary }
+}
+
+/** Live rate-limit % from the ChatGPT backend. Returns null on any failure. */
+async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {
+  try {
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${auth.accessToken}`,
+      'Accept': 'application/json',
+      'User-Agent': 'tokmon',
+    }
+    if (auth.accountId) headers['ChatGPT-Account-Id'] = auth.accountId
+
+    const res = await fetch(USAGE_URL, { headers, signal: AbortSignal.timeout(10000) })
+    if (!res.ok) return null
+    const data = await readJson<any>(res)
+    if (!data) return null
+
+    const metrics: Metric[] = []
+    const rl = data.rate_limit ?? null
+    const primary = rl?.primary_window ?? null
+    const secondary = rl?.secondary_window ?? null
+
+    // A missing header is null → Number(null) is 0, which would falsely show 0%.
+    // Only use the header when it's actually present; otherwise fall back to body.
+    const headerPct = (name: string): number | undefined => {
+      const h = res.headers.get(name)
+      if (h === null || h.trim() === '') return undefined
+      const n = Number(h)
+      return Number.isFinite(n) ? n : undefined
+    }
+    const primaryPct = headerPct('x-codex-primary-used-percent') ?? primary?.used_percent
+    const secondaryPct = headerPct('x-codex-secondary-used-percent') ?? secondary?.used_percent
+
+    if (typeof primaryPct === 'number') metrics.push(percentMetric('5h', primaryPct, resetFrom(primary), true))
+    if (typeof secondaryPct === 'number') metrics.push(percentMetric('Week', secondaryPct, resetFrom(secondary)))
+
+    const balance = data?.credits?.balance
+    if (typeof balance === 'number' && balance >= 0) {
+      metrics.push({ label: 'Credits', used: balance * CREDIT_USD_RATE, limit: null, format: { kind: 'dollars' } })
+    }
+
+    if (metrics.length === 0) return null
+    return { plan: planLabel(data.plan_type), metrics, error: null }
+  } catch {
+    return null
+  }
+}
+
+async function newestRolloutFile(homeDir?: string): Promise<string | null> {
+  let best: { path: string; mtime: number } | null = null
+  for (const home of codexHomes(homeDir)) {
+    const dir = join(home, 'sessions')
+    let listing: string[]
+    try { listing = await readdir(dir, { recursive: true }) } catch { continue }
+    for (const f of listing) {
+      if (!f.endsWith('.jsonl') || !f.includes('rollout-')) continue
+      const path = join(dir, f)
+      try {
+        const s = await fsStat(path)
+        if (!best || s.mtimeMs > best.mtime) best = { path, mtime: s.mtimeMs }
+      } catch {}
+    }
+  }
+  return best?.path ?? null
+}
+
+/** Fallback: the most recent rollout file embeds a live `rate_limits` snapshot. */
+async function snapshotBilling(homeDir?: string): Promise<BillingResult | null> {
+  const path = await newestRolloutFile(homeDir)
+  if (!path) return null
+  let last: any = null
+  try {
+    const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity })
+    for await (const line of rl) {
+      if (!line.includes('rate_limits')) continue
+      try {
+        const obj = JSON.parse(line)
+        if (obj?.payload?.rate_limits) last = obj.payload.rate_limits
+      } catch {}
+    }
+  } catch {
+    return null
+  }
+  if (!last) return null
+
+  const metrics: Metric[] = []
+  if (typeof last.primary?.used_percent === 'number') {
+    metrics.push(percentMetric('5h', last.primary.used_percent, resetFrom(last.primary), true))
+  }
+  if (typeof last.secondary?.used_percent === 'number') {
+    metrics.push(percentMetric('Week', last.secondary.used_percent, resetFrom(last.secondary)))
+  }
+  const balance = last?.credits?.balance
+  if (typeof balance === 'number' && balance >= 0) {
+    metrics.push({ label: 'Credits', used: balance * CREDIT_USD_RATE, limit: null, format: { kind: 'dollars' } })
+  }
+  if (metrics.length === 0) return null
+  return { plan: planLabel(last.plan_type), metrics, error: null }
+}
+
+export async function codexBilling(account: Account): Promise<BillingResult> {
+  const auth = await getAuth(account.homeDir)
+  if (auth) {
+    const live = await liveBilling(auth)
+    if (live) return live
+  }
+  const snap = await snapshotBilling(account.homeDir)
+  if (snap) return snap
+  return {
+    plan: null,
+    metrics: [],
+    error: auth ? 'Usage API failed — run codex to refresh' : 'Not logged in — run codex',
+  }
+}
