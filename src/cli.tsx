@@ -59,8 +59,18 @@ for (let i = 0; i < args.length; i++) {
 }
 
 const config = await loadConfig()
-if (config.clearScreen && process.stdout.isTTY) {
-  process.stdout.write('\x1B[2J\x1B[H')
+
+// Alternate screen buffer (like htop / vim / bpytop): render the dashboard
+// full-screen, then restore the user's previous terminal contents on exit
+// rather than leaving the last frame in scrollback. Gated on the clearScreen
+// setting + a real TTY. The 'exit' listener fires on every termination path
+// (q, Ctrl-C via Ink, process.exit, uncaught errors) so we never strand the
+// terminal in the alt buffer.
+const altScreen = config.clearScreen && process.stdout.isTTY === true
+const leaveAltScreen = () => { try { process.stdout.write('\x1B[?1049l') } catch {} }
+if (altScreen) {
+  process.stdout.write('\x1B[?1049h\x1B[H')
+  process.once('exit', leaveAltScreen)
 }
 
 setGlyphs(resolveGlyphs({
@@ -77,3 +87,5 @@ await waitUntilExit()
 // Persist any pending parse cache before exit — the scheduled flush uses an
 // unref'd 4s timer, so a quick quit on a cold first run would otherwise lose it.
 await flushDisk()
+
+if (altScreen) leaveAltScreen()

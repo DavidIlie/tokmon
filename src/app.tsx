@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Box, Text, useInput, useStdout, useApp } from 'ink'
+import { Box, Text, Transform, useInput, useStdout, useApp } from 'ink'
 import { useMouse } from '@zenobius/ink-mouse'
 import { fetchPeak, type PeakStatus } from './peak'
 import {
@@ -43,6 +43,36 @@ const CURSOR_SORTS = [
   { label: 'model', dir: null },
 ] as const
 const IS_TTY = process.stdin.isTTY === true
+const REPO_URL = 'https://github.com/DavidIlie/tokmon'
+
+// Conservative OSC 8 hyperlink support detection (mirrors sindresorhus/
+// supports-hyperlinks): emit links only where we're confident the terminal
+// renders them, so unsupported terminals never print raw escapes. Computed once.
+export function detectHyperlinks(env: NodeJS.ProcessEnv, isTTY: boolean): boolean {
+  const force = env.FORCE_HYPERLINK
+  if (force != null && force !== '') return force !== '0' && force.toLowerCase() !== 'false'
+  if (!isTTY || env.TERM === 'dumb' || env.NO_HYPERLINK) return false
+  if (env.WT_SESSION || env.ConEmuANSI === 'ON' || env.KITTY_WINDOW_ID || env.TERM === 'xterm-kitty') return true
+  if (env.KONSOLE_VERSION || env.TERMINAL_EMULATOR === 'JetBrains-JediTerm') return true
+  if (env.VTE_VERSION && Number(env.VTE_VERSION) >= 5000) return true   // GNOME Terminal / Tilix
+  const tp = env.TERM_PROGRAM
+  if (tp) {
+    const [maj, min] = (env.TERM_PROGRAM_VERSION ?? '').split('.').map(n => Number(n) || 0)
+    if (tp === 'iTerm.app') return maj > 3 || (maj === 3 && min >= 1)
+    if (tp === 'vscode' || tp === 'WezTerm' || tp === 'ghostty' || tp === 'Hyper' || tp === 'Tabby' || tp === 'rio') return true
+  }
+  return false
+}
+const HYPERLINKS = detectHyperlinks(process.env, process.stdout.isTTY === true)
+
+// OSC 8 terminal hyperlink — clickable in modern terminals (iTerm, Terminal.app,
+// VS Code, Windows Terminal, …); terminals without support ignore the escape and
+// render the plain text. Only emitted to a real TTY. string-width strips it, so
+// it doesn't affect Ink's layout width.
+function osc8(text: string, url: string): string {
+  if (!HYPERLINKS) return text
+  return `]8;;${url}${text}]8;;`
+}
 
 // Startup loader timing. DEBOUNCE_MS: how long the gap must last before the
 // loader appears (so fast/seeded launches paint straight to the dashboard with
@@ -957,9 +987,11 @@ function Footer({ hasAccounts, paginated, cols }: { hasAccounts: boolean; pagina
   return (
     <Box marginTop={1} flexWrap="nowrap">
       <Text dimColor>by </Text>
-      <Text>David Ilie</Text>
+      {/* Transform wraps the OSC 8 link around the ALREADY-laid-out text, so Ink
+          measures the visible width (not the escape bytes) and never truncates it. */}
+      <Transform transform={(s) => osc8(s, REPO_URL)}><Text>David Ilie</Text></Transform>
       <Text dimColor> (</Text>
-      <Text color="cyan">davidilie.com</Text>
+      <Transform transform={(s) => osc8(s, 'https://davidilie.com')}><Text color="cyan">davidilie.com</Text></Transform>
       <Text dimColor>)  {glyphs().middot}  s=settings  </Text>
       {showJump && <Text dimColor>0-9=jump  a/A=cycle  </Text>}
       {showPage && <Text dimColor>scroll=page  </Text>}
