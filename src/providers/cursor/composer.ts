@@ -20,20 +20,21 @@ export interface CursorSpend {
 
 export async function cursorModelSpend(homeDir?: string): Promise<CursorSpend | null> {
   const db = cursorStateDb(homeDir)
+  // Columns are aliased because node:sqlite keys rows by the literal expression
+  // text for unaliased aggregates (e.g. "sum(json_extract(...))").
   const sql =
-    "SELECT mk.key, sum(json_extract(mk.value,'$.costInCents')), sum(json_extract(mk.value,'$.amount')) " +
+    "SELECT mk.key AS name, sum(json_extract(mk.value,'$.costInCents')) AS cents, " +
+    "sum(json_extract(mk.value,'$.amount')) AS amt " +
     "FROM cursorDiskKV c, json_each(c.value,'$.usageData') mk WHERE c.key LIKE 'composerData:%' " +
-    "AND json_valid(c.value) AND json_type(c.value,'$.usageData')='object' GROUP BY mk.key ORDER BY 2 DESC;"
-  const res = await runSqlite(db, sql, ['-separator', '\t'])
+    "AND json_valid(c.value) AND json_type(c.value,'$.usageData')='object' GROUP BY mk.key ORDER BY cents DESC;"
+  const res = await runSqlite(db, sql)
   if (res.status !== 'ok') return null
   const models: CursorModelSpend[] = []
   let total = 0
-  for (const line of res.stdout.trim().split('\n')) {
-    if (!line) continue
-    const [name, cents, amt] = line.split('\t')
-    const usd = (Number(cents) || 0) / 100
+  for (const row of res.rows) {
+    const usd = (Number(row.cents) || 0) / 100
     if (usd <= 0) continue
-    models.push({ name, usd, requests: Number(amt) || 0 })
+    models.push({ name: String(row.name ?? ''), usd, requests: Number(row.amt) || 0 })
     total += usd
   }
   if (total <= 0) return null

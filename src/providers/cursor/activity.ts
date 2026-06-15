@@ -29,18 +29,15 @@ export async function cursorActivity(homeDir?: string): Promise<{ series: number
     // One query: 30 days of daily AI-line counts → derive both the 14-day
     // sparkline and the 30-day total without a second sqlite invocation.
     const res = await runSqlite(db,
-      `SELECT date(createdAt/1000,'unixepoch','localtime') d, count(*) c FROM ai_code_hashes ` +
+      `SELECT date(createdAt/1000,'unixepoch','localtime') AS d, count(*) AS c FROM ai_code_hashes ` +
       `WHERE source!='human' AND createdAt >= ${Math.floor(now - 30 * DAY_MS)} GROUP BY d;`)
     if (res.status !== 'ok') return null
-    const daily = res.stdout.trim()
 
     const byDay = new Map<string, number>()
     let month = 0
-    for (const line of daily.split('\n')) {
-      if (!line) continue
-      const [d, c] = line.split('|')
-      const n = Number(c) || 0
-      byDay.set(d, n)
+    for (const row of res.rows) {
+      const n = Number(row.c) || 0
+      byDay.set(String(row.d), n)
       month += n
     }
     const series: number[] = []

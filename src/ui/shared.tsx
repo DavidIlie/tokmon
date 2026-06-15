@@ -3,11 +3,11 @@ import { Box, Text, type DOMElement } from 'ink'
 import { useOnMouseClick } from '@zenobius/ink-mouse'
 import type { Metric } from '../providers/types'
 import type { PeakStatus } from '../peak'
-
-export const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+import { glyphs } from '../glyphs'
 
 export function truncateName(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n - 1) + '…' : s
+  const ell = glyphs().ellipsis
+  return s.length > n ? s.slice(0, n - ell.length) + ell : s
 }
 
 export function ClickableBox(
@@ -19,14 +19,15 @@ export function ClickableBox(
 }
 
 export function Spinner({ label }: { label: string }) {
+  const frames = glyphs().spinner
   const [i, setI] = useState(0)
   useEffect(() => {
-    const id = setInterval(() => setI(n => (n + 1) % SPINNER_FRAMES.length), 80)
+    const id = setInterval(() => setI(n => (n + 1) % frames.length), 80)
     return () => clearInterval(id)
   }, [])
   return (
     <Box>
-      <Text color="green">{SPINNER_FRAMES[i]} </Text>
+      <Text color="green">{frames[i]} </Text>
       <Text dimColor>{label}</Text>
     </Box>
   )
@@ -50,7 +51,7 @@ export function PeakBadge({ peak }: { peak: PeakStatus }) {
   const color = peak.state === 'peak' ? 'red' : 'green'
   return (
     <Box>
-      <Text color={color}>● </Text>
+      <Text color={color}>{glyphs().dot} </Text>
       <Text bold color={color}>{peak.label}</Text>
       {peak.minutesUntilChange !== null && peak.minutesUntilChange > 0 && (
         <Text dimColor> ({fmtMinutes(peak.minutesUntilChange)})</Text>
@@ -67,20 +68,19 @@ function fmtMinutes(mins: number): string {
 }
 
 function currencySymbol(cur?: string): string {
-  return cur === 'EUR' ? '€' : cur === 'GBP' ? '£' : '$'
+  return cur === 'EUR' ? glyphs().eur : cur === 'GBP' ? glyphs().gbp : '$'
 }
-
-const SPARK = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
 
 /** Render values as a unicode sparkline; zero days keep a flat baseline. */
 export function sparkline(values: number[]): string {
   if (values.length === 0) return ''
+  const spark = glyphs().spark
   const max = Math.max(...values)
-  if (max <= 0) return SPARK[0].repeat(values.length)
+  if (max <= 0) return spark[0].repeat(values.length)
   return values.map(v => {
-    if (v <= 0) return SPARK[0]
-    const idx = Math.min(SPARK.length - 1, 1 + Math.round((v / max) * (SPARK.length - 2)))
-    return SPARK[idx]
+    if (v <= 0) return spark[0]
+    const idx = Math.min(spark.length - 1, 1 + Math.round((v / max) * (spark.length - 2)))
+    return spark[idx]
   }).join('')
 }
 
@@ -89,8 +89,8 @@ export function Bar({ pct, color, width = 24 }: { pct: number; color: string; wi
   const filled = Math.max(0, Math.min(width, Math.round((pct / 100) * width)))
   return (
     <Text>
-      <Text color={color}>{'━'.repeat(filled)}</Text>
-      <Text dimColor>{'─'.repeat(width - filled)}</Text>
+      <Text color={color}>{glyphs().barFull.repeat(filled)}</Text>
+      <Text dimColor>{glyphs().barEmpty.repeat(width - filled)}</Text>
     </Text>
   )
 }

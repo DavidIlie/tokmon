@@ -1,6 +1,6 @@
 # tokmon
 
-Terminal dashboard for **Claude Code**, **Codex**, and **Cursor** — usage, costs, and rate limits, all in one place.
+Terminal dashboard for **Claude Code**, **Codex**, **Cursor**, **Copilot**, **opencode**, **pi**, **Antigravity**, and **Gemini** — usage, costs, and rate limits, all in one place.
 
 Built with [Ink](https://github.com/vadimdemedes/ink) and TypeScript.
 
@@ -28,15 +28,27 @@ Then run `tokmon`. On first launch you'll pick which providers to track; press `
 
 ## Providers
 
+**Usage providers** — full cost & token history (Today / Week / Month, sparkline, per-model table):
+
 | Provider | What it reads | What you get |
 |----------|---------------|--------------|
-| **Claude** | `~/.claude/projects/**/*.jsonl` session logs | Cost & token history, live 5h / weekly / Sonnet rate limits |
-| **Codex** | `~/.codex/sessions/**/rollout-*.jsonl` | Cost & token history, live 5h / weekly limits, credit balance |
-| **Cursor** | `state.vscdb` + local tracking DBs (via `sqlite3`) | Plan, current-period spend, on-demand caps, per-model spend, AI-code activity |
+| **Claude** | `~/.claude/projects/**/*.jsonl` | Cost & token history, plan (e.g. Max 20x), live 5h / weekly / Sonnet limits |
+| **Codex** | `~/.codex/sessions/**/rollout-*.jsonl` | Cost & token history, plan, live 5h / weekly limits, credit balance |
+| **opencode** | `~/.local/share/opencode/opencode.db` | Cost & token history across whatever providers opencode routes to (uses its own recorded cost) |
+| **pi** | `~/.pi/agent/sessions/**/*.jsonl` | Cost & token history (uses pi's own recorded cost) |
 
-tokmon auto-detects which tools are installed (on `PATH` or as a desktop app) and offers them during onboarding. You can always enable a provider manually in settings, even if it isn't detected.
+**Billing / quota providers** — plan + live quota or spend (no local token history):
 
-Costs use each model's published pricing. **Cached tokens are billed at the discounted cache-read rate**, not full input rate — so tokmon's totals reflect what you're actually charged, and tend to be far lower than tools that count cache reads at full price.
+| Provider | What it reads | What you get |
+|----------|---------------|--------------|
+| **Cursor** | `state.vscdb` + local tracking DBs | Plan, current-period spend, on-demand caps, per-model spend, AI-code activity |
+| **Copilot** | GitHub token (gh / VS Code) | Plan + premium-request & chat quota |
+| **Antigravity** | its `state.vscdb` OAuth → Google Cloud Code | Plan + per-pool (Gemini Pro/Flash/Claude) quota |
+| **Gemini** | `~/.gemini/oauth_creds.json` → Google Cloud Code | Plan + quota (re-run `gemini` to refresh an expired token) |
+
+tokmon auto-detects which tools are installed (on `PATH` or as a desktop app). On first launch you pick which to track, and when a new provider you have installed is added in an update, tokmon offers it once on the next launch. You can also toggle any provider in settings.
+
+Costs use each model's published pricing (or the tool's own recorded cost where it stores one). **Cached tokens are billed at the discounted cache-read rate**, not full input rate — so tokmon's totals reflect what you're actually charged, and tend to be far lower than tools that count cache reads at full price.
 
 ## Views
 
@@ -50,7 +62,7 @@ A responsive grid of provider cards (or one card at a time — see **Dashboard l
 - **Rate limits** — live utilization bars with reset countdowns
 - **Sparkline** — recent daily activity
 
-When you track more than one account, a focus strip lets you view **All** together or zoom into a single account.
+The grid reflows to fit your terminal — more columns when it's wide, compacting cards when it's short. With more providers than fit on screen, it splits into **pages**; **scroll** (mouse wheel) to move between them (or `↑`/`↓` / `[` `]`). When you track more than one account, a focus strip lets you view **All** together or zoom into a single account.
 
 A **Peak / Off-Peak** badge appears in the header (Claude only), fetched from [promoclock.co](https://promoclock.co) — peak hours drain session limits faster.
 
@@ -76,6 +88,7 @@ For **Cursor** — a per-model spend table (cost, request count, share of total,
 |-----|--------|
 | `Tab` | Switch between Dashboard and Table |
 | `←` `→` | (Dashboard) switch between Dashboard and Table |
+| scroll / `↑` `↓` / `[` `]` | (Dashboard) move between pages when paginated |
 | `a` `A` | Cycle account focus forward / back |
 | `0`–`9` | Jump to an account focus slot |
 | `s` | Open settings |
@@ -120,6 +133,7 @@ Press `s` to open.
 - **Timezone** — IANA timezone, or `System`
 - **Dashboard layout** — `grid` (all providers at once) or `single` (one at a time)
 - **Default focus** — start on `all`, or remember your `last` focused account
+- **ASCII glyphs** — `auto` (detect), `on` (force ASCII), or `off` (force Unicode)
 
 **Providers** — toggle each provider on or off.
 
@@ -129,8 +143,12 @@ Press `s` to open.
 
 ```
 -i, --interval <seconds>  Refresh interval in seconds (default: from config, or 2)
+    --ascii               Force ASCII glyphs (also: TOKMON_ASCII=1)
+    --no-ascii            Force Unicode glyphs
 -h, --help                Show help
 ```
+
+tokmon auto-detects whether your terminal can render Unicode (block sparklines, box borders) and falls back to ASCII on terminals/fonts that can't (e.g. legacy Windows console). Override with `--ascii` / `--no-ascii`, the `TOKMON_ASCII` env var, or the **ASCII glyphs** setting.
 
 ## Files
 
@@ -148,8 +166,8 @@ Config writes are atomic (temp + rename) so a crash mid-save can't corrupt the f
 
 tokmon runs entirely on your machine and reads everything **read-only**:
 
-- It never writes to any provider's data (Cursor's `state.vscdb` and tracking DBs are opened with `sqlite3 -readonly`).
-- Credentials are read only to call each provider's **own official API** (Anthropic, ChatGPT backend, Cursor) for *your own* usage. Tokens are never logged, displayed, or sent anywhere else.
+- It never writes to any provider's data — SQLite databases (Cursor, opencode) are opened strictly read-only.
+- Credentials are read only to call each provider's **own official API** (Anthropic, ChatGPT backend, Cursor, GitHub, Google Cloud Code) for *your own* usage. Tokens are never logged, displayed, or sent anywhere else.
 - The only outbound requests are to those provider APIs and the optional peak-pricing clock.
 
 ## How It Works
@@ -163,16 +181,16 @@ Cross-platform: macOS, Linux, Windows.
 
 ## Requirements
 
-- Node.js 20+
-- The CLIs/apps you want to track ([Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Cursor](https://cursor.com))
-- `sqlite3` on your `PATH` — required for Cursor (preinstalled on macOS; `apt install sqlite3` / `winget install sqlite` elsewhere)
+- Node.js 20+ (**24+ recommended**)
+- The CLIs/apps you want to track
+- **SQLite** for the Cursor / opencode readers: on Node 24+ this uses the built-in `node:sqlite` — **nothing to install**. On Node 20–23 it falls back to the system `sqlite3` CLI (preinstalled on macOS; `apt install sqlite3` / `winget install sqlite` elsewhere).
 
 ## CI/CD
 
 Publishes to npm and GitHub Packages via GitHub Actions on version tags:
 
 ```bash
-git tag v0.13.0 && git push --tags
+git tag v0.14.0 && git push --tags
 ```
 
 ## Author

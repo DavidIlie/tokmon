@@ -5,21 +5,90 @@ import type { Account, Metric, ProviderId } from '../providers/types'
 import type { UsageSummary, DashboardData } from '../types'
 import type { AccountStats } from '../stats'
 import { Bar, sparkline, metricValueText, truncateName } from './shared'
+import { glyphs } from '../glyphs'
 
 type Item = { account: Account; s: AccountStats | undefined }
 
 const GAP = 2
 const MIN_CARD = 56
+const MIN_CARD_DENSE = 44
+// Conservative per-card heights (tallest card in the set: usage + billing +
+// sparkline, single account). Includes the 2 border rows. The fit math sizes to
+// the tallest card so a short card (e.g. billing-only Cursor) never overflows.
+const CARD_H = { full: 14, compact: 12, mini: 8 } as const
+export type Variant = keyof typeof CARD_H
+const VARIANT_ORDER: Variant[] = ['full', 'compact', 'mini']
+// One row reserved inside the budget for the page indicator when paginating.
+const INDICATOR_ROWS = 1
+// Single huge card shouldn't sprawl across a 200-col terminal — cap its width.
+const MAX_SINGLE_CARD = Math.round(MIN_CARD * 1.6)
 
-export function DashboardView({ groups, stats, cols, focusId, layout }: {
+export type GridLayout = {
+  ncols: number
+  variant: Variant
+  cardsPerPage: number
+  pageCount: number
+}
+
+/**
+ * Pure layout solver (testable like detectUnicode). Given the content width and
+ * the vertical row budget, pick columns + card variant that fit, paginating only
+ * as a last resort. Preference order mirrors bpytop: reflow columns → drop
+ * sparkline (compact) → drop bars (mini) → paginate.
+ */
+export function chooseLayout(content: number, budget: number, n: number, single: boolean, cols: number): GridLayout {
+  if (n <= 0) return { ncols: 1, variant: 'mini', cardsPerPage: 1, pageCount: 1 }
+
+  // Vertical cost of `rows` card-rows of height H (rowGap=1 between rows).
+  const gridHeight = (rows: number, H: number) => rows * H + Math.max(0, rows - 1)
+
+  const colCap = single ? 1
+    : cols >= 3 * MIN_CARD_DENSE + 2 * GAP ? 3   // 136: three dense cards + gaps
+    : cols >= 2 * MIN_CARD + GAP ? 2             // 114: two readable cards + gap
+    : 1
+  const maxCols = Math.max(1, Math.min(colCap, n))
+  const cardWidthAt = (nc: number) => nc <= 1 ? content : Math.floor((content - GAP * (nc - 1)) / nc)
+  const minWidthAt = (nc: number) => nc >= 3 ? MIN_CARD_DENSE : MIN_CARD
+
+  // Try richest-detail-that-fits: prefer more columns at a given variant before
+  // degrading the variant. Walk variants outer, columns inner (most cols first
+  // shortens the grid the most).
+  for (const variant of VARIANT_ORDER) {
+    for (let nc = maxCols; nc >= 1; nc--) {
+      if (nc > 1 && cardWidthAt(nc) < minWidthAt(nc)) continue
+      const rows = Math.ceil(n / nc)
+      if (gridHeight(rows, CARD_H[variant]) <= budget) {
+        return { ncols: nc, variant, cardsPerPage: n, pageCount: 1 }
+      }
+    }
+  }
+
+  // Nothing fits whole — paginate the densest variant at the widest valid column
+  // count. Reserve a row for the indicator.
+  let ncols = 1
+  for (let nc = maxCols; nc >= 1; nc--) {
+    if (nc === 1 || cardWidthAt(nc) >= minWidthAt(nc)) { ncols = nc; break }
+  }
+  const H = CARD_H.mini
+  const fitBudget = budget - INDICATOR_ROWS
+  // Invert gridHeight: rows*H + (rows-1) <= fitBudget  ⇒  rows <= (fitBudget+1)/(H+1)
+  const rowsThatFit = Math.max(1, Math.floor((fitBudget + 1) / (H + 1)))
+  const cardsPerPage = Math.max(1, rowsThatFit * ncols)
+  const pageCount = Math.max(1, Math.ceil(n / cardsPerPage))
+  return { ncols, variant: 'mini', cardsPerPage, pageCount }
+}
+
+export function DashboardView({ groups, stats, cols, budget, focusId, layout, page = 0 }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
   stats: Map<string, AccountStats>
   cols: number
+  budget: number
   focusId: string | null
   layout: 'grid' | 'single'
+  page?: number
 }) {
   if (groups.length === 0) {
-    return <Text dimColor>No providers enabled — press s to pick providers.</Text>
+    return <Text dimColor>No providers enabled {glyphs().emDash} press s to pick providers.</Text>
   }
 
   // 'single' mode shows one provider at a time (cycle with 1-9 / a). When no
@@ -27,28 +96,42 @@ export function DashboardView({ groups, stats, cols, focusId, layout }: {
   let shown = groups
   if (layout === 'single' && focusId === null) shown = groups.slice(0, 1)
 
-  const content = Math.max(MIN_CARD, cols - 4)
-  // One full-width hero when focused/single; otherwise a width-calculated grid
-  // (1–2 columns) that reflows with the terminal.
   const single = focusId !== null || layout === 'single'
-  const auto = Math.max(1, Math.min(2, Math.floor((content + GAP) / (MIN_CARD + GAP))))
-  const ncols = single ? 1 : Math.min(auto, shown.length)
-  const cardW = ncols <= 1 ? content : Math.floor((content - GAP * (ncols - 1)) / ncols)
+  const content = Math.max(MIN_CARD, cols - 4)
+  const { ncols, variant, cardsPerPage, pageCount } = chooseLayout(content, budget, shown.length, single, cols)
 
+  let cardW = ncols <= 1 ? content : Math.floor((content - GAP * (ncols - 1)) / ncols)
+  if (ncols === 1 && cardW > MAX_SINGLE_CARD) cardW = MAX_SINGLE_CARD
+
+  const pg = pageCount > 1 ? ((page % pageCount) + pageCount) % pageCount : 0
+  const visible = pageCount > 1
+    ? shown.slice(pg * cardsPerPage, pg * cardsPerPage + cardsPerPage)
+    : shown
+
+  // Fixed-height + overflow:hidden is the hard backstop: any underestimate clips
+  // INSIDE the grid, never displacing the focus strip / footer below it.
   return (
-    <Box width={content} flexWrap="wrap" columnGap={GAP} rowGap={1}>
-      {shown.map(g => (
-        <ProviderCard key={g.provider} provider={g.provider} accounts={g.accounts} stats={stats} width={cardW} />
-      ))}
+    <Box height={budget} flexDirection="column" overflow="hidden">
+      <Box width={content} flexWrap="wrap" columnGap={GAP} rowGap={1}>
+        {visible.map(g => (
+          <Box key={g.provider} flexShrink={0}>
+            <ProviderCard provider={g.provider} accounts={g.accounts} stats={stats} width={cardW} variant={variant} />
+          </Box>
+        ))}
+      </Box>
+      {pageCount > 1 && (
+        <Text dimColor>  {glyphs().middot} page {pg + 1}/{pageCount} {glyphs().middot} scroll {glyphs().arrowU}{glyphs().arrowD}</Text>
+      )}
     </Box>
   )
 }
 
-function ProviderCard({ provider, accounts, stats, width }: {
+function ProviderCard({ provider, accounts, stats, width, variant }: {
   provider: ProviderId
   accounts: Account[]
   stats: Map<string, AccountStats>
   width: number
+  variant: Variant
 }) {
   const meta = PROVIDERS[provider]
   const items: Item[] = accounts.map(a => ({ account: a, s: stats.get(a.id) }))
@@ -59,11 +142,13 @@ function ProviderCard({ provider, accounts, stats, width }: {
   const inner = width - 4
   const barW = Math.max(10, Math.min(46, inner - 20))
   const hasSpark = !!agg && agg.series.some(v => v > 0)
+  const showBars = variant !== 'mini'   // rate-limit / spend bars
+  const showSpark = variant === 'full'  // 14-day sparkline footer
 
   return (
-    <Box flexDirection="column" width={width} borderStyle="round" borderColor={meta.color} paddingX={1}>
+    <Box flexDirection="column" width={width} borderStyle={glyphs().border} borderColor={meta.color} paddingX={1}>
       <Box>
-        <Text color={meta.color}>● </Text>
+        <Text color={meta.color}>{glyphs().dot} </Text>
         <Text bold color={meta.color}>{meta.name}</Text>
         <Box flexGrow={1} />
         {plan && <Text dimColor>{plan}</Text>}
@@ -79,25 +164,29 @@ function ProviderCard({ provider, accounts, stats, width }: {
             <KpiLine agg={agg} />
           </>
         ) : (
-          <><Box height={1} /><Text dimColor>Fetching usage…</Text></>
+          <><Box height={1} /><Text dimColor>Fetching usage{glyphs().ellipsis}</Text></>
         )
       )}
 
-      {meta.hasBilling && (
+      {meta.hasBilling && showBars && (
         <>
           {meta.hasUsage && <Rule inner={inner} />}
           <LimitsBlock items={items} barW={barW} />
         </>
       )}
+      {/* Billing-only card under mini: keep one signal line instead of bars. */}
+      {meta.hasBilling && !showBars && !meta.hasUsage && (
+        <CompactBilling items={items} />
+      )}
 
-      {hasSpark && (
+      {hasSpark && showSpark && (
         <>
           <Rule inner={inner} />
           <SparkFooter series={agg!.series} month={agg!.month.cost} color={meta.color} />
         </>
       )}
 
-      {!meta.hasUsage && activity && (
+      {!meta.hasUsage && activity && showSpark && (
         <>
           <Rule inner={inner} />
           <Box>
@@ -107,15 +196,25 @@ function ProviderCard({ provider, accounts, stats, width }: {
           </Box>
         </>
       )}
-      {!meta.hasUsage && !activity && (
-        <><Box flexGrow={1} /><Text dimColor>Billing only — no local history</Text></>
+      {!meta.hasUsage && !activity && variant === 'full' && (
+        <><Box flexGrow={1} /><Text dimColor>Billing only {glyphs().emDash} no local history</Text></>
       )}
     </Box>
   )
 }
 
+/** One-line billing summary for a mini billing-only card (Cursor under mini). */
+function CompactBilling({ items }: { items: Item[] }) {
+  const billing = items.map(i => i.s?.billing).find(Boolean)
+  if (!billing) return <Text dimColor>Fetching{glyphs().ellipsis}</Text>
+  if (billing.error) return <Text color="red">{billing.error}</Text>
+  const m = billing.metrics[0]
+  if (!m) return <Text dimColor>No data</Text>
+  return <Text bold color="yellow">{metricValueText(m)}</Text>
+}
+
 function Rule({ inner }: { inner: number }) {
-  return <Text dimColor>{'─'.repeat(Math.max(0, inner))}</Text>
+  return <Text dimColor>{glyphs().rule.repeat(Math.max(0, inner))}</Text>
 }
 
 function SummaryRow({ label, s }: { label: string; s: UsageSummary }) {
@@ -154,10 +253,10 @@ function LimitsBlock({ items, barW }: { items: Item[]; barW: number }) {
         return (
           <Box key={account.id} flexDirection="column" marginTop={showName && idx > 0 ? 1 : 0}>
             {showName && (
-              <Box><Text color={account.color}>● </Text><Text bold>{truncateName(account.name, 22)}</Text></Box>
+              <Box><Text color={account.color}>{glyphs().dot} </Text><Text bold>{truncateName(account.name, 22)}</Text></Box>
             )}
             {!billing ? (
-              <Text dimColor>Fetching…</Text>
+              <Text dimColor>Fetching{glyphs().ellipsis}</Text>
             ) : billing.error ? (
               <Text color="red">{billing.error}</Text>
             ) : billing.metrics.length === 0 ? (

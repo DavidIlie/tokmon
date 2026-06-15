@@ -81,6 +81,21 @@ export function installSignals(id: ProviderId): boolean {
         pf86 && join(pf86, 'Cursor', 'Cursor.exe'),
         '/opt/Cursor/cursor', '/usr/share/cursor/cursor', '/usr/bin/cursor',
       ])
+    case 'pi':
+      return onPath(['pi'])
+    case 'opencode':
+      return onPath(['opencode'])
+    case 'copilot':
+      // gh on PATH is the reliable cross-OS signal; the provider's own detect()
+      // does the OS-correct hosts.yml check (gh stores config differently per OS).
+      return onPath(['gh'])
+    case 'antigravity':
+      return onPath(['antigravity']) || anyExists([
+        '/Applications/Antigravity.app', join(home, 'Applications', 'Antigravity.app'),
+        lad && join(lad, 'Programs', 'Antigravity', 'Antigravity.exe'),
+      ])
+    case 'gemini':
+      return onPath(['gemini'])
     default:
       return false
   }

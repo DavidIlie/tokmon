@@ -1,6 +1,6 @@
 import type { DashboardData, TableData } from '../types'
 
-export type ProviderId = 'claude' | 'codex' | 'cursor'
+export type ProviderId = 'claude' | 'codex' | 'cursor' | 'pi' | 'opencode' | 'copilot' | 'antigravity' | 'gemini'
 
 /**
  * An account is one tracked identity within a provider. File-based providers

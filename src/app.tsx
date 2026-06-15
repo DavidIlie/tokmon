@@ -12,13 +12,16 @@ import { PROVIDERS, PROVIDER_ORDER, detectProviders, type Account, type Provider
 import { mergeTables } from './providers/usage-core'
 import type { TableData, TableRow } from './types'
 import { resolveTimezone, isValidTimezone, systemTimezone } from './tz'
+import { loadSnapshot, saveSnapshot } from './snapshot'
+import { glyphs } from './glyphs'
 import * as fmt from './format'
 import type { AccountStats } from './stats'
 import { ClickableBox, Spinner, TabBar, PeakBadge, truncateName } from './ui/shared'
-import { DashboardView } from './ui/dashboard'
+import { DashboardView, chooseLayout } from './ui/dashboard'
 import { TableProviderBar, ControlBar, TokenTable, CursorSpendTable } from './ui/table'
 import { cursorModelSpend, type CursorModelSpend } from './providers/cursor/composer'
 import { Onboarding, type OnboardItem } from './ui/onboarding'
+import { LoadingView, accountReady } from './ui/loading'
 import {
   SettingsView, PROVIDER_ROWS_START, ACCOUNT_ROWS_START, COLOR_PALETTE, FORM_FIELDS,
   type AccountForm,
@@ -26,14 +29,34 @@ import {
 
 const TABS = ['Dashboard', 'Table'] as const
 const VIEWS = ['Daily', 'Weekly', 'Monthly'] as const
-const SORTS = ['date ↑', 'date ↓', 'cost ↑', 'cost ↓'] as const
-const CURSOR_SORTS = ['cost ↓', 'amount ↓', 'model'] as const
+// Bare labels + direction; the ↑/↓ glyph is appended at render time (glyphs() is
+// resolved at startup AFTER this module loads, so it can't live in a const here).
+const SORTS = [
+  { label: 'date', dir: 'up' as const },
+  { label: 'date', dir: 'down' as const },
+  { label: 'cost', dir: 'up' as const },
+  { label: 'cost', dir: 'down' as const },
+] as const
+const CURSOR_SORTS = [
+  { label: 'cost', dir: 'down' as const },
+  { label: 'amount', dir: 'down' as const },
+  { label: 'model', dir: null },
+] as const
 const IS_TTY = process.stdin.isTTY === true
+
+// Startup loader timing. DEBOUNCE_MS: how long the gap must last before the
+// loader appears (so fast/seeded launches paint straight to the dashboard with
+// no flash). LOADER_GRACE_MS: keep the loader up briefly after everything is
+// ready so the final ✓ is seen. LOADER_MAX_MS: hard deadline — drop to the
+// dashboard regardless, so a hung fetch never strands the user on the loader.
+const DEBOUNCE_MS = 300
+const LOADER_GRACE_MS = 600
+const LOADER_MAX_MS = 8000
 
 const DEFAULT_CONFIG: Config = {
   interval: 2, billingInterval: 5, clearScreen: true, timezone: null,
   accounts: [], activeAccountId: null, disabledProviders: [], onboarded: false,
-  dashboardLayout: 'grid', defaultFocus: 'all',
+  dashboardLayout: 'grid', defaultFocus: 'all', ascii: 'auto', knownProviders: [],
 }
 
 type Slot = { id: string | null; name: string; color: string }
@@ -63,6 +86,10 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const [accountForm, setAccountForm] = useState<AccountForm | null>(null)
   const [onboardSel, setOnboardSel] = useState<ProviderId[] | null>(null)
   const [onboardCursor, setOnboardCursor] = useState(0)
+  const [dashPage, setDashPage] = useState(0)
+  const [debouncePassed, setDebouncePassed] = useState(false)
+  const [graceHold, setGraceHold] = useState(false)   // keep the final ✓ visible briefly
+  const loaderDone = useRef(false)   // one-shot latch: loader shows at most once per process
   const { stdout } = useStdout()
   const { exit } = useApp()
   const rows = stdout?.rows ?? 24
@@ -78,6 +105,8 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const accountsRef = useRef<Account[]>([])
   accountsRef.current = accounts
   const rowCountRef = useRef(0)   // live table row count, read by the cursor clamp
+  const dashPageCountRef = useRef(1)   // live dashboard page count, read by the scroll handler
+  const seededRef = useRef(false)      // guards the one-time snapshot seed
   const accountsKey = accounts.map(a => `${a.id}:${a.homeDir ?? ''}`).join('|')
 
   // Focus slots: "All" plus every account, when there's more than one to choose.
@@ -93,6 +122,43 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const visibleAccounts = focusId === null ? accounts : accounts.filter(a => a.id === focusId)
   const groups = accountsByProvider(visibleAccounts)
 
+  // --- Responsive dashboard sizing -----------------------------------------
+  // Below either floor the full dashboard can't render without wrapping chrome
+  // (header/strip), so swap to a guaranteed-fits condensed fallback.
+  const TOO_SMALL = cols < 40 || rows < 12
+
+  // --- Startup loader gating ----------------------------------------------
+  // The loader fills the gap between "accounts known" and "first useful data for
+  // every account arrived", but only once (loaderDone) and only if that gap
+  // outlasts DEBOUNCE_MS — so seeded/fast launches never flash it. Uses the full
+  // unfiltered account list (not focus-filtered) so every provider is shown and
+  // a hidden one still fetching can't let the loader exit early.
+  const allGroups = accountsByProvider(accounts)
+  const allReady = accounts.length > 0 && accounts.every(a => accountReady(stats.get(a.id), a.providerId))
+  // `showLoader` is derived further down, once `showPicker` is known.
+
+  const hasStrip = slots.length > 1
+  // Focus strip wraps when the chips overflow one line. Estimate chips/row from
+  // the slot labels (clipped to 16) so a 2-line strip is budgeted, not assumed 1.
+  const stripChipW = (s: Slot) => 2 /*idx+space*/ + 2 /*dot+space*/ + truncateName(s.name, 16).length + 2 /*marginRight*/
+  const stripChars = slots.reduce((sum, s) => sum + stripChipW(s), 0)
+  const stripLines = hasStrip ? Math.max(1, Math.ceil(stripChars / Math.max(1, cols - 4 /*paddingX*/ - 7 /*"focus  "*/))) : 0
+  // Chrome rows that surround the card grid (see layout notes in MEMORY):
+  //   outer paddingY 2 · header up-to-2 · tabbar block 3 · strip (marginTop 1 +
+  //   stripLines) · footer (marginTop 1 + 1). Header may wrap to 2 lines at
+  //   narrow widths, so budget 2 conservatively to keep the footer un-clipped.
+  const headerRows = cols < 70 ? 2 : 1
+  const CHROME = 2 + headerRows + 3 + (hasStrip ? 1 + stripLines : 0) + 2
+  const gridBudget = Math.max(1, rows - CHROME)
+  // Mirror DashboardView's solver so page keys only act when paginating.
+  const dashLayout = chooseLayout(
+    Math.max(56, cols - 4), gridBudget, groups.length,
+    focusId !== null || cfg.dashboardLayout === 'single', cols,
+  )
+  const dashPageCount = dashLayout.pageCount
+  const dashPaginated = dashPageCount > 1
+  dashPageCountRef.current = dashPageCount   // read by the (tab-scoped) scroll handler
+
   // The Table tab is provider-scoped (its own selector), independent of the
   // dashboard focus, across all enabled providers.
   const tableProvs = accountsByProvider(accounts).map(g => g.provider)
@@ -102,8 +168,21 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const SORTS_FOR = tableIsCursor ? CURSOR_SORTS : SORTS
 
   const needsOnboarding = configReady && !cfg.onboarded
+  // Providers installed but not yet decided on (added since the user last chose).
+  // The same picker offers them on boot so they're opted into once, rather than
+  // silently appearing.
+  const newProviders = configReady && cfg.onboarded
+    ? PROVIDER_ORDER.filter(p => !cfg.knownProviders.includes(p) && detected.includes(p))
+    : []
+  const showPicker = needsOnboarding || newProviders.length > 0
+  // Once shown, the loader survives the moment allReady flips (held by the grace
+  // timer) so the final ✓ is seen; `graceHold` keeps `showLoader` true across
+  // that beat without depending on `!allReady`.
+  const showLoader = configReady && !showPicker && !showSettings && !TOO_SMALL
+    && accounts.length > 0 && (!allReady || graceHold) && debouncePassed && !loaderDone.current
+  const pickerProviders = needsOnboarding ? PROVIDER_ORDER : newProviders
   const onboardEnabled = onboardSel ?? detected
-  const onboardItems: OnboardItem[] = PROVIDER_ORDER.map(pid => ({
+  const onboardItems: OnboardItem[] = pickerProviders.map(pid => ({
     id: pid, name: PROVIDERS[pid].name, color: PROVIDERS[pid].color,
     detected: detected.includes(pid), enabled: onboardEnabled.includes(pid),
   }))
@@ -117,6 +196,57 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     })
     detectProviders().then(setDetected)
   }, [])
+
+  // Seed last-known values from the on-disk snapshot the moment accounts are
+  // known, so cards paint instantly while the live polls refresh in the
+  // background (incremental rendering — never block the UI on slow providers).
+  useEffect(() => {
+    if (seededRef.current || !configReady || accounts.length === 0) return
+    seededRef.current = true
+    loadSnapshot().then(snap => {
+      setStats(prev => {
+        if (prev.size > 0) return prev   // live data already arrived — don't clobber
+        const next = new Map(prev)
+        for (const acc of accountsRef.current) {
+          const s = snap[acc.id]
+          if (s && (s.dashboard || s.billing)) next.set(acc.id, { account: acc, dashboard: s.dashboard ?? null, billing: s.billing ?? null })
+        }
+        return next
+      })
+    })
+  }, [configReady, accountsKey])
+
+  // Persist the current display values (debounced) so the next launch is instant.
+  useEffect(() => {
+    if (stats.size === 0) return
+    const t = setTimeout(() => saveSnapshot(stats), 500)
+    return () => clearTimeout(t)
+  }, [stats])
+
+  // Arm the loader debounce once per account set. Keyed on accountsKey (NOT
+  // stats) so a per-provider tick can't re-arm it. If everything is already
+  // ready (seeded/fast), the early return fires and debouncePassed stays false.
+  useEffect(() => {
+    if (!configReady || showPicker || accounts.length === 0) return
+    if (allReady || loaderDone.current) return
+    const debounce = setTimeout(() => setDebouncePassed(true), DEBOUNCE_MS)
+    const deadline = setTimeout(() => { loaderDone.current = true; setDebouncePassed(false) }, LOADER_MAX_MS)
+    return () => { clearTimeout(debounce); clearTimeout(deadline) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configReady, showPicker, accountsKey])
+
+  // Latch the loader closed once everything is ready. If the loader was actually
+  // on-screen, hold it for a short grace (so the final ✓ is seen) before closing;
+  // otherwise (seeded/fast path) latch immediately so it never re-shows on later
+  // poll cycles even if a poll transiently nulls a value.
+  useEffect(() => {
+    if (!allReady || loaderDone.current) return
+    if (!debouncePassed) { loaderDone.current = true; return }   // never showed → close now
+    setGraceHold(true)
+    const t = setTimeout(() => { loaderDone.current = true; setGraceHold(false) }, LOADER_GRACE_MS)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allReady])
 
   // Usage poll (token/cost summaries) for usage-capable accounts.
   // Self-scheduling: the next run waits for the current to finish, so a slow
@@ -216,6 +346,10 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   // Keep the row cursor in range when filtering changes the visible row count.
   useEffect(() => { setCursor(0); setExpanded(-1) }, [search])
 
+  // Clamp (don't reset) the dashboard page when the page count shrinks — a
+  // one-row resize shouldn't snap the user back to page 1.
+  useEffect(() => { setDashPage(p => Math.min(p, dashPageCount - 1)) }, [dashPageCount])
+
   const resetView = useCallback(() => { setCursor(0); setExpanded(-1) }, [])
   // Keep the row cursor within the current table so G / over-scroll can't strand
   // it past the last row (which would make Enter expand nothing and ↑ look stuck).
@@ -226,7 +360,13 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     if (!IS_TTY) return
     mouse.enable()
     const onScroll = (_pos: { x: number; y: number }, dir: string | null) => {
-      if (tab === 1) setCursor(c => dir === 'scrollup' ? Math.max(0, c - 3) : c + 3)
+      const up = dir === 'scrollup'
+      if (tab === 1) {
+        setCursor(c => up ? Math.max(0, c - 3) : c + 3)
+      } else if (tab === 0 && dashPageCountRef.current > 1) {
+        // Scroll is the primary way to move between dashboard pages.
+        setDashPage(p => up ? Math.max(0, p - 1) : Math.min(dashPageCountRef.current - 1, p + 1))
+      }
     }
     mouse.events.on('scroll', onScroll)
     return () => { mouse.events.off('scroll', onScroll) }
@@ -241,8 +381,8 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   }
 
   function toggleOnboard(i: number): void {
-    if (i < 0 || i >= PROVIDER_ORDER.length) return
-    const pid = PROVIDER_ORDER[i]
+    if (i < 0 || i >= pickerProviders.length) return
+    const pid = pickerProviders[i]
     setOnboardSel(prev => {
       const base = prev ?? detected
       return base.includes(pid) ? base.filter(p => p !== pid) : [...base, pid]
@@ -251,6 +391,8 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   function toggleProvider(pid: ProviderId): void {
     updateConfig(c => ({
       ...c,
+      // Toggling in settings is also an explicit decision → mark it known.
+      knownProviders: c.knownProviders.includes(pid) ? c.knownProviders : [...c.knownProviders, pid],
       disabledProviders: c.disabledProviders.includes(pid)
         ? c.disabledProviders.filter(p => p !== pid)
         : [...c.disabledProviders, pid],
@@ -258,11 +400,27 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   }
   function confirmOnboarding(): void {
     const enabled = onboardEnabled
-    updateConfig(c => ({
-      ...c,
-      disabledProviders: PROVIDER_ORDER.filter(p => !enabled.includes(p)),
-      onboarded: true,
-    }))
+    updateConfig(c => {
+      if (!c.onboarded) {
+        // First run — decide on every provider shown.
+        return {
+          ...c,
+          disabledProviders: PROVIDER_ORDER.filter(p => !enabled.includes(p)),
+          knownProviders: [...PROVIDER_ORDER],
+          onboarded: true,
+        }
+      }
+      // Boot opt-in: only the newly-offered providers are affected; unselected
+      // ones are disabled, and all offered ones become "known" so we don't ask again.
+      const newlyDisabled = pickerProviders.filter(p => !enabled.includes(p))
+      return {
+        ...c,
+        disabledProviders: [...new Set([...c.disabledProviders, ...newlyDisabled])],
+        knownProviders: [...new Set([...c.knownProviders, ...pickerProviders])],
+      }
+    })
+    setOnboardSel(null)
+    setOnboardCursor(0)
   }
 
   function cycleAccount(dir: 1 | -1): void {
@@ -358,9 +516,9 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const totalSettingsRows = ACCOUNT_ROWS_START + cfg.accounts.length + 1
 
   useInput((input, key) => {
-    if (needsOnboarding) {
+    if (showPicker) {
       if (input === 'q') { exit(); return }
-      const startIdx = PROVIDER_ORDER.length
+      const startIdx = pickerProviders.length
       if (key.upArrow) { setOnboardCursor(c => Math.max(0, c - 1)); return }
       if (key.downArrow) { setOnboardCursor(c => Math.min(startIdx, c + 1)); return }
       if (input === ' ') { toggleOnboard(onboardCursor); return }
@@ -501,6 +659,14 @@ export function App({ interval: cliInterval }: { interval?: number }) {
       if (target) { updateConfig(c => ({ ...c, activeAccountId: target.id })); resetView() }
       return
     }
+    // Dedicated dashboard paging keys (kept separate from a/A focus-cycle so the
+    // user never loses focus control when the grid happens to paginate).
+    // Dashboard paging: scroll is the default, but arrows / PgUp-PgDn / [ ] also
+    // move between pages (clamped at the ends, matching scroll).
+    if (tab === 0 && dashPaginated) {
+      if (input === ']' || key.downArrow || key.pageDown) { setDashPage(p => Math.min(dashPageCount - 1, p + 1)); return }
+      if (input === '[' || key.upArrow || key.pageUp) { setDashPage(p => Math.max(0, p - 1)); return }
+    }
 
     if (tab === 1) {
       if (input === 'p') { cycleTableProvider(1); return }
@@ -529,12 +695,36 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   if (error) return <Box padding={1}><Text color="red">{error}</Text></Box>
   if (!config) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
 
-  if (needsOnboarding) {
+  if (showPicker) {
     return (
       <Box flexDirection="column" paddingX={2} paddingY={1} height={rows}>
-        <Onboarding items={onboardItems} cursor={onboardCursor} onToggle={toggleOnboard} onConfirm={confirmOnboarding} />
+        <Onboarding
+          items={onboardItems} cursor={onboardCursor} onToggle={toggleOnboard} onConfirm={confirmOnboarding}
+          heading={needsOnboarding ? 'Welcome to tokmon' : 'New providers detected'}
+          subheading={needsOnboarding
+            ? 'Pick the tools you want to track. You can change this anytime in settings.'
+            : 'tokmon found these installed since you last set up. Pick which to track.'}
+        />
       </Box>
     )
+  }
+
+  // Startup loader: shown only in the debounced gap before every account's first
+  // useful reading lands (never during the picker/settings/tiny terminal). The
+  // global useInput above stays mounted, so q quits during the loader. Matches
+  // the dashboard's outer frame so cards appear where the loader rows were.
+  if (showLoader) {
+    return (
+      <Box flexDirection="column" paddingX={2} paddingY={1} height={rows} overflow="hidden">
+        <LoadingView groups={allGroups} stats={stats} cols={cols} rows={rows} />
+      </Box>
+    )
+  }
+
+  // Too-small terminal: a guaranteed-fits condensed view. Global useInput stays
+  // active (q quits, s settings) so we never trap the user on a tiny screen.
+  if (TOO_SMALL && !showSettings) {
+    return <TinyFallback groups={groups} stats={stats} rows={rows} cols={cols} />
   }
 
   // Sorting/filtering a few hundred rows each render is cheap; no useMemo (it
@@ -544,14 +734,14 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   rowCountRef.current = tableIsCursor ? cursorTableRows.length : tokenRows.length
 
   return (
-    <Box flexDirection="column" paddingX={2} paddingY={1} height={rows}>
+    <Box flexDirection="column" paddingX={2} paddingY={1} height={rows} overflow="hidden">
       <Box justifyContent="space-between">
         <Box>
-          <Text bold color="greenBright">{'◉'} tokmon</Text>
-          <Text dimColor>  ·  every {cfg.interval}s</Text>
+          <Text bold color="greenBright">{glyphs().dotSel} tokmon</Text>
+          <Text dimColor>  {glyphs().middot}  every {cfg.interval}s</Text>
         </Box>
         <Box>
-          {peak && (<><PeakBadge peak={peak} /><Text dimColor>  ·  </Text></>)}
+          {peak && (<><PeakBadge peak={peak} /><Text dimColor>  {glyphs().middot}  </Text></>)}
           <Text dimColor>{fmt.time(updated, tz)}</Text>
         </Box>
       </Box>
@@ -570,11 +760,11 @@ export function App({ interval: cliInterval }: { interval?: number }) {
         <>
           <Box marginTop={1} marginBottom={1}>
             <TabBar tabs={TABS} active={tab} onSelect={(i) => { setTab(i); resetView() }} />
-            <Text dimColor>  Tab/←→</Text>
+            <Text dimColor>  Tab/{glyphs().arrowL}{glyphs().arrowR}</Text>
           </Box>
           {tab === 0 && (
             <>
-              <DashboardView groups={groups} stats={stats} cols={cols} focusId={focusId} layout={cfg.dashboardLayout} />
+              <DashboardView groups={groups} stats={stats} cols={cols} budget={gridBudget} focusId={focusId} layout={cfg.dashboardLayout} page={dashPage} />
               {slots.length > 1 && (
                 <Box marginTop={1}>
                   <Text dimColor>focus  </Text>
@@ -595,11 +785,11 @@ export function App({ interval: cliInterval }: { interval?: number }) {
                 }} />
               )}
               <Box height={1} />
-              <ControlBar views={VIEWS} period={view} sort={SORTS_FOR[sort % SORTS_FOR.length]}
+              <ControlBar views={VIEWS} period={view} sort={sortLabel(SORTS_FOR[sort % SORTS_FOR.length])}
                 search={search} searching={searchMode} showPeriod={!tableIsCursor} />
               <Box height={1} />
               {!effTableProvider ? (
-                <Text dimColor>No providers enabled — press s to pick providers.</Text>
+                <Text dimColor>No providers enabled {glyphs().emDash} press s to pick providers.</Text>
               ) : tableLoading && !table && !cursorRows ? (
                 <Spinner label="Loading history" />
               ) : tableIsCursor ? (
@@ -619,7 +809,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
         </>
       )}
 
-      {(tab === 0 || showSettings) && <Footer hasAccounts={slots.length > 1} />}
+      {(tab === 0 || showSettings) && <Footer hasAccounts={slots.length > 1} paginated={tab === 0 && dashPaginated} cols={cols} />}
     </Box>
   )
 }
@@ -641,6 +831,14 @@ async function fetchScopeTable(scope: Account[], tz: string): Promise<TableData>
   if (valid.length === 0) return { daily: [], weekly: [], monthly: [] }
   if (valid.length === 1) return valid[0]
   return mergeTables(valid)
+}
+
+// Assemble a sort label with its direction arrow at call time (so the active
+// glyph set is used, not the default one captured at module load).
+function sortLabel(entry: { label: string; dir: 'up' | 'down' | null }): string {
+  if (entry.dir === 'up') return `${entry.label} ${glyphs().arrowU}`
+  if (entry.dir === 'down') return `${entry.label} ${glyphs().arrowD}`
+  return entry.label
 }
 
 function sortRows(rows: TableRow[], sortIdx: number): TableRow[] {
@@ -680,7 +878,7 @@ function AccountStrip({ slots, activeIdx, onSelect }: { slots: Slot[]; activeIdx
     <Box flexWrap="wrap">
       {slots.map((s, i) => {
         const active = i === activeIdx
-        const dot = s.id === null ? '✦' : '●'
+        const dot = s.id === null ? glyphs().dotAll : glyphs().dot
         const label = truncateName(s.name, 16)
         return (
           <ClickableBox key={s.id ?? '__all__'} onClick={() => onSelect(i)} marginRight={2}>
@@ -696,16 +894,83 @@ function AccountStrip({ slots, activeIdx, onSelect }: { slots: Slot[]; activeIdx
   )
 }
 
-function Footer({ hasAccounts }: { hasAccounts: boolean }) {
+function Footer({ hasAccounts, paginated, cols }: { hasAccounts: boolean; paginated: boolean; cols: number }) {
+  // The footer is a single row of Text siblings; if it overflows the inner
+  // content width Ink clips it mid-word ("David Ili"), so drop the optional
+  // hints from the right when the terminal is too narrow to hold them. The
+  // branding + s=settings + q=quit essentials always survive. Display widths
+  // (the · is 1 col but 3 bytes, so count glyphs, not bytes).
+  const inner = cols - 4   // outer paddingX={2} on both sides
+  const BASE = 'by David Ilie (davidilie.com)  ·  s=settings  q=quit'.length  // ~51 cols
+  const JUMP = '0-9=jump  a/A=cycle  '.length
+  const PAGE = 'scroll=page  '.length
+  const showJump = hasAccounts && inner >= BASE + JUMP + (paginated ? PAGE : 0)
+  const showPage = paginated && inner >= BASE + (showJump ? JUMP : 0) + PAGE
   return (
-    <Box marginTop={1}>
+    <Box marginTop={1} flexWrap="nowrap">
       <Text dimColor>by </Text>
       <Text>David Ilie</Text>
       <Text dimColor> (</Text>
       <Text color="cyan">davidilie.com</Text>
-      <Text dimColor>)  ·  s=settings  </Text>
-      {hasAccounts && <Text dimColor>0-9=jump  a/A=cycle  </Text>}
+      <Text dimColor>)  {glyphs().middot}  s=settings  </Text>
+      {showJump && <Text dimColor>0-9=jump  a/A=cycle  </Text>}
+      {showPage && <Text dimColor>scroll=page  </Text>}
       <Text dimColor>q=quit</Text>
+    </Box>
+  )
+}
+
+/**
+ * Guaranteed-fits view for terminals below the layout floor (cols<40 or
+ * rows<12). One borderless condensed line per provider — no grid, no bars — so
+ * it can never overflow and never overlaps the footer. q/s stay live.
+ */
+function TinyFallback({ groups, stats, rows, cols }: {
+  groups: { provider: ProviderId; accounts: Account[] }[]
+  stats: Map<string, AccountStats>
+  rows: number
+  cols: number
+}) {
+  const maxLines = Math.max(1, rows - 4)  // title + footer + padding headroom
+  const visible = groups.slice(0, maxLines)
+  const hidden = groups.length - visible.length
+  const w = Math.max(8, cols - 2)
+  return (
+    <Box flexDirection="column" paddingX={1} height={rows} overflow="hidden">
+      <Text bold color="greenBright">{glyphs().dotSel} tokmon</Text>
+      {groups.length === 0 ? (
+        <Text dimColor>No providers {glyphs().emDash} s=settings</Text>
+      ) : (
+        visible.map(g => <TinyRow key={g.provider} provider={g.provider} accounts={g.accounts} stats={stats} width={w} />)
+      )}
+      {hidden > 0 && <Text dimColor>+{hidden} more (enlarge terminal)</Text>}
+      <Box flexGrow={1} />
+      <Text dimColor>s=settings  q=quit</Text>
+    </Box>
+  )
+}
+
+function TinyRow({ provider, accounts, stats, width }: {
+  provider: ProviderId
+  accounts: Account[]
+  stats: Map<string, AccountStats>
+  width: number
+}) {
+  const meta = PROVIDERS[provider]
+  const dashboards = accounts.map(a => stats.get(a.id)?.dashboard).filter(Boolean)
+  const billings = accounts.map(a => stats.get(a.id)?.billing).filter(Boolean)
+  const todayCost = dashboards.reduce((sum, d) => sum + (d?.today.cost ?? 0), 0)
+  const pctMetric = billings.flatMap(b => b?.metrics ?? []).find(m => m.format.kind === 'percent')
+  const detail = meta.hasUsage
+    ? `${fmt.currency(todayCost)} today`
+    : (pctMetric ? `${Math.round(pctMetric.used)}%` : 'billing')
+  const name = truncateName(meta.name, Math.max(4, width - 18))
+  return (
+    <Box width={width}>
+      <Text color={meta.color}>{glyphs().dot} </Text>
+      <Text bold color={meta.color}>{name}</Text>
+      <Box flexGrow={1} />
+      <Text dimColor>{detail}</Text>
     </Box>
   )
 }

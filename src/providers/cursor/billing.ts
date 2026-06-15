@@ -54,11 +54,11 @@ export async function detectCursor(homeDir?: string): Promise<boolean> {
   try { await access(cursorStateDb(homeDir)); return true } catch { return false }
 }
 
-/** Read a single value from Cursor's VS Code-style key/value store via the sqlite3 CLI. */
+/** Read a single value from Cursor's VS Code-style key/value store. */
 async function readState(db: string, key: string): Promise<{ value: string | null; status: SqliteStatus }> {
-  const safe = key.replace(/'/g, "''")  // keys are constants today, but escape regardless
-  const r = await runSqlite(db, `SELECT value FROM ItemTable WHERE key='${safe}' LIMIT 1;`)
-  return { value: r.status === 'ok' ? (r.stdout.trim() || null) : null, status: r.status }
+  const r = await runSqlite(db, 'SELECT value FROM ItemTable WHERE key=? LIMIT 1;', [key])
+  const raw = r.status === 'ok' ? r.rows[0]?.value : undefined
+  return { value: typeof raw === 'string' && raw.trim() ? raw.trim() : null, status: r.status }
 }
 
 async function connectPost(url: string, token: string): Promise<any | null> {

@@ -5,6 +5,7 @@ import type { ProviderId } from '../providers/types'
 import type { TableRow } from '../types'
 import type { CursorModelSpend } from '../providers/cursor/composer'
 import { ClickableBox } from './shared'
+import { glyphs } from '../glyphs'
 
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -52,11 +53,11 @@ export function ControlBar({ views, period, sort, search, searching, showPeriod 
         </>
       )}
       <Text dimColor>sort </Text><Text bold color="magenta">{sort}</Text>
-      <Text dimColor>  o cycle  ·  </Text>
+      <Text dimColor>  o cycle  {glyphs().middot}  </Text>
       {searching
-        ? <><Text dimColor>/</Text><Text bold color="cyan">{search}</Text><Text color="cyan">▏</Text></>
+        ? <><Text dimColor>/</Text><Text bold color="cyan">{search}</Text><Text color="cyan">{glyphs().vbar}</Text></>
         : search
-          ? <><Text dimColor>filter </Text><Text bold color="green">{search}</Text><Text dimColor> (/ edit · esc clear)</Text></>
+          ? <><Text dimColor>filter </Text><Text bold color="green">{search}</Text><Text dimColor> (/ edit {glyphs().middot} esc clear)</Text></>
           : <Text dimColor>/ filter</Text>}
     </Box>
   )
@@ -103,7 +104,7 @@ export function TokenTable({ rows, cursor, expanded, maxRows, cols, onRowClick }
         {W.total > 0 && <Text bold>{fmt.col('Total', W.total)}</Text>}
         <Text bold>{fmt.col('Cost', W.cost)}</Text>
       </Text>
-      <Text dimColor>{'─'.repeat(lineW + 2)}</Text>
+      <Text dimColor>{glyphs().rule.repeat(lineW + 2)}</Text>
       {visible.map((r, vi) => {
         const idx = scrollStart + vi
         const selected = idx === clampedCursor
@@ -111,7 +112,7 @@ export function TokenTable({ rows, cursor, expanded, maxRows, cols, onRowClick }
           <Box key={r.label} flexDirection="column">
             <ClickableBox onClick={() => onRowClick(idx)}>
               <Text inverse={selected}>
-                <Text color={selected ? undefined : 'cyan'}>{selected ? '▸ ' : '  '}{fmt.col(fmtLabel(r.label), W.label, 'left')}</Text>
+                <Text color={selected ? undefined : 'cyan'}>{selected ? `${glyphs().caretR} ` : '  '}{fmt.col(fmtLabel(r.label), W.label, 'left')}</Text>
                 <Text dimColor={!selected}>{fmt.col(r.models.join(', '), W.models, 'left')}</Text>
                 <Text>{fmt.col(fmt.tokens(r.input), W.input)}</Text>
                 <Text>{fmt.col(fmt.tokens(r.output), W.output)}</Text>
@@ -125,7 +126,7 @@ export function TokenTable({ rows, cursor, expanded, maxRows, cols, onRowClick }
           </Box>
         )
       })}
-      <Text dimColor>{'─'.repeat(lineW + 2)}</Text>
+      <Text dimColor>{glyphs().rule.repeat(lineW + 2)}</Text>
       <Text>
         <Text bold color="greenBright">  {fmt.col('Total', W.label, 'left')}</Text>
         <Text>{fmt.col('', W.models, 'left')}</Text>
@@ -137,7 +138,7 @@ export function TokenTable({ rows, cursor, expanded, maxRows, cols, onRowClick }
         <Text bold color="yellowBright">{fmt.col(fmt.currency(totals.cost), W.cost)}</Text>
       </Text>
       <Box height={1} />
-      <Text dimColor>↑↓ navigate  ·  Enter detail  ·  o sort  ·  g/G top/bottom  ·  {clampedCursor + 1}/{rows.length}</Text>
+      <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} navigate  {glyphs().middot}  Enter detail  {glyphs().middot}  o sort  {glyphs().middot}  g/G top/bottom  {glyphs().middot}  {clampedCursor + 1}/{rows.length}</Text>
     </Box>
   )
 }
@@ -147,7 +148,7 @@ function RowDetail({ row, indent }: { row: TableRow; indent: number }) {
     <Box flexDirection="column" paddingLeft={indent}>
       {row.breakdown.map((m, i) => (
         <Text key={m.name}>
-          <Text dimColor>{i === row.breakdown.length - 1 ? '└─' : '├─'} </Text>
+          <Text dimColor>{i === row.breakdown.length - 1 ? glyphs().treeEnd : glyphs().treeMid} </Text>
           <Text bold>{fmt.col(m.name, 16, 'left')}</Text>
           <Text>{fmt.col(fmt.tokens(m.input), 8)} in  </Text>
           <Text>{fmt.col(fmt.tokens(m.output), 8)} out  </Text>
@@ -183,7 +184,7 @@ export function CursorSpendTable({ rows, cursor, maxRows, onRowClick }: {
         <Text bold>{fmt.col('Amount', W.amount)}</Text>
         <Text bold>{fmt.col('Share', W.share)}</Text>
       </Text>
-      <Text dimColor>{'─'.repeat(W.model + W.cost + W.amount + W.share + 2)}</Text>
+      <Text dimColor>{glyphs().rule.repeat(W.model + W.cost + W.amount + W.share + 2)}</Text>
       {visible.map((r, vi) => {
         const idx = scrollStart + vi
         const selected = idx === clamped
@@ -191,7 +192,7 @@ export function CursorSpendTable({ rows, cursor, maxRows, onRowClick }: {
         return (
           <ClickableBox key={r.name} onClick={() => onRowClick(idx)}>
             <Text inverse={selected}>
-              <Text color={selected ? undefined : 'magenta'}>{selected ? '▸ ' : '  '}{fmt.col(r.name, W.model, 'left')}</Text>
+              <Text color={selected ? undefined : 'magenta'}>{selected ? `${glyphs().caretR} ` : '  '}{fmt.col(r.name, W.model, 'left')}</Text>
               <Text bold color={selected ? undefined : 'yellow'}>{fmt.col(fmt.currency(r.usd), W.cost)}</Text>
               <Text>{fmt.col(fmt.tokens(r.requests), W.amount)}</Text>
               <Text dimColor>{fmt.col(share.toFixed(1) + '%', W.share)}</Text>
@@ -199,7 +200,7 @@ export function CursorSpendTable({ rows, cursor, maxRows, onRowClick }: {
           </ClickableBox>
         )
       })}
-      <Text dimColor>{'─'.repeat(W.model + W.cost + W.amount + W.share + 2)}</Text>
+      <Text dimColor>{glyphs().rule.repeat(W.model + W.cost + W.amount + W.share + 2)}</Text>
       <Text>
         <Text bold color="greenBright">  {fmt.col('Total', W.model, 'left')}</Text>
         <Text bold color="yellowBright">{fmt.col(fmt.currency(total), W.cost)}</Text>
@@ -207,7 +208,7 @@ export function CursorSpendTable({ rows, cursor, maxRows, onRowClick }: {
         <Text dimColor>{fmt.col('100%', W.share)}</Text>
       </Text>
       <Box height={1} />
-      <Text dimColor>local spend by model (composerData) · est. API-equivalent · {clamped + 1}/{rows.length}</Text>
+      <Text dimColor>local spend by model (composerData) {glyphs().middot} est. API-equivalent {glyphs().middot} {clamped + 1}/{rows.length}</Text>
     </Box>
   )
 }

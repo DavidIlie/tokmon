@@ -32,6 +32,12 @@ export interface Config {
   dashboardLayout: 'grid' | 'single'
   /** 'all' = start focused on All; 'last' = remember the last focused account. */
   defaultFocus: 'all' | 'last'
+  /** 'auto' = detect terminal Unicode support; 'on' = force ASCII; 'off' = force Unicode. */
+  ascii: 'auto' | 'on' | 'off'
+  /** Providers the user has decided on (enabled or explicitly disabled). A provider
+   *  absent here but installed triggers the boot opt-in prompt — so new providers
+   *  added in an upgrade are offered once instead of silently appearing. */
+  knownProviders: ProviderId[]
 }
 
 const DEFAULTS: Config = {
@@ -45,7 +51,14 @@ const DEFAULTS: Config = {
   onboarded: false,
   dashboardLayout: 'grid',
   defaultFocus: 'all',
+  ascii: 'auto',
+  knownProviders: [],
 }
+
+// The providers that existed before the boot opt-in feature. A legacy config
+// (onboarded, but no knownProviders) is treated as having decided on exactly
+// these, so existing users get prompted for any newer provider that's installed.
+const LEGACY_KNOWN: ProviderId[] = ['claude', 'codex', 'cursor']
 
 const ACCENT_COLORS = ['cyan', 'magenta', 'green', 'yellow', 'blue', 'red'] as const
 
@@ -70,7 +83,7 @@ export function cacheDir(): string {
   return join(envDir('XDG_CACHE_HOME') ?? join(homedir(), '.cache'), 'tokmon')
 }
 
-const PROVIDER_IDS: ProviderId[] = ['claude', 'codex', 'cursor']
+const PROVIDER_IDS: ProviderId[] = ['claude', 'codex', 'cursor', 'pi', 'opencode', 'copilot', 'antigravity', 'gemini']
 
 /** A finite number ≥ min, else the fallback (guards hand-edited/garbage values). */
 function clampNum(v: unknown, fallback: number, min: number): number {
@@ -118,6 +131,10 @@ export async function loadConfig(): Promise<Config> {
       onboarded: parsed.onboarded === true,
       dashboardLayout: parsed.dashboardLayout === 'single' ? 'single' : 'grid',
       defaultFocus: parsed.defaultFocus === 'last' ? 'last' : 'all',
+      ascii: parsed.ascii === 'on' ? 'on' : parsed.ascii === 'off' ? 'off' : 'auto',
+      knownProviders: Array.isArray(parsed.knownProviders)
+        ? parsed.knownProviders.filter((p: unknown): p is ProviderId => PROVIDER_IDS.includes(p as ProviderId))
+        : (parsed.onboarded === true ? [...LEGACY_KNOWN] : []),
     }
   } catch {
     return { ...DEFAULTS }
