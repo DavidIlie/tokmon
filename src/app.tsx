@@ -17,7 +17,7 @@ import { glyphs } from './glyphs'
 import * as fmt from './format'
 import type { AccountStats } from './stats'
 import { ClickableBox, Spinner, TabBar, PeakBadge, truncateName } from './ui/shared'
-import { DashboardView, chooseLayout } from './ui/dashboard'
+import { DashboardView, chooseLayout, TotalsRow } from './ui/dashboard'
 import { TableProviderBar, ControlBar, TokenTable, CursorSpendTable } from './ui/table'
 import { cursorModelSpend, type CursorModelSpend } from './providers/cursor/composer'
 import { Onboarding, type OnboardItem } from './ui/onboarding'
@@ -52,6 +52,10 @@ const IS_TTY = process.stdin.isTTY === true
 const DEBOUNCE_MS = 300
 const LOADER_GRACE_MS = 600
 const LOADER_MAX_MS = 8000
+// Once the loader is actually on-screen, keep it up at least this long so a
+// near-instant "ready" doesn't reduce it to a one-frame flash. Only applies
+// after it has shown — instant/seeded launches still skip it entirely.
+const LOADER_MIN_VISIBLE_MS = 700
 
 const DEFAULT_CONFIG: Config = {
   interval: 2, billingInterval: 5, clearScreen: true, timezone: null,
@@ -61,8 +65,18 @@ const DEFAULT_CONFIG: Config = {
 
 type Slot = { id: string | null; name: string; color: string }
 
-export function App({ interval: cliInterval }: { interval?: number }) {
-  const [config, setConfig] = useState<Config | null>(null)
+// Apply the startup overrides (CLI interval; "all" default focus) to a freshly
+// loaded config. Shared by the initial state and the (fallback) load effect.
+function applyStartup(c: Config, cliInterval?: number): Config {
+  if (cliInterval) c = { ...c, interval: cliInterval / 1000 }
+  if (c.defaultFocus === 'all') c = { ...c, activeAccountId: null }
+  return c
+}
+
+export function App({ interval: cliInterval, initialConfig }: { interval?: number; initialConfig?: Config }) {
+  // cli.tsx already loaded the config — seed it synchronously so there's no
+  // blank "Loading…" frame and the polls start on the very first render.
+  const [config, setConfig] = useState<Config | null>(() => initialConfig ? applyStartup(initialConfig, cliInterval) : null)
   const [detected, setDetected] = useState<ProviderId[]>([])
   const [stats, setStats] = useState<Map<string, AccountStats>>(new Map())
   const [peak, setPeak] = useState<PeakStatus | null>(null)
@@ -89,7 +103,9 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const [dashPage, setDashPage] = useState(0)
   const [debouncePassed, setDebouncePassed] = useState(false)
   const [graceHold, setGraceHold] = useState(false)   // keep the final ✓ visible briefly
+  const [loaderShownAt, setLoaderShownAt] = useState<number | null>(null)   // when the loader first painted (for the min-visible floor)
   const loaderDone = useRef(false)   // one-shot latch: loader shows at most once per process
+  const prevShowPicker = useRef(false)   // detect the picker close edge to re-arm the loader
   const { stdout } = useStdout()
   const { exit } = useApp()
   const rows = stdout?.rows ?? 24
@@ -145,10 +161,12 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const stripLines = hasStrip ? Math.max(1, Math.ceil(stripChars / Math.max(1, cols - 4 /*paddingX*/ - 7 /*"focus  "*/))) : 0
   // Chrome rows that surround the card grid (see layout notes in MEMORY):
   //   outer paddingY 2 · header up-to-2 · tabbar block 3 · strip (marginTop 1 +
-  //   stripLines) · footer (marginTop 1 + 1). Header may wrap to 2 lines at
-  //   narrow widths, so budget 2 conservatively to keep the footer un-clipped.
+  //   stripLines) · totals row (marginTop 1 + 1) · footer (marginTop 1 + 1).
+  //   Header may wrap to 2 lines at narrow widths, so budget 2 conservatively to
+  //   keep the footer un-clipped. The totals row is always present in dashboard
+  //   mode (regardless of hasStrip), so its 2 rows are unconditional.
   const headerRows = cols < 70 ? 2 : 1
-  const CHROME = 2 + headerRows + 3 + (hasStrip ? 1 + stripLines : 0) + 2
+  const CHROME = 2 + headerRows + 3 + (hasStrip ? 1 + stripLines : 0) + 2 + 2
   const gridBudget = Math.max(1, rows - CHROME)
   // Mirror DashboardView's solver so page keys only act when paginating.
   const dashLayout = chooseLayout(
@@ -177,9 +195,13 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   const showPicker = needsOnboarding || newProviders.length > 0
   // Once shown, the loader survives the moment allReady flips (held by the grace
   // timer) so the final ✓ is seen; `graceHold` keeps `showLoader` true across
-  // that beat without depending on `!allReady`.
+  // that beat without depending on `!allReady`. `loaderShownAt` adds a small
+  // minimum-visible floor so a near-instant ready isn't a one-frame flash — but
+  // only once it has actually painted, so seeded/instant launches still skip it.
+  const minVisibleHold = loaderShownAt !== null && Date.now() - loaderShownAt < LOADER_MIN_VISIBLE_MS
   const showLoader = configReady && !showPicker && !showSettings && !TOO_SMALL
-    && accounts.length > 0 && (!allReady || graceHold) && debouncePassed && !loaderDone.current
+    && accounts.length > 0 && (!allReady || graceHold || minVisibleHold)
+    && (debouncePassed || loaderShownAt !== null) && !loaderDone.current
   const pickerProviders = needsOnboarding ? PROVIDER_ORDER : newProviders
   const onboardEnabled = onboardSel ?? detected
   const onboardItems: OnboardItem[] = pickerProviders.map(pid => ({
@@ -187,13 +209,31 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     detected: detected.includes(pid), enabled: onboardEnabled.includes(pid),
   }))
 
+  // Picker-close edge: the polls are gated on !showPicker, so loading only
+  // *starts* once the user dismisses the picker. Reset the loader latches here so
+  // the load that follows is visible even though some state may have lingered —
+  // this is what makes the loader appear right after onboarding / opt-in.
   useEffect(() => {
-    loadConfig().then(c => {
-      if (cliInterval) c = { ...c, interval: cliInterval / 1000 }
-      // Start focused on "All" unless the user opted to remember their last focus.
-      if (c.defaultFocus === 'all') c = { ...c, activeAccountId: null }
-      setConfig(c)
-    })
+    const wasPicker = prevShowPicker.current
+    prevShowPicker.current = showPicker
+    if (wasPicker && !showPicker) {
+      loaderDone.current = false
+      setDebouncePassed(false)
+      setGraceHold(false)
+      setLoaderShownAt(null)
+    }
+  }, [showPicker])
+
+  // Record when the loader first paints, so the minimum-visible floor has a
+  // start time. Cleared on the picker-close edge above so a later picker can
+  // re-show it. Never set when the loader is skipped (instant/seeded).
+  useEffect(() => {
+    if (showLoader && loaderShownAt === null) setLoaderShownAt(Date.now())
+  }, [showLoader, loaderShownAt])
+
+  useEffect(() => {
+    // Fallback only — App is normally seeded with initialConfig from cli.tsx.
+    if (!initialConfig) loadConfig().then(c => setConfig(applyStartup(c, cliInterval)))
     detectProviders().then(setDetected)
   }, [])
 
@@ -201,7 +241,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   // known, so cards paint instantly while the live polls refresh in the
   // background (incremental rendering — never block the UI on slow providers).
   useEffect(() => {
-    if (seededRef.current || !configReady || accounts.length === 0) return
+    if (seededRef.current || !configReady || showPicker || accounts.length === 0) return
     seededRef.current = true
     loadSnapshot().then(snap => {
       setStats(prev => {
@@ -214,7 +254,8 @@ export function App({ interval: cliInterval }: { interval?: number }) {
         return next
       })
     })
-  }, [configReady, accountsKey])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configReady, showPicker, accountsKey])
 
   // Persist the current display values (debounced) so the next launch is instant.
   useEffect(() => {
@@ -236,14 +277,17 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   }, [configReady, showPicker, accountsKey])
 
   // Latch the loader closed once everything is ready. If the loader was actually
-  // on-screen, hold it for a short grace (so the final ✓ is seen) before closing;
-  // otherwise (seeded/fast path) latch immediately so it never re-shows on later
+  // on-screen, hold it for the grace beat (so the final ✓ is seen) AND until the
+  // minimum-visible floor elapses (so it isn't a flash); otherwise (seeded/fast
+  // path, where it never painted) latch immediately so it never re-shows on later
   // poll cycles even if a poll transiently nulls a value.
   useEffect(() => {
     if (!allReady || loaderDone.current) return
-    if (!debouncePassed) { loaderDone.current = true; return }   // never showed → close now
+    if (loaderShownAt === null) { loaderDone.current = true; return }   // never showed → close now
     setGraceHold(true)
-    const t = setTimeout(() => { loaderDone.current = true; setGraceHold(false) }, LOADER_GRACE_MS)
+    const minRemaining = Math.max(0, LOADER_MIN_VISIBLE_MS - (Date.now() - loaderShownAt))
+    const hold = Math.max(LOADER_GRACE_MS, minRemaining)
+    const t = setTimeout(() => { loaderDone.current = true; setGraceHold(false) }, hold)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allReady])
@@ -252,7 +296,10 @@ export function App({ interval: cliInterval }: { interval?: number }) {
   // Self-scheduling: the next run waits for the current to finish, so a slow
   // cold parse (large Codex history) never piles up overlapping work.
   useEffect(() => {
-    if (!configReady) return
+    // Gated on !showPicker so loading visibly starts AFTER the user picks — the
+    // pre-picker render must not accrue progress that would skip the post-picker
+    // loader.
+    if (!configReady || showPicker) return
     let active = true
     let timer: ReturnType<typeof setTimeout>
     const load = async () => {
@@ -275,11 +322,11 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     }
     load()
     return () => { active = false; clearTimeout(timer) }
-  }, [interval, tz, configReady, accountsKey])
+  }, [interval, tz, configReady, showPicker, accountsKey])
 
   // Billing poll (rate limits / spend) + peak clock.
   useEffect(() => {
-    if (!configReady) return
+    if (!configReady || showPicker) return   // same picker gating as the usage poll
     let active = true
     let timer: ReturnType<typeof setTimeout>
     const load = async () => {
@@ -304,7 +351,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
     }
     load()
     return () => { active = false; clearTimeout(timer) }
-  }, [billingMs, configReady, accountsKey])
+  }, [billingMs, configReady, showPicker, accountsKey])
 
   // Table data for the selected table provider (token table or Cursor spend).
   const tableKey = `${effTableProvider}|${tableAccounts.map(a => `${a.id}:${a.homeDir ?? ''}`).join(',')}|${tz}`
@@ -775,6 +822,7 @@ export function App({ interval: cliInterval }: { interval?: number }) {
                   />
                 </Box>
               )}
+              <TotalsRow groups={groups} stats={stats} cols={cols} />
             </>
           )}
           {tab === 1 && (

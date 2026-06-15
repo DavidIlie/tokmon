@@ -316,3 +316,44 @@ function aggregate(list: DashboardData[]): DashboardData {
   }
   return z
 }
+
+/**
+ * Combined totals across the visible usage-provider groups (those with a
+ * DashboardData). Billing-only groups contribute no cost history and are
+ * skipped. Always renders in dashboard mode — shows $0.00 until data lands.
+ * Single-line, dim; drops token totals first, then the period labels, on
+ * narrow widths so it never wraps into the footer.
+ */
+export function TotalsRow({ groups, stats, cols }: {
+  groups: { provider: ProviderId; accounts: Account[] }[]
+  stats: Map<string, AccountStats>
+  cols: number
+}) {
+  const zero = (): UsageSummary => ({ cost: 0, tokens: 0, cacheRead: 0, cacheSavings: 0 })
+  const t = zero(), w = zero(), m = zero()
+  for (const g of groups) {
+    if (!PROVIDERS[g.provider].hasUsage) continue
+    for (const a of g.accounts) {
+      const d = stats.get(a.id)?.dashboard
+      if (!d) continue
+      t.cost += d.today.cost; t.tokens += d.today.tokens
+      w.cost += d.week.cost;  w.tokens += d.week.tokens
+      m.cost += d.month.cost; m.tokens += d.month.tokens
+    }
+  }
+
+  const inner = cols - 4   // outer paddingX={2} both sides
+  const dot = glyphs().middot
+  // Widest form ≈ "Σ  Today $X (Y tok)  ·  Week $X (Y tok)  ·  Month $X (Y tok)".
+  // Two condense steps so it never wraps: drop tokens, then drop period words.
+  const full = `${glyphs().dotAll}  Today ${fmt.currency(t.cost)} (${fmt.tokens(t.tokens)} tok)  ${dot}  Week ${fmt.currency(w.cost)} (${fmt.tokens(w.tokens)} tok)  ${dot}  Month ${fmt.currency(m.cost)} (${fmt.tokens(m.tokens)} tok)`
+  const noTok = `${glyphs().dotAll}  Today ${fmt.currency(t.cost)}  ${dot}  Week ${fmt.currency(w.cost)}  ${dot}  Month ${fmt.currency(m.cost)}`
+  const tight = `${glyphs().dotAll}  ${fmt.currency(t.cost)}  ${dot}  ${fmt.currency(w.cost)}  ${dot}  ${fmt.currency(m.cost)}`
+  const text = full.length <= inner ? full : noTok.length <= inner ? noTok : tight
+
+  return (
+    <Box marginTop={1}>
+      <Text dimColor>{text}</Text>
+    </Box>
+  )
+}

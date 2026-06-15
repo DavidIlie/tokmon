@@ -71,7 +71,7 @@ setGlyphs(resolveGlyphs({
   platform: process.platform,
 }))
 
-const { waitUntilExit } = render(<MouseProvider><App interval={interval} /></MouseProvider>)
+const { waitUntilExit } = render(<MouseProvider><App interval={interval} initialConfig={config} /></MouseProvider>)
 await waitUntilExit()
 
 // Persist any pending parse cache before exit — the scheduled flush uses an
