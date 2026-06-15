@@ -196,9 +196,6 @@ function ProviderCard({ provider, accounts, stats, width, variant }: {
           </Box>
         </>
       )}
-      {!meta.hasUsage && !activity && variant === 'full' && (
-        <><Box flexGrow={1} /><Text dimColor>Billing only {glyphs().emDash} no local history</Text></>
-      )}
     </Box>
   )
 }
@@ -276,7 +273,7 @@ function MetricRow({ m, color, barW }: { m: Metric; color: string; barW: number 
     const barColor = m.used >= 90 ? 'red' : m.used >= 75 ? 'yellow' : color
     return (
       <Box>
-        <Box width={7}><Text dimColor>{m.label}</Text></Box>
+        <Box width={7}><Text dimColor wrap="truncate">{m.label}</Text></Box>
         <Bar pct={m.used} color={barColor} width={barW} />
         <Box width={5} justifyContent="flex-end"><Text bold>{Math.round(m.used)}%</Text></Box>
         <Box width={8} justifyContent="flex-end">
@@ -287,7 +284,7 @@ function MetricRow({ m, color, barW }: { m: Metric; color: string; barW: number 
   }
   return (
     <Box>
-      <Box width={7}><Text dimColor>{m.label}</Text></Box>
+      <Box width={7}><Text dimColor wrap="truncate">{m.label}</Text></Box>
       <Text bold color="yellow">{metricValueText(m)}</Text>
     </Box>
   )

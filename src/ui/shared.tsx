@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import { appendFileSync } from 'node:fs'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Box, Text, type DOMElement } from 'ink'
-import { useOnMouseClick } from '@zenobius/ink-mouse'
+import { useOnMouseClick, useMouse, useElementPosition, useElementDimensions } from '@zenobius/ink-mouse'
 import type { Metric } from '../providers/types'
 import type { PeakStatus } from '../peak'
 import { glyphs } from '../glyphs'
@@ -15,6 +16,52 @@ export function ClickableBox(
 ) {
   const ref = useRef<DOMElement>(null)
   useOnMouseClick(ref, (clicked) => { if (clicked) onClick() })
+  return <Box ref={ref} {...props}>{children}</Box>
+}
+
+/**
+ * Like ClickableBox, but with a hit zone that aligns precisely with the box's
+ * glyphs. ink-mouse's `useOnMouseClick` compares the terminal's 1-based SGR
+ * mouse coordinates directly against 0-based yoga layout coordinates, so its
+ * hot zone is shifted one column/row up-left of the actual glyphs (the leftmost
+ * text column is dead and one empty column to the left is "hot"). We listen on
+ * the mouse event stream directly and subtract 1 from the incoming x/y before
+ * the intersection test, so a click that visibly lands on the text registers.
+ *
+ * The intersection math mirrors ink-mouse's own `isIntersecting`. Used for the
+ * footer links, where precise alignment matters most (they're short and the
+ * surrounding text is not clickable). Note: in macOS Terminal.app plain clicks
+ * are never forwarded to the app at all (only ⌥-click is) — this fixes the
+ * alignment for the terminals that DO forward clicks; the keyboard shortcut is
+ * the universal fallback.
+ */
+export function LinkBox(
+  { onClick, children, ...props }: { onClick: () => void; children: React.ReactNode } & Record<string, unknown>,
+) {
+  const ref = useRef<DOMElement>(null)
+  const mouse = useMouse()
+  const pos = useElementPosition(ref)
+  const dim = useElementDimensions(ref)
+  const handler = useCallback((m: { x: number; y: number }, action: string | null) => {
+    if (process.env.TOKMON_LINKDEBUG) {
+      try { appendFileSync(process.env.TOKMON_LINKDEBUG, `evt action=${action} m=${m.x},${m.y} pos=${pos.left},${pos.top} dim=${dim.width},${dim.height}\n`) } catch {}
+    }
+    if (action !== 'press') return
+    // SGR coords are 1-based; yoga left/top are 0-based — convert before testing.
+    const mx = m.x - 1
+    const my = m.y - 1
+    const { left, top } = pos
+    const { width, height } = dim
+    if (mx >= left && mx <= left + width && my >= top && my <= top + height) onClick()
+  }, [pos, dim, onClick])
+  useEffect(() => {
+    const events = mouse.events
+    if (process.env.TOKMON_LINKDEBUG) {
+      try { appendFileSync(process.env.TOKMON_LINKDEBUG, `LINKBOX subscribe events=${events ? 'present' : 'MISSING'} on=${typeof (events as { on?: unknown })?.on}\n`) } catch {}
+    }
+    events.on('click', handler)
+    return () => { events.off('click', handler) }
+  }, [mouse.events, handler])
   return <Box ref={ref} {...props}>{children}</Box>
 }
 

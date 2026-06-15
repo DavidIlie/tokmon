@@ -345,9 +345,12 @@ async function requestCloudCodeJson(path: string, token: string, body: unknown):
 
 function readPlan(loadData: any): string | null {
   const paid = typeof loadData?.paidTier?.name === 'string' ? loadData.paidTier.name.trim() : ''
-  if (paid) return paid
   const current = typeof loadData?.currentTier?.name === 'string' ? loadData.currentTier.name.trim() : ''
-  return current || null
+  const raw = paid || current
+  if (!raw) return null
+  // Cloud Code returns verbose tier names ("Gemini Code Assist in Google One AI
+  // Pro" / "… for individuals") — trim the boilerplate to a tight card label.
+  return raw.replace(/^Gemini Code Assist (?:in|for)\s+/i, '').replace(/^Gemini Code Assist$/i, 'Code Assist')
 }
 
 function parseBuckets(data: any): CloudCodeBucket[] {
@@ -440,8 +443,10 @@ function normalizeLabel(label: string): string {
 
 function poolLabel(label: string): string {
   const lower = normalizeLabel(label).toLowerCase()
-  if (lower.includes('gemini') && lower.includes('pro')) return 'Gemini Pro'
-  if (lower.includes('gemini') && lower.includes('flash')) return 'Gemini Flash'
+  // Short labels — the card is already titled with the provider, and the metric
+  // label column is narrow (long "Gemini Pro"/"Gemini Flash" wrapped to 2 lines).
+  if (lower.includes('gemini') && lower.includes('pro')) return 'Pro'
+  if (lower.includes('gemini') && lower.includes('flash')) return 'Flash'
   return 'Claude'
 }
 

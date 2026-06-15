@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { appendFileSync } from 'node:fs'
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Box, Text, Transform, useInput, useStdout, useApp } from 'ink'
 import { useMouse } from '@zenobius/ink-mouse'
@@ -17,7 +18,7 @@ import { loadSnapshot, saveSnapshot } from './snapshot'
 import { glyphs } from './glyphs'
 import * as fmt from './format'
 import type { AccountStats } from './stats'
-import { ClickableBox, Spinner, TabBar, PeakBadge, truncateName } from './ui/shared'
+import { ClickableBox, LinkBox, Spinner, TabBar, PeakBadge, truncateName } from './ui/shared'
 import { DashboardView, chooseLayout, TotalsRow } from './ui/dashboard'
 import { TableProviderBar, ControlBar, TokenTable, CursorSpendTable } from './ui/table'
 import { cursorModelSpend, type CursorModelSpend } from './providers/cursor/composer'
@@ -45,6 +46,13 @@ const CURSOR_SORTS = [
 ] as const
 const IS_TTY = process.stdin.isTTY === true
 const REPO_URL = 'https://github.com/DavidIlie/tokmon'
+const SITE_URL = 'https://davidilie.com'
+// macOS Terminal.app withholds plain mouse-button clicks from the app (it
+// consumes them for text selection) and only forwards SGR button events while
+// ⌥ Option is held. It also has no OSC 8 hyperlink support. So in Terminal.app
+// the only mouse route to the footer links is ⌥-click — surface that as a hint
+// so the underline cue (which implies a plain click) isn't misleading there.
+const IS_APPLE_TERMINAL = process.env.TERM_PROGRAM === 'Apple_Terminal'
 
 // Conservative OSC 8 hyperlink support detection (mirrors sindresorhus/
 // supports-hyperlinks): emit links only where we're confident the terminal
@@ -70,6 +78,14 @@ const HYPERLINKS = detectHyperlinks(process.env, process.stdout.isTTY === true)
 // they work in ANY mouse-reporting terminal (incl. macOS Terminal.app, which
 // doesn't support OSC 8 hyperlinks). Best-effort, detached, never throws.
 function openUrl(url: string): void {
+  // Test hook: when TOKMON_OPENLOG is set, append the URL to that file instead
+  // of (well, in addition to) spawning a browser. Lets a PTY harness assert the
+  // open-URL path actually fired without launching a real browser. No-op in
+  // normal use (the env var is never set), so it can't affect users.
+  if (process.env.TOKMON_OPENLOG) {
+    try { appendFileSync(process.env.TOKMON_OPENLOG, url + '\n') } catch {}
+    return
+  }
   try {
     if (process.platform === 'darwin') spawn('open', [url], { stdio: 'ignore', detached: true }).unref()
     else if (process.platform === 'win32') spawn('cmd', ['/c', 'start', '', url], { stdio: 'ignore', detached: true }).unref()
@@ -458,7 +474,12 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
       }
     }
     mouse.events.on('scroll', onScroll)
-    return () => { mouse.events.off('scroll', onScroll) }
+    let onClickDbg: ((p: { x: number; y: number }, a: string | null) => void) | null = null
+    if (process.env.TOKMON_LINKDEBUG) {
+      onClickDbg = (p, a) => { try { appendFileSync(process.env.TOKMON_LINKDEBUG!, `APP click p=${p.x},${p.y} a=${a}\n`) } catch {} }
+      mouse.events.on('click', onClickDbg)
+    }
+    return () => { mouse.events.off('scroll', onScroll); if (onClickDbg) mouse.events.off('click', onClickDbg) }
   }, [tab])
 
   function updateConfig(fn: (prev: Config) => Config): void {
@@ -683,6 +704,12 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     }
 
     if (input === 'q') { exit(); return }
+    // Universal "open the repo" shortcut — works in EVERY terminal (incl. macOS
+    // Terminal.app, where neither plain mouse-clicks nor OSC 8 hyperlinks reach
+    // the footer link). Capital O so it never collides with the Table tab's
+    // lowercase o=sort. Placed after the input-capturing modals (picker/forms/
+    // search) so it can't swallow a typed 'O'.
+    if (input === 'O') { openUrl(REPO_URL); return }
 
     if (showSettings) {
       if (key.escape || input === 's') { setShowSettings(false); return }
@@ -988,29 +1015,43 @@ function Footer({ hasAccounts, paginated, cols }: { hasAccounts: boolean; pagina
   // The footer is a single row of Text siblings; if it overflows the inner
   // content width Ink clips it mid-word ("David Ili"), so drop the optional
   // hints from the right when the terminal is too narrow to hold them. The
-  // branding + s=settings + q=quit essentials always survive. Display widths
-  // (the · is 1 col but 3 bytes, so count glyphs, not bytes).
+  // branding + O=repo + s=settings + q=quit essentials always survive. Display
+  // widths (the · is 1 col but 3 bytes, so count glyphs, not bytes).
   const inner = cols - 4   // outer paddingX={2} on both sides
-  const BASE = 'by David Ilie (davidilie.com)  ·  s=settings  q=quit'.length  // ~51 cols
+  // O=repo is the universal keyboard route to the GitHub repo (mouse-click on
+  // the links doesn't reach the app in Terminal.app). It's part of the base.
+  const BASE = 'by David Ilie (davidilie.com)  ·  O=repo  s=settings  q=quit'.length  // ~60 cols
+  // ⌥ in Unicode mode, 'opt' in ASCII mode — keep the budget in sync with the
+  // glyph actually rendered below.
+  const optHint = (glyphs().shift === '⇧' ? '⌥' : 'opt') + '-click links  '
+  const OPT = IS_APPLE_TERMINAL ? optHint.length : 0
   const JUMP = '0-9=jump  a/A=cycle  '.length
   const PAGE = 'scroll=page  '.length
-  const showJump = hasAccounts && inner >= BASE + JUMP + (paginated ? PAGE : 0)
-  const showPage = paginated && inner >= BASE + (showJump ? JUMP : 0) + PAGE
+  // In Terminal.app, the only mouse route is ⌥-click (and OSC 8 ⌘-click is
+  // unsupported) — show that hint first when it fits, since the underline alone
+  // would suggest a plain click that won't work there.
+  const showOpt = IS_APPLE_TERMINAL && inner >= BASE + OPT
+  const showJump = hasAccounts && inner >= BASE + (showOpt ? OPT : 0) + JUMP + (paginated ? PAGE : 0)
+  const showPage = paginated && inner >= BASE + (showOpt ? OPT : 0) + (showJump ? JUMP : 0) + PAGE
   return (
     <Box marginTop={1} flexWrap="nowrap">
       <Text dimColor>by </Text>
-      {/* Clickable via mouse in any mouse-reporting terminal (incl. Terminal.app);
-          underline = visible link cue; Transform adds an OSC 8 link on top for
-          native ⌘/Ctrl-click where supported (applied after layout so Ink measures
-          only the visible text and never truncates it). */}
-      <ClickableBox onClick={() => openUrl(REPO_URL)}>
+      {/* Clickable via mouse where the terminal forwards clicks (iTerm/VSCode/
+          WezTerm/kitty — and Terminal.app only on ⌥-click). underline = visible
+          link cue; Transform adds an OSC 8 link on top for native ⌘/Ctrl-click
+          where supported (applied after layout so Ink measures only the visible
+          text and never truncates it). LinkBox aligns the mouse hit zone with
+          the glyphs (fixes ink-mouse's 1-based vs 0-based off-by-one). The O
+          keyboard shortcut is the universal fallback that works everywhere. */}
+      <LinkBox onClick={() => openUrl(REPO_URL)}>
         <Transform transform={(s) => osc8(s, REPO_URL)}><Text underline>David Ilie</Text></Transform>
-      </ClickableBox>
+      </LinkBox>
       <Text dimColor> (</Text>
-      <ClickableBox onClick={() => openUrl('https://davidilie.com')}>
-        <Transform transform={(s) => osc8(s, 'https://davidilie.com')}><Text color="cyan" underline>davidilie.com</Text></Transform>
-      </ClickableBox>
-      <Text dimColor>)  {glyphs().middot}  s=settings  </Text>
+      <LinkBox onClick={() => openUrl(SITE_URL)}>
+        <Transform transform={(s) => osc8(s, SITE_URL)}><Text color="cyan" underline>davidilie.com</Text></Transform>
+      </LinkBox>
+      <Text dimColor>)  {glyphs().middot}  O=repo  s=settings  </Text>
+      {showOpt && <Text dimColor>{optHint}</Text>}
       {showJump && <Text dimColor>0-9=jump  a/A=cycle  </Text>}
       {showPage && <Text dimColor>scroll=page  </Text>}
       <Text dimColor>q=quit</Text>
