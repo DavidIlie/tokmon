@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Box, Text, Transform, useInput, useStdout, useApp } from 'ink'
 import { useMouse } from '@zenobius/ink-mouse'
@@ -64,6 +65,17 @@ export function detectHyperlinks(env: NodeJS.ProcessEnv, isTTY: boolean): boolea
   return false
 }
 const HYPERLINKS = detectHyperlinks(process.env, process.stdout.isTTY === true)
+
+// Open a URL in the default browser. Used by the footer's mouse-click links so
+// they work in ANY mouse-reporting terminal (incl. macOS Terminal.app, which
+// doesn't support OSC 8 hyperlinks). Best-effort, detached, never throws.
+function openUrl(url: string): void {
+  try {
+    if (process.platform === 'darwin') spawn('open', [url], { stdio: 'ignore', detached: true }).unref()
+    else if (process.platform === 'win32') spawn('cmd', ['/c', 'start', '', url], { stdio: 'ignore', detached: true }).unref()
+    else spawn('xdg-open', [url], { stdio: 'ignore', detached: true }).unref()
+  } catch { /* no browser opener available */ }
+}
 
 // OSC 8 terminal hyperlink — clickable in modern terminals (iTerm, Terminal.app,
 // VS Code, Windows Terminal, …); terminals without support ignore the escape and
@@ -987,11 +999,17 @@ function Footer({ hasAccounts, paginated, cols }: { hasAccounts: boolean; pagina
   return (
     <Box marginTop={1} flexWrap="nowrap">
       <Text dimColor>by </Text>
-      {/* Transform wraps the OSC 8 link around the ALREADY-laid-out text, so Ink
-          measures the visible width (not the escape bytes) and never truncates it. */}
-      <Transform transform={(s) => osc8(s, REPO_URL)}><Text>David Ilie</Text></Transform>
+      {/* Clickable via mouse in any mouse-reporting terminal (incl. Terminal.app);
+          underline = visible link cue; Transform adds an OSC 8 link on top for
+          native ⌘/Ctrl-click where supported (applied after layout so Ink measures
+          only the visible text and never truncates it). */}
+      <ClickableBox onClick={() => openUrl(REPO_URL)}>
+        <Transform transform={(s) => osc8(s, REPO_URL)}><Text underline>David Ilie</Text></Transform>
+      </ClickableBox>
       <Text dimColor> (</Text>
-      <Transform transform={(s) => osc8(s, 'https://davidilie.com')}><Text color="cyan">davidilie.com</Text></Transform>
+      <ClickableBox onClick={() => openUrl('https://davidilie.com')}>
+        <Transform transform={(s) => osc8(s, 'https://davidilie.com')}><Text color="cyan" underline>davidilie.com</Text></Transform>
+      </ClickableBox>
       <Text dimColor>)  {glyphs().middot}  s=settings  </Text>
       {showJump && <Text dimColor>0-9=jump  a/A=cycle  </Text>}
       {showPage && <Text dimColor>scroll=page  </Text>}
