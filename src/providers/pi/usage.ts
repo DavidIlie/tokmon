@@ -51,9 +51,14 @@ async function parseFile(path: string): Promise<Entry[]> {
       const cacheSavings = input > 0 && cacheRead > 0
         ? Math.max(0, cacheRead * (costInput / input) - pos(c.cacheRead))
         : 0
+      // Label by the model that actually responded when pi records it (matches
+      // devrage), falling back to the requested model.
+      const model = (typeof msg.responseModel === 'string' && msg.responseModel)
+        || (typeof msg.model === 'string' && msg.model)
+        || 'unknown'
       entries.push({
         ts,
-        model: typeof msg.model === 'string' && msg.model ? msg.model : 'unknown',
+        model,
         cost: pos(c.total),
         input,
         output,

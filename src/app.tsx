@@ -18,7 +18,7 @@ import { loadSnapshot, saveSnapshot } from './snapshot'
 import { glyphs } from './glyphs'
 import * as fmt from './format'
 import type { AccountStats } from './stats'
-import { ClickableBox, LinkBox, Spinner, TabBar, PeakBadge, truncateName } from './ui/shared'
+import { ClickableBox, LinkBox, Spinner, TabBar, PeakBadge, truncateName, dispatchLinkClicks } from './ui/shared'
 import { DashboardView, chooseLayout, TotalsRow } from './ui/dashboard'
 import { TableProviderBar, ControlBar, TokenTable, CursorSpendTable } from './ui/table'
 import { cursorModelSpend, type CursorModelSpend } from './providers/cursor/composer'
@@ -474,12 +474,17 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
       }
     }
     mouse.events.on('scroll', onScroll)
-    let onClickDbg: ((p: { x: number; y: number }, a: string | null) => void) | null = null
-    if (process.env.TOKMON_LINKDEBUG) {
-      onClickDbg = (p, a) => { try { appendFileSync(process.env.TOKMON_LINKDEBUG!, `APP click p=${p.x},${p.y} a=${a}\n`) } catch {} }
-      mouse.events.on('click', onClickDbg)
-    }
-    return () => { mouse.events.off('scroll', onScroll); if (onClickDbg) mouse.events.off('click', onClickDbg) }
+    // Single raw stdin tap for footer link clicks. Placed here — alongside
+    // mouse.enable() — because that's the one spot a process.stdin 'data'
+    // listener reliably receives bytes: Ink v5 drains stdin via 'readable'+read(),
+    // so a 'data' listener added later (e.g. inside a deeper component) sees
+    // nothing, but one added as the stream goes flowing for mouse reporting does.
+    // ink-mouse's own click event can't be used (it drops ⌥-modified clicks, the
+    // only kind Terminal.app forwards), so we hand each raw chunk to the LinkBox
+    // dispatcher to hit-test the links itself.
+    const onData = (d: Buffer | string) => dispatchLinkClicks(d)
+    process.stdin.on('data', onData)
+    return () => { mouse.events.off('scroll', onScroll); process.stdin.off('data', onData) }
   }, [tab])
 
   function updateConfig(fn: (prev: Config) => Config): void {

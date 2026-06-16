@@ -83,10 +83,21 @@ function subtractClamped(cur: CodexDelta, prev: CodexDelta | null): CodexDelta {
   }
 }
 
+/** Signature of a token_count event's raw usage (per-turn delta + cumulative).
+ *  Codex sometimes re-emits the identical event with a later timestamp; those
+ *  carry no new usage (the cumulative total is unchanged), so a consecutive
+ *  signature match flags a re-emission to skip. */
+function eventSig(last: CodexDelta | undefined, total: CodexDelta | undefined): string {
+  const f = (x: CodexDelta | undefined) =>
+    x ? `${x.input_tokens ?? 0},${x.cached_input_tokens ?? 0},${x.output_tokens ?? 0},${x.reasoning_output_tokens ?? 0}` : '-'
+  return `${f(last)}|${f(total)}`
+}
+
 async function parseFile(path: string): Promise<Entry[]> {
   const entries: Entry[] = []
   let model = 'gpt-5-codex'
   let prevTotal: CodexDelta | null = null
+  let prevSig: string | null = null
   const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity })
   for await (const rawLine of rl) {
     // Cheap pre-filter: only the two event kinds we care about.
@@ -110,7 +121,17 @@ async function parseFile(path: string): Promise<Entry[]> {
       // sum total_token_usage directly (it's a running total → huge overcount).
       const info = obj?.payload?.info
       const total: CodexDelta | undefined = info?.total_token_usage
-      let d: CodexDelta | undefined = info?.last_token_usage
+      const last: CodexDelta | undefined = info?.last_token_usage
+      // Skip a verbatim re-emission of the previous token_count (same per-turn
+      // delta AND same cumulative total = the ledger didn't advance, so no new
+      // usage). The value-tuple dedup in usage-core keys on the timestamp, so it
+      // misses these later-timestamped copies; without this skip Codex
+      // over-counts ~0.18% (matches devrage's consecutive-signature de-dup).
+      const sig = eventSig(last, total)
+      if (sig === prevSig) continue
+      prevSig = sig
+
+      let d: CodexDelta | undefined = last
       if (!d && total) {
         // After compaction/reset the cumulative total drops — treat the new total
         // as a fresh baseline delta instead of clamping it to zero (lost turn).

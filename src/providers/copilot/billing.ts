@@ -20,6 +20,8 @@ interface TokenSource {
 
 interface QuotaSnapshot {
   percent_remaining?: number
+  entitlement?: number
+  unlimited?: boolean
 }
 
 interface CopilotUsage {
@@ -206,6 +208,11 @@ function resetDate(value: unknown): string | null {
 
 function percentMetric(label: string, snapshot: QuotaSnapshot | undefined, reset: string | null, primary?: boolean): Metric | null {
   if (!snapshot || typeof snapshot.percent_remaining !== 'number') return null
+  // A bucket with zero entitlement (the plan has no quota of this kind) or an
+  // unlimited bucket has no meaningful "used" fraction — GitHub reports
+  // percent_remaining:0 for it, which would otherwise render as a misleading
+  // maxed-out (red 100%) bar. Drop it rather than imply it's exhausted.
+  if (snapshot.unlimited === true || snapshot.entitlement === 0) return null
   const used = Math.min(100, Math.max(0, 100 - snapshot.percent_remaining))
   return { label, used, limit: 100, format: { kind: 'percent' }, resetsAt: reset, primary }
 }

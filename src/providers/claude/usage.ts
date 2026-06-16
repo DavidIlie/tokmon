@@ -65,7 +65,13 @@ export async function detectClaude(homeDir?: string): Promise<boolean> {
 
 function priceFor(model: string) {
   for (const key of PRICE_KEYS) {
-    if (model.startsWith(key)) return PRICING[key]
+    if (!model.startsWith(key)) continue
+    // Only accept a match that ends at a token boundary (end-of-id or '-'), so a
+    // versioned legacy key like 'claude-opus-4-1' ($15/$75) can't swallow a
+    // future 'claude-opus-4-10' — which must fall through to the current Opus
+    // family rate instead of being billed 3x.
+    const rest = model.slice(key.length)
+    if (rest === '' || rest[0] === '-') return PRICING[key]
   }
   return FALLBACK
 }
