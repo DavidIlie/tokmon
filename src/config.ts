@@ -3,13 +3,11 @@ import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import type { ProviderId } from './providers/types'
 
-/** An env var as a usable base dir only if it's a non-empty absolute path. */
 export function envDir(name: string): string | undefined {
   const v = process.env[name]
   return v && v.trim() && isAbsolute(v.trim()) ? v.trim() : undefined
 }
 
-/** A user-configured account. `providerId` defaults to 'claude' for legacy configs. */
 export interface Account {
   id: string
   providerId: ProviderId
@@ -30,13 +28,8 @@ export interface Config {
   onboarded: boolean
   /** 'grid' = all providers in a responsive grid; 'single' = one provider at a time (cycle). */
   dashboardLayout: 'grid' | 'single'
-  /** 'all' = start focused on All; 'last' = remember the last focused account. */
   defaultFocus: 'all' | 'last'
-  /** 'auto' = detect terminal Unicode support; 'on' = force ASCII; 'off' = force Unicode. */
   ascii: 'auto' | 'on' | 'off'
-  /** Providers the user has decided on (enabled or explicitly disabled). A provider
-   *  absent here but installed triggers the boot opt-in prompt — so new providers
-   *  added in an upgrade are offered once instead of silently appearing. */
   knownProviders: ProviderId[]
 }
 
@@ -55,9 +48,6 @@ const DEFAULTS: Config = {
   knownProviders: [],
 }
 
-// The providers that existed before the boot opt-in feature. A legacy config
-// (onboarded, but no knownProviders) is treated as having decided on exactly
-// these, so existing users get prompted for any newer provider that's installed.
 const LEGACY_KNOWN: ProviderId[] = ['claude', 'codex', 'cursor']
 
 const ACCENT_COLORS = ['cyan', 'magenta', 'green', 'yellow', 'blue', 'red'] as const
@@ -85,7 +75,6 @@ export function cacheDir(): string {
 
 const PROVIDER_IDS: ProviderId[] = ['claude', 'codex', 'cursor', 'pi', 'opencode', 'copilot', 'antigravity', 'gemini']
 
-/** A finite number ≥ min, else the fallback (guards hand-edited/garbage values). */
 function clampNum(v: unknown, fallback: number, min: number): number {
   return typeof v === 'number' && Number.isFinite(v) && v >= min ? v : fallback
 }
@@ -95,28 +84,22 @@ export async function loadConfig(): Promise<Config> {
   try {
     raw = await readFile(configLocation(), 'utf-8')
   } catch {
-    return { ...DEFAULTS }   // no config yet → first run
+    return { ...DEFAULTS }
   }
   let parsed: Record<string, unknown>
   try {
     parsed = JSON.parse(raw)
   } catch {
-    // Corrupt config — back it up rather than silently overwriting it later.
     try { await writeFile(configLocation() + '.bak', raw) } catch {}
     return { ...DEFAULTS }
   }
   try {
     const accounts: Account[] = (Array.isArray(parsed.accounts) ? parsed.accounts : [])
-      // Legacy configs predate providers — those accounts are all Claude.
       .map((a: Account) => ({ ...a, providerId: a.providerId ?? 'claude' }))
-      // Drop malformed / unknown-provider accounts so the UI never crashes on them.
       .filter((a: Account) => typeof a?.id === 'string' && typeof a?.name === 'string' && PROVIDER_IDS.includes(a.providerId))
     return {
       ...DEFAULTS,
       ...parsed,
-      // Coerce the numeric/boolean knobs: a hand-edited `"interval": "fast"` or
-      // a negative value would otherwise reach setTimeout as NaN → a 0ms tight
-      // poll loop. Clamp to sane minimums.
       interval: clampNum(parsed.interval, DEFAULTS.interval, 1),
       billingInterval: clampNum(parsed.billingInterval, DEFAULTS.billingInterval, 1),
       clearScreen: typeof parsed.clearScreen === 'boolean' ? parsed.clearScreen : DEFAULTS.clearScreen,
@@ -125,9 +108,6 @@ export async function loadConfig(): Promise<Config> {
       activeAccountId: typeof parsed.activeAccountId === 'string' ? parsed.activeAccountId : null,
       disabledProviders: (Array.isArray(parsed.disabledProviders) ? parsed.disabledProviders : [])
         .filter((p: unknown): p is ProviderId => PROVIDER_IDS.includes(p as ProviderId)),
-      // Only skip onboarding when it was explicitly completed. Configs that
-      // predate the flag (even ones with a legacy account) still get the
-      // provider picker once, so existing users can opt into Codex/Cursor.
       onboarded: parsed.onboarded === true,
       dashboardLayout: parsed.dashboardLayout === 'single' ? 'single' : 'grid',
       defaultFocus: parsed.defaultFocus === 'last' ? 'last' : 'all',
@@ -141,8 +121,6 @@ export async function loadConfig(): Promise<Config> {
   }
 }
 
-// Serialize saves so rapid setting changes can't interleave/corrupt the file,
-// and write atomically (temp + rename) so a crash mid-write can't truncate it.
 let saveQueue: Promise<void> = Promise.resolve()
 
 export function saveConfig(config: Config): Promise<void> {
@@ -154,9 +132,6 @@ export function saveConfig(config: Config): Promise<void> {
       await writeFile(tmp, JSON.stringify(config, null, 2) + '\n')
       await rename(tmp, configLocation())
     } catch {
-      // Best-effort: a failed settings write must never reject this queue. The
-      // sole caller fires it without awaiting, so a rejection would surface as
-      // a fatal unhandledRejection and take down the whole TUI.
     }
   })
   return saveQueue

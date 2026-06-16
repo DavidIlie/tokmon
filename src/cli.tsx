@@ -6,19 +6,10 @@ import { flushDisk } from './providers/usage-core'
 import { resolveGlyphs, setGlyphs } from './glyphs'
 import { App } from './app'
 
-// A long-running dashboard must never die from a stray background rejection (a
-// best-effort billing/usage poll, a detached config save). Keep it alive.
 process.on('unhandledRejection', () => {})
 
-// ink-mouse routes every ClickableBox through one shared EventEmitter; the
-// dashboard mounts well over 10 clickable cells (tabs, focus chips, provider
-// bars, table rows), so Node's default 10-listener cap fires a one-time
-// MaxListenersExceededWarning that prints over the first rendered frame. These
-// listeners are intentional and bounded by the UI, not a leak — lift the cap.
 EventEmitter.defaultMaxListeners = 100
 
-// node:sqlite (the Cursor reader on Node 24) emits an ExperimentalWarning on
-// first use; swallow only that one so it can't corrupt the rendered frame.
 const emitWarning = process.emitWarning.bind(process)
 process.emitWarning = ((warning: string | Error, ...rest: unknown[]) => {
   const msg = typeof warning === 'string' ? warning : warning?.message
@@ -60,12 +51,6 @@ for (let i = 0; i < args.length; i++) {
 
 const config = await loadConfig()
 
-// Alternate screen buffer (like htop / vim / bpytop): render the dashboard
-// full-screen, then restore the user's previous terminal contents on exit
-// rather than leaving the last frame in scrollback. Gated on the clearScreen
-// setting + a real TTY. The 'exit' listener fires on every termination path
-// (q, Ctrl-C via Ink, process.exit, uncaught errors) so we never strand the
-// terminal in the alt buffer.
 const altScreen = config.clearScreen && process.stdout.isTTY === true
 const leaveAltScreen = () => { try { process.stdout.write('\x1B[?1049l') } catch {} }
 if (altScreen) {
@@ -84,8 +69,6 @@ setGlyphs(resolveGlyphs({
 const { waitUntilExit } = render(<MouseProvider><App interval={interval} initialConfig={config} /></MouseProvider>)
 await waitUntilExit()
 
-// Persist any pending parse cache before exit — the scheduled flush uses an
-// unref'd 4s timer, so a quick quit on a cold first run would otherwise lose it.
 await flushDisk()
 
 if (altScreen) leaveAltScreen()

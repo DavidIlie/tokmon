@@ -3,9 +3,6 @@ import { join, delimiter, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import type { ProviderId } from './types'
 
-// GUI-launched apps often have a minimal PATH (missing Homebrew, ~/.local/bin,
-// npm/pnpm/bun globals, …), so we search those common bin dirs too — otherwise
-// an installed CLI reads as "not found".
 function searchDirs(): string[] {
   const home = homedir()
   const fromEnv = (process.env.PATH ?? '').split(delimiter).filter(Boolean)
@@ -33,7 +30,6 @@ function isExec(p: string): boolean {
   }
 }
 
-/** True if any of `names` resolves to an executable on PATH (cross-platform). */
 function onPath(names: string[]): boolean {
   const exts = process.platform === 'win32'
     ? (process.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM').split(';').map(e => e.toLowerCase()).concat('')
@@ -52,11 +48,6 @@ function anyExists(paths: (string | undefined)[]): boolean {
   return paths.some(p => !!p && isExec(p))
 }
 
-/**
- * Whether a provider's tool appears installed — its CLI on PATH or its desktop
- * app present, across macOS/Windows/Linux. The picker's "available" signal; the
- * user can still enable any provider manually.
- */
 export function installSignals(id: ProviderId): boolean {
   const home = homedir()
   const pf = process.env.ProgramFiles
@@ -86,8 +77,6 @@ export function installSignals(id: ProviderId): boolean {
     case 'opencode':
       return onPath(['opencode'])
     case 'copilot':
-      // gh on PATH is the reliable cross-OS signal; the provider's own detect()
-      // does the OS-correct hosts.yml check (gh stores config differently per OS).
       return onPath(['gh'])
     case 'antigravity':
       return onPath(['antigravity']) || anyExists([

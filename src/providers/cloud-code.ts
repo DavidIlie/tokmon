@@ -16,18 +16,6 @@ const FETCH_MODELS_PATH = '/v1internal:fetchAvailableModels'
 const RETRIEVE_QUOTA_PATH = '/v1internal:retrieveUserQuota'
 const GOOGLE_OAUTH_URL = 'https://oauth2.googleapis.com/token'
 
-// The Cloud Code OAuth client (Antigravity/Gemini) used to refresh an expired
-// access token. It's a public installed-app credential shipped inside the
-// gemini-cli bundle. We discover it from the installed gemini-cli on disk
-// (default), or read it from the environment (TOKMON_GOOGLE_CLIENT_ID/SECRET,
-// which acts as an explicit override). Without either we use the token as-is
-// and prompt the user to re-open Antigravity / re-run gemini once it expires.
-//
-// On disk, gemini.js is just a small bootstrap with zero OAuth references — the
-// id+secret live in the multi-MB chunk-*.js siblings — so discovery scans the
-// whole bundle/ directory, not gemini.js alone. The paired regex (id then
-// secret in the same block) guarantees the unrelated analytics client id is
-// never selected.
 const GOOGLE_OAUTH_CLIENT_REGEX =
   /OAUTH_CLIENT_ID\s*=\s*["']([0-9]{6,}-[a-z0-9]+\.apps\.googleusercontent\.com)["']\s*;?\s*(?:var|const|let)?\s*OAUTH_CLIENT_SECRET\s*=\s*["'](GOCSPX-[A-Za-z0-9_-]+)["']/s
 const MAX_BUNDLE_READ = 32 * 1024 * 1024 // chunks are ~14MB; cap generously
@@ -36,7 +24,6 @@ interface GoogleOAuthClient {
   clientId: string
   clientSecret: string
 }
-// undefined = not tried yet, null = tried and failed, value = found
 let cachedClient: GoogleOAuthClient | null | undefined
 
 const OAUTH_TOKEN_KEY = 'antigravityUnifiedStateSync.oauthToken'
@@ -180,9 +167,6 @@ function redact(token: string | null | undefined): string {
   return `...${token.slice(-4)}`
 }
 
-// Build the list of candidate `@google/gemini-cli/bundle` directories to scan.
-// Read-only; every path is best-effort and de-duplicated. The actual existence
-// check happens during the scan (readdir), so we don't stat here.
 function geminiBundleCandidates(): string[] {
   const candidates: string[] = []
   const addBundle = (nodeModulesRoot: string) => {
@@ -190,46 +174,34 @@ function geminiBundleCandidates(): string[] {
     candidates.push(join(nodeModulesRoot, '@google', 'gemini-cli', 'bundle'))
   }
 
-  // 1) Follow `gemini` on PATH → realpath → the bundle/ dir that holds gemini.js.
   try {
     const which = spawnSync('command', ['-v', 'gemini'], { encoding: 'utf8', timeout: 5000 })
     const resolved = typeof which.stdout === 'string' ? which.stdout.trim().split('\n')[0]?.trim() : ''
-    if (resolved) candidates.push(resolved) // resolved later via realpath in the scanner
+    if (resolved) candidates.push(resolved)
   } catch {
-    // PATH lookup unavailable — fall back to the static roots below.
   }
 
-  // 2) Common global node_modules roots.
   const home = homedir()
   addBundle('/opt/homebrew/lib/node_modules')
   addBundle('/usr/local/lib/node_modules')
   addBundle(join(home, '.local', 'share', 'node_modules'))
   addBundle(join(home, '.bun', 'install', 'global', 'node_modules'))
 
-  // 3) `npm config get prefix` → <prefix>/lib/node_modules (covers nvm, etc.).
   try {
     const prefix = spawnSync('npm', ['config', 'get', 'prefix'], { encoding: 'utf8', timeout: 5000 })
     const root = typeof prefix.stdout === 'string' ? prefix.stdout.trim() : ''
     if (root && root !== 'undefined') addBundle(join(root, 'lib', 'node_modules'))
   } catch {
-    // npm not on PATH — static roots already cover the common cases.
   }
 
-  // De-duplicate while preserving order.
   return [...new Set(candidates.filter(Boolean))]
 }
 
-// Resolve a candidate path to the bundle/ directory we should scan. A candidate
-// is either a path to the `gemini` launcher (needs realpath + dirname) or an
-// `@google/gemini-cli/bundle` directory (used directly). Returns null on any
-// failure so the caller can keep trying other candidates.
 async function resolveBundleDir(candidate: string): Promise<string | null> {
   try {
     if (candidate.endsWith(`${join('@google', 'gemini-cli', 'bundle')}`)) {
       return candidate
     }
-    // A launcher path (e.g. /opt/homebrew/bin/gemini). Follow the symlink to the
-    // real gemini.js inside the bundle, then take its directory.
     const real = await realpath(candidate)
     return dirname(real)
   } catch {
@@ -237,10 +209,6 @@ async function resolveBundleDir(candidate: string): Promise<string | null> {
   }
 }
 
-// Scan a bundle/ directory for the OAuth client id+secret pair. Reads gemini.js
-// and every chunk-*.js sibling, skipping files larger than the cap. Uses a
-// cheap substring pre-filter before the heavy regex, and short-circuits on the
-// first match. Read-only; never logs the secret.
 async function scanBundleDir(dir: string): Promise<GoogleOAuthClient | null> {
   let entries: string[]
   try {
@@ -259,15 +227,11 @@ async function scanBundleDir(dir: string): Promise<GoogleOAuthClient | null> {
       const match = GOOGLE_OAUTH_CLIENT_REGEX.exec(contents)
       if (match) return { clientId: match[1], clientSecret: match[2] }
     } catch {
-      // Unreadable/oversized file — try the next one.
     }
   }
   return null
 }
 
-// Locate the gemini-cli bundle on disk and extract the OAuth client id+secret.
-// Read-only, degrades gracefully (returns null on any failure), and never logs
-// the secret. The result is memoised by resolveGoogleClient.
 async function discoverGoogleOAuthClient(): Promise<GoogleOAuthClient | null> {
   try {
     for (const candidate of geminiBundleCandidates()) {
@@ -277,14 +241,10 @@ async function discoverGoogleOAuthClient(): Promise<GoogleOAuthClient | null> {
       if (found) return found
     }
   } catch {
-    // Any unexpected failure → no discoverable creds.
   }
   return null
 }
 
-// Layer the credential sources: env override wins (lets a user pin creds or
-// disable disk discovery), then on-disk discovery from the installed
-// gemini-cli (memoised), then null → caller falls back to "no refresh".
 async function resolveGoogleClient(): Promise<GoogleOAuthClient | null> {
   const envId = process.env.TOKMON_GOOGLE_CLIENT_ID?.trim()
   const envSecret = process.env.TOKMON_GOOGLE_CLIENT_SECRET?.trim()
@@ -296,7 +256,7 @@ async function resolveGoogleClient(): Promise<GoogleOAuthClient | null> {
 async function refreshAccessToken(refreshToken: string | null | undefined): Promise<string | null> {
   if (!refreshToken) return null
   const client = await resolveGoogleClient()
-  if (!client) return null // no creds discoverable → no refresh
+  if (!client) return null
   const body = new URLSearchParams({
     client_id: client.clientId,
     client_secret: client.clientSecret,
@@ -337,7 +297,6 @@ async function requestCloudCodeJson(path: string, token: string, body: unknown):
       const json = await readJson(res)
       if (json && typeof json === 'object') return json
     } catch {
-      // Try the next Cloud Code host.
     }
   }
   return null
@@ -348,8 +307,6 @@ function readPlan(loadData: any): string | null {
   const current = typeof loadData?.currentTier?.name === 'string' ? loadData.currentTier.name.trim() : ''
   const raw = paid || current
   if (!raw) return null
-  // Cloud Code returns verbose tier names ("Gemini Code Assist in Google One AI
-  // Pro" / "… for individuals") — trim the boilerplate to a tight card label.
   return raw.replace(/^Gemini Code Assist (?:in|for)\s+/i, '').replace(/^Gemini Code Assist$/i, 'Code Assist')
 }
 
@@ -443,8 +400,6 @@ function normalizeLabel(label: string): string {
 
 function poolLabel(label: string): string {
   const lower = normalizeLabel(label).toLowerCase()
-  // Short labels — the card is already titled with the provider, and the metric
-  // label column is narrow (long "Gemini Pro"/"Gemini Flash" wrapped to 2 lines).
   if (lower.includes('gemini') && lower.includes('pro')) return 'Pro'
   if (lower.includes('gemini') && lower.includes('flash')) return 'Flash'
   return 'Claude'

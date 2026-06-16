@@ -8,16 +8,6 @@ import { startOfMonth, startOfWeek, monthsAgoStart } from '../../tz'
 import { envDir } from '../../config'
 import { type Entry, summarize, tabulate, SPARK_DAYS, loadCachedEntries, safeNum } from '../usage-core'
 
-// OpenAI API pricing (USD per token) for the GPT-5 / Codex family. Codex on a
-// ChatGPT plan is flat-rate, so this is an *estimated API-equivalent* cost.
-//
-// Cached input IS billed, but at the per-model cache-read rate (`cr`) — the
-// real OpenAI discount (~1/10 of input for gpt-5, ~4x for o4-mini), NOT the
-// full input rate. Charging cached reads at full rate is the trap that makes
-// other trackers (devrage) report ~10x inflated cost, since Codex re-sends the
-// mostly-cached context every turn (~94% of input is cache reads on real data).
-// Pricing cached at the true discounted rate keeps the estimate honest without
-// the inflation; the UI also surfaces the cached share + cache savings.
 const PRICING: Record<string, { in: number; cr: number; out: number }> = {
   'gpt-5-codex': { in: 1.25e-6, cr: 0.125e-6, out: 10e-6 },
   'gpt-5-mini': { in: 0.25e-6, cr: 0.025e-6, out: 2e-6 },
@@ -53,7 +43,7 @@ function priceFor(model: string) {
   return FALLBACK
 }
 
-/** The model is announced in `turn_context` events; token_count events don't carry it. */
+// Model from turn_context events; token_count events don't carry it.
 function extractModel(obj: any): string | null {
   const p = obj?.payload ?? obj
   return p?.model
@@ -72,7 +62,6 @@ interface CodexDelta {
   total_tokens?: number
 }
 
-/** Per-field clamped difference, for deriving a delta from cumulative totals. */
 function subtractClamped(cur: CodexDelta, prev: CodexDelta | null): CodexDelta {
   const sub = (a?: number, b?: number) => Math.max(0, (a ?? 0) - (b ?? 0))
   return {
@@ -83,10 +72,7 @@ function subtractClamped(cur: CodexDelta, prev: CodexDelta | null): CodexDelta {
   }
 }
 
-/** Signature of a token_count event's raw usage (per-turn delta + cumulative).
- *  Codex sometimes re-emits the identical event with a later timestamp; those
- *  carry no new usage (the cumulative total is unchanged), so a consecutive
- *  signature match flags a re-emission to skip. */
+// Detects re-emitted token_count events (same delta & cumulative total = no new usage).
 function eventSig(last: CodexDelta | undefined, total: CodexDelta | undefined): string {
   const f = (x: CodexDelta | undefined) =>
     x ? `${x.input_tokens ?? 0},${x.cached_input_tokens ?? 0},${x.output_tokens ?? 0},${x.reasoning_output_tokens ?? 0}` : '-'
@@ -100,12 +86,9 @@ async function parseFile(path: string): Promise<Entry[]> {
   let prevSig: string | null = null
   const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity })
   for await (const rawLine of rl) {
-    // Cheap pre-filter: only the two event kinds we care about.
     if (!rawLine.includes('token_count') && !rawLine.includes('turn_context')) continue
-    // Whole-line try: one malformed line (or unexpected shape) drops that line,
-    // never the rest of the file. Strip a leading BOM before parsing.
     try {
-      const line = rawLine.charCodeAt(0) === 0xFEFF ? rawLine.slice(1) : rawLine
+      const line = rawLine.charCodeAt(0) === 0xFEFF ? rawLine.slice(1) : rawLine // Strip BOM
       const obj: any = JSON.parse(line)
 
       const payloadType = obj?.payload?.type ?? obj?.type
@@ -116,25 +99,15 @@ async function parseFile(path: string): Promise<Entry[]> {
       }
       if (payloadType !== 'token_count') continue
 
-      // Prefer the per-turn delta (last_token_usage). When it's missing, derive
-      // the delta from the cumulative total minus the previous cumulative — never
-      // sum total_token_usage directly (it's a running total → huge overcount).
       const info = obj?.payload?.info
       const total: CodexDelta | undefined = info?.total_token_usage
       const last: CodexDelta | undefined = info?.last_token_usage
-      // Skip a verbatim re-emission of the previous token_count (same per-turn
-      // delta AND same cumulative total = the ledger didn't advance, so no new
-      // usage). The value-tuple dedup in usage-core keys on the timestamp, so it
-      // misses these later-timestamped copies; without this skip Codex
-      // over-counts ~0.18% (matches devrage's consecutive-signature de-dup).
       const sig = eventSig(last, total)
       if (sig === prevSig) continue
       prevSig = sig
 
       let d: CodexDelta | undefined = last
       if (!d && total) {
-        // After compaction/reset the cumulative total drops — treat the new total
-        // as a fresh baseline delta instead of clamping it to zero (lost turn).
         const reset = !!prevTotal && (total.input_tokens ?? 0) < (prevTotal.input_tokens ?? 0)
         d = reset ? total : subtractClamped(total, prevTotal)
       }
@@ -147,7 +120,7 @@ async function parseFile(path: string): Promise<Entry[]> {
       const inputTotal = safeNum(d.input_tokens)
       const cached = Math.min(safeNum(d.cached_input_tokens), inputTotal) // cached ⊆ input
       const input = inputTotal - cached
-      const output = safeNum(d.output_tokens)          // includes reasoning tokens
+      const output = safeNum(d.output_tokens) // includes reasoning tokens
       if (input + output + cached === 0) continue
 
       const p = priceFor(model)
@@ -168,8 +141,8 @@ async function parseFile(path: string): Promise<Entry[]> {
 
 async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   const files: { path: string; mtimeMs: number; size: number }[] = []
-  const seen = new Set<string>()      // by path
-  const seenIno = new Set<string>()   // by inode — collapses symlink-loop duplicates
+  const seen = new Set<string>()
+  const seenIno = new Set<string>()
 
   for (const home of codexHomes(homeDir)) {
     const dir = join(home, 'sessions')

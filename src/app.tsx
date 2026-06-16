@@ -31,8 +31,6 @@ import {
 
 const TABS = ['Dashboard', 'Table'] as const
 const VIEWS = ['Daily', 'Weekly', 'Monthly'] as const
-// Bare labels + direction; the ↑/↓ glyph is appended at render time (glyphs() is
-// resolved at startup AFTER this module loads, so it can't live in a const here).
 const SORTS = [
   { label: 'date', dir: 'up' as const },
   { label: 'date', dir: 'down' as const },
@@ -47,16 +45,8 @@ const CURSOR_SORTS = [
 const IS_TTY = process.stdin.isTTY === true
 const REPO_URL = 'https://github.com/DavidIlie/tokmon'
 const SITE_URL = 'https://davidilie.com'
-// macOS Terminal.app withholds plain mouse-button clicks from the app (it
-// consumes them for text selection) and only forwards SGR button events while
-// ⌥ Option is held. It also has no OSC 8 hyperlink support. So in Terminal.app
-// the only mouse route to the footer links is ⌥-click — surface that as a hint
-// so the underline cue (which implies a plain click) isn't misleading there.
 const IS_APPLE_TERMINAL = process.env.TERM_PROGRAM === 'Apple_Terminal'
 
-// Conservative OSC 8 hyperlink support detection (mirrors sindresorhus/
-// supports-hyperlinks): emit links only where we're confident the terminal
-// renders them, so unsupported terminals never print raw escapes. Computed once.
 export function detectHyperlinks(env: NodeJS.ProcessEnv, isTTY: boolean): boolean {
   const force = env.FORCE_HYPERLINK
   if (force != null && force !== '') return force !== '0' && force.toLowerCase() !== 'false'
@@ -74,14 +64,7 @@ export function detectHyperlinks(env: NodeJS.ProcessEnv, isTTY: boolean): boolea
 }
 const HYPERLINKS = detectHyperlinks(process.env, process.stdout.isTTY === true)
 
-// Open a URL in the default browser. Used by the footer's mouse-click links so
-// they work in ANY mouse-reporting terminal (incl. macOS Terminal.app, which
-// doesn't support OSC 8 hyperlinks). Best-effort, detached, never throws.
 function openUrl(url: string): void {
-  // Test hook: when TOKMON_OPENLOG is set, append the URL to that file instead
-  // of (well, in addition to) spawning a browser. Lets a PTY harness assert the
-  // open-URL path actually fired without launching a real browser. No-op in
-  // normal use (the env var is never set), so it can't affect users.
   if (process.env.TOKMON_OPENLOG) {
     try { appendFileSync(process.env.TOKMON_OPENLOG, url + '\n') } catch {}
     return
@@ -93,26 +76,14 @@ function openUrl(url: string): void {
   } catch { /* no browser opener available */ }
 }
 
-// OSC 8 terminal hyperlink — clickable in modern terminals (iTerm, Terminal.app,
-// VS Code, Windows Terminal, …); terminals without support ignore the escape and
-// render the plain text. Only emitted to a real TTY. string-width strips it, so
-// it doesn't affect Ink's layout width.
 function osc8(text: string, url: string): string {
   if (!HYPERLINKS) return text
   return `]8;;${url}${text}]8;;`
 }
 
-// Startup loader timing. DEBOUNCE_MS: how long the gap must last before the
-// loader appears (so fast/seeded launches paint straight to the dashboard with
-// no flash). LOADER_GRACE_MS: keep the loader up briefly after everything is
-// ready so the final ✓ is seen. LOADER_MAX_MS: hard deadline — drop to the
-// dashboard regardless, so a hung fetch never strands the user on the loader.
 const DEBOUNCE_MS = 300
 const LOADER_GRACE_MS = 600
 const LOADER_MAX_MS = 8000
-// Once the loader is actually on-screen, keep it up at least this long so a
-// near-instant "ready" doesn't reduce it to a one-frame flash. Only applies
-// after it has shown — instant/seeded launches still skip it entirely.
 const LOADER_MIN_VISIBLE_MS = 700
 
 const DEFAULT_CONFIG: Config = {
@@ -123,8 +94,6 @@ const DEFAULT_CONFIG: Config = {
 
 type Slot = { id: string | null; name: string; color: string }
 
-// Apply the startup overrides (CLI interval; "all" default focus) to a freshly
-// loaded config. Shared by the initial state and the (fallback) load effect.
 function applyStartup(c: Config, cliInterval?: number): Config {
   if (cliInterval) c = { ...c, interval: cliInterval / 1000 }
   if (c.defaultFocus === 'all') c = { ...c, activeAccountId: null }
@@ -132,8 +101,6 @@ function applyStartup(c: Config, cliInterval?: number): Config {
 }
 
 export function App({ interval: cliInterval, initialConfig }: { interval?: number; initialConfig?: Config }) {
-  // cli.tsx already loaded the config — seed it synchronously so there's no
-  // blank "Loading…" frame and the polls start on the very first render.
   const [config, setConfig] = useState<Config | null>(() => initialConfig ? applyStartup(initialConfig, cliInterval) : null)
   const [detected, setDetected] = useState<ProviderId[]>([])
   const [stats, setStats] = useState<Map<string, AccountStats>>(new Map())
@@ -178,12 +145,11 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
   const accounts = useMemo(() => buildAccounts(cfg, detected), [cfg, detected])
   const accountsRef = useRef<Account[]>([])
   accountsRef.current = accounts
-  const rowCountRef = useRef(0)   // live table row count, read by the cursor clamp
-  const dashPageCountRef = useRef(1)   // live dashboard page count, read by the scroll handler
-  const seededRef = useRef(false)      // guards the one-time snapshot seed
+  const rowCountRef = useRef(0)
+  const dashPageCountRef = useRef(1)
+  const seededRef = useRef(false)
   const accountsKey = accounts.map(a => `${a.id}:${a.homeDir ?? ''}`).join('|')
 
-  // Focus slots: "All" plus every account, when there's more than one to choose.
   const slots: Slot[] = accounts.length > 1
     ? [{ id: null, name: 'All', color: 'whiteBright' }, ...accounts.map(a => ({ id: a.id, name: a.name, color: a.color }))]
     : accounts.map(a => ({ id: a.id, name: a.name, color: a.color }))
@@ -196,47 +162,26 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
   const visibleAccounts = focusId === null ? accounts : accounts.filter(a => a.id === focusId)
   const groups = accountsByProvider(visibleAccounts)
 
-  // --- Responsive dashboard sizing -----------------------------------------
-  // Below either floor the full dashboard can't render without wrapping chrome
-  // (header/strip), so swap to a guaranteed-fits condensed fallback.
   const TOO_SMALL = cols < 40 || rows < 12
 
-  // --- Startup loader gating ----------------------------------------------
-  // The loader fills the gap between "accounts known" and "first useful data for
-  // every account arrived", but only once (loaderDone) and only if that gap
-  // outlasts DEBOUNCE_MS — so seeded/fast launches never flash it. Uses the full
-  // unfiltered account list (not focus-filtered) so every provider is shown and
-  // a hidden one still fetching can't let the loader exit early.
   const allGroups = accountsByProvider(accounts)
   const allReady = accounts.length > 0 && accounts.every(a => accountReady(stats.get(a.id), a.providerId))
-  // `showLoader` is derived further down, once `showPicker` is known.
 
   const hasStrip = slots.length > 1
-  // Focus strip wraps when the chips overflow one line. Estimate chips/row from
-  // the slot labels (clipped to 16) so a 2-line strip is budgeted, not assumed 1.
   const stripChipW = (s: Slot) => 2 /*idx+space*/ + 2 /*dot+space*/ + truncateName(s.name, 16).length + 2 /*marginRight*/
   const stripChars = slots.reduce((sum, s) => sum + stripChipW(s), 0)
   const stripLines = hasStrip ? Math.max(1, Math.ceil(stripChars / Math.max(1, cols - 4 /*paddingX*/ - 7 /*"focus  "*/))) : 0
-  // Chrome rows that surround the card grid (see layout notes in MEMORY):
-  //   outer paddingY 2 · header up-to-2 · tabbar block 3 · strip (marginTop 1 +
-  //   stripLines) · totals row (marginTop 1 + 1) · footer (marginTop 1 + 1).
-  //   Header may wrap to 2 lines at narrow widths, so budget 2 conservatively to
-  //   keep the footer un-clipped. The totals row is always present in dashboard
-  //   mode (regardless of hasStrip), so its 2 rows are unconditional.
   const headerRows = cols < 70 ? 2 : 1
   const CHROME = 2 + headerRows + 3 + (hasStrip ? 1 + stripLines : 0) + 2 + 2
   const gridBudget = Math.max(1, rows - CHROME)
-  // Mirror DashboardView's solver so page keys only act when paginating.
   const dashLayout = chooseLayout(
     Math.max(56, cols - 4), gridBudget, groups.length,
     focusId !== null || cfg.dashboardLayout === 'single', cols,
   )
   const dashPageCount = dashLayout.pageCount
   const dashPaginated = dashPageCount > 1
-  dashPageCountRef.current = dashPageCount   // read by the (tab-scoped) scroll handler
+  dashPageCountRef.current = dashPageCount
 
-  // The Table tab is provider-scoped (its own selector), independent of the
-  // dashboard focus, across all enabled providers.
   const tableProvs = accountsByProvider(accounts).map(g => g.provider)
   const effTableProvider = (tableProvider && tableProvs.includes(tableProvider)) ? tableProvider : (tableProvs[0] ?? null)
   const tableIsCursor = !!effTableProvider && !PROVIDERS[effTableProvider].hasUsage
@@ -244,18 +189,10 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
   const SORTS_FOR = tableIsCursor ? CURSOR_SORTS : SORTS
 
   const needsOnboarding = configReady && !cfg.onboarded
-  // Providers installed but not yet decided on (added since the user last chose).
-  // The same picker offers them on boot so they're opted into once, rather than
-  // silently appearing.
   const newProviders = configReady && cfg.onboarded
     ? PROVIDER_ORDER.filter(p => !cfg.knownProviders.includes(p) && detected.includes(p))
     : []
   const showPicker = needsOnboarding || newProviders.length > 0
-  // Once shown, the loader survives the moment allReady flips (held by the grace
-  // timer) so the final ✓ is seen; `graceHold` keeps `showLoader` true across
-  // that beat without depending on `!allReady`. `loaderShownAt` adds a small
-  // minimum-visible floor so a near-instant ready isn't a one-frame flash — but
-  // only once it has actually painted, so seeded/instant launches still skip it.
   const minVisibleHold = loaderShownAt !== null && Date.now() - loaderShownAt < LOADER_MIN_VISIBLE_MS
   const showLoader = configReady && !showPicker && !showSettings && !TOO_SMALL
     && accounts.length > 0 && (!allReady || graceHold || minVisibleHold)
@@ -267,10 +204,6 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     detected: detected.includes(pid), enabled: onboardEnabled.includes(pid),
   }))
 
-  // Picker-close edge: the polls are gated on !showPicker, so loading only
-  // *starts* once the user dismisses the picker. Reset the loader latches here so
-  // the load that follows is visible even though some state may have lingered —
-  // this is what makes the loader appear right after onboarding / opt-in.
   useEffect(() => {
     const wasPicker = prevShowPicker.current
     prevShowPicker.current = showPicker
@@ -282,22 +215,15 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     }
   }, [showPicker])
 
-  // Record when the loader first paints, so the minimum-visible floor has a
-  // start time. Cleared on the picker-close edge above so a later picker can
-  // re-show it. Never set when the loader is skipped (instant/seeded).
   useEffect(() => {
     if (showLoader && loaderShownAt === null) setLoaderShownAt(Date.now())
   }, [showLoader, loaderShownAt])
 
   useEffect(() => {
-    // Fallback only — App is normally seeded with initialConfig from cli.tsx.
     if (!initialConfig) loadConfig().then(c => setConfig(applyStartup(c, cliInterval)))
     detectProviders().then(setDetected)
   }, [])
 
-  // Seed last-known values from the on-disk snapshot the moment accounts are
-  // known, so cards paint instantly while the live polls refresh in the
-  // background (incremental rendering — never block the UI on slow providers).
   useEffect(() => {
     if (seededRef.current || !configReady || showPicker || accounts.length === 0) return
     seededRef.current = true
@@ -315,16 +241,12 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configReady, showPicker, accountsKey])
 
-  // Persist the current display values (debounced) so the next launch is instant.
   useEffect(() => {
     if (stats.size === 0) return
     const t = setTimeout(() => saveSnapshot(stats), 500)
     return () => clearTimeout(t)
   }, [stats])
 
-  // Arm the loader debounce once per account set. Keyed on accountsKey (NOT
-  // stats) so a per-provider tick can't re-arm it. If everything is already
-  // ready (seeded/fast), the early return fires and debouncePassed stays false.
   useEffect(() => {
     if (!configReady || showPicker || accounts.length === 0) return
     if (allReady || loaderDone.current) return
@@ -334,14 +256,9 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configReady, showPicker, accountsKey])
 
-  // Latch the loader closed once everything is ready. If the loader was actually
-  // on-screen, hold it for the grace beat (so the final ✓ is seen) AND until the
-  // minimum-visible floor elapses (so it isn't a flash); otherwise (seeded/fast
-  // path, where it never painted) latch immediately so it never re-shows on later
-  // poll cycles even if a poll transiently nulls a value.
   useEffect(() => {
     if (!allReady || loaderDone.current) return
-    if (loaderShownAt === null) { loaderDone.current = true; return }   // never showed → close now
+    if (loaderShownAt === null) { loaderDone.current = true; return }
     setGraceHold(true)
     const minRemaining = Math.max(0, LOADER_MIN_VISIBLE_MS - (Date.now() - loaderShownAt))
     const hold = Math.max(LOADER_GRACE_MS, minRemaining)
@@ -350,13 +267,7 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allReady])
 
-  // Usage poll (token/cost summaries) for usage-capable accounts.
-  // Self-scheduling: the next run waits for the current to finish, so a slow
-  // cold parse (large Codex history) never piles up overlapping work.
   useEffect(() => {
-    // Gated on !showPicker so loading visibly starts AFTER the user picks — the
-    // pre-picker render must not accrue progress that would skip the post-picker
-    // loader.
     if (!configReady || showPicker) return
     let active = true
     let timer: ReturnType<typeof setTimeout>
@@ -368,10 +279,7 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
           try {
             const dashboard = await provider.fetchSummary(acc, tz)
             if (active) setStats(prev => upsert(prev, acc, { dashboard }))
-          } catch {
-            // A single account's usage fetch failing is non-fatal — its card just
-            // keeps its last value rather than blanking the whole dashboard.
-          }
+          } catch {}
         }))
         if (active) { setError(null); setUpdated(new Date()) }
       } finally {
@@ -382,15 +290,12 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     return () => { active = false; clearTimeout(timer) }
   }, [interval, tz, configReady, showPicker, accountsKey])
 
-  // Billing poll (rate limits / spend) + peak clock.
   useEffect(() => {
-    if (!configReady || showPicker) return   // same picker gating as the usage poll
+    if (!configReady || showPicker) return
     let active = true
     let timer: ReturnType<typeof setTimeout>
     const load = async () => {
       try {
-        // Kick off the peak clock concurrently with billing so its timeout
-        // doesn't serialize after every billing round.
         const peakP = accountsRef.current.some(a => a.providerId === 'claude')
           ? fetchPeak() : Promise.resolve(null)
         await Promise.all(accountsRef.current.map(async (acc) => {
@@ -411,16 +316,13 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     return () => { active = false; clearTimeout(timer) }
   }, [billingMs, configReady, showPicker, accountsKey])
 
-  // Table data for the selected table provider (token table or Cursor spend).
   const tableKey = `${effTableProvider}|${tableAccounts.map(a => `${a.id}:${a.homeDir ?? ''}`).join(',')}|${tz}`
   useEffect(() => {
     setTable(null); setCursorRows(null)
     setCursor(0); setExpanded(-1)
-    setSort(tableIsCursor ? 0 : 1)   // cost↓ for Cursor, date↓ for token tables
+    setSort(tableIsCursor ? 0 : 1)
   }, [tableKey])
 
-  // Single effect loads the table then self-schedules refresh (combining load +
-  // poll so the refresh actually starts after the first load completes).
   useEffect(() => {
     if (tab !== 1 || !effTableProvider) return
     let active = true
@@ -434,7 +336,7 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
           const r = await fetchScopeTable(tableAccounts, tz)
           if (active) setTable(r)
         }
-      } catch { /* keep last data; try again next tick */ }
+      } catch {}
     }
     const run = async () => {
       setTableLoading(true)
@@ -448,16 +350,11 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     return () => { active = false; clearTimeout(timer) }
   }, [tab, tableKey, interval])
 
-  // Keep the row cursor in range when filtering changes the visible row count.
   useEffect(() => { setCursor(0); setExpanded(-1) }, [search])
 
-  // Clamp (don't reset) the dashboard page when the page count shrinks — a
-  // one-row resize shouldn't snap the user back to page 1.
   useEffect(() => { setDashPage(p => Math.min(p, dashPageCount - 1)) }, [dashPageCount])
 
   const resetView = useCallback(() => { setCursor(0); setExpanded(-1) }, [])
-  // Keep the row cursor within the current table so G / over-scroll can't strand
-  // it past the last row (which would make Enter expand nothing and ↑ look stuck).
   const clampRow = (n: number) => Math.max(0, Math.min(rowCountRef.current - 1, n))
 
   const mouse = useMouse()
@@ -474,14 +371,6 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
       }
     }
     mouse.events.on('scroll', onScroll)
-    // Single raw stdin tap for footer link clicks. Placed here — alongside
-    // mouse.enable() — because that's the one spot a process.stdin 'data'
-    // listener reliably receives bytes: Ink v5 drains stdin via 'readable'+read(),
-    // so a 'data' listener added later (e.g. inside a deeper component) sees
-    // nothing, but one added as the stream goes flowing for mouse reporting does.
-    // ink-mouse's own click event can't be used (it drops ⌥-modified clicks, the
-    // only kind Terminal.app forwards), so we hand each raw chunk to the LinkBox
-    // dispatcher to hit-test the links itself.
     const onData = (d: Buffer | string) => dispatchLinkClicks(d)
     process.stdin.on('data', onData)
     return () => { mouse.events.off('scroll', onScroll); process.stdin.off('data', onData) }
@@ -517,7 +406,6 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     const enabled = onboardEnabled
     updateConfig(c => {
       if (!c.onboarded) {
-        // First run — decide on every provider shown.
         return {
           ...c,
           disabledProviders: PROVIDER_ORDER.filter(p => !enabled.includes(p)),
@@ -525,8 +413,6 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
           onboarded: true,
         }
       }
-      // Boot opt-in: only the newly-offered providers are affected; unselected
-      // ones are disabled, and all offered ones become "known" so we don't ask again.
       const newlyDisabled = pickerProviders.filter(p => !enabled.includes(p))
       return {
         ...c,
@@ -700,7 +586,6 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
       return
     }
 
-    // Table search box captures typing before global keybindings (so "q" types).
     if (tab === 1 && searchMode) {
       if (key.return || key.escape) { setSearchMode(false); if (key.escape) setSearch(''); return }
       if (key.backspace || key.delete) { setSearch(s => s.slice(0, -1)); return }
@@ -709,11 +594,6 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     }
 
     if (input === 'q') { exit(); return }
-    // Universal "open the repo" shortcut — works in EVERY terminal (incl. macOS
-    // Terminal.app, where neither plain mouse-clicks nor OSC 8 hyperlinks reach
-    // the footer link). Capital O so it never collides with the Table tab's
-    // lowercase o=sort. Placed after the input-capturing modals (picker/forms/
-    // search) so it can't swallow a typed 'O'.
     if (input === 'O') { openUrl(REPO_URL); return }
 
     if (showSettings) {
@@ -780,10 +660,6 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
       if (target) { updateConfig(c => ({ ...c, activeAccountId: target.id })); resetView() }
       return
     }
-    // Dedicated dashboard paging keys (kept separate from a/A focus-cycle so the
-    // user never loses focus control when the grid happens to paginate).
-    // Dashboard paging: scroll is the default, but arrows / PgUp-PgDn / [ ] also
-    // move between pages (clamped at the ends, matching scroll).
     if (tab === 0 && dashPaginated) {
       if (input === ']' || key.downArrow || key.pageDown) { setDashPage(p => Math.min(dashPageCount - 1, p + 1)); return }
       if (input === '[' || key.upArrow || key.pageUp) { setDashPage(p => Math.max(0, p - 1)); return }
@@ -830,10 +706,6 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     )
   }
 
-  // Startup loader: shown only in the debounced gap before every account's first
-  // useful reading lands (never during the picker/settings/tiny terminal). The
-  // global useInput above stays mounted, so q quits during the loader. Matches
-  // the dashboard's outer frame so cards appear where the loader rows were.
   if (showLoader) {
     return (
       <Box flexDirection="column" paddingX={2} paddingY={1} height={rows} overflow="hidden">
@@ -842,14 +714,10 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     )
   }
 
-  // Too-small terminal: a guaranteed-fits condensed view. Global useInput stays
-  // active (q quits, s settings) so we never trap the user on a tiny screen.
   if (TOO_SMALL && !showSettings) {
     return <TinyFallback groups={groups} stats={stats} rows={rows} cols={cols} />
   }
 
-  // Sorting/filtering a few hundred rows each render is cheap; no useMemo (it
-  // would sit below the early returns and break rules-of-hooks).
   const tokenRows = sortRows(filterTokenRows(table ? [table.daily, table.weekly, table.monthly][view] : [], search), sort)
   const cursorTableRows = sortCursorRows(filterCursorRows(cursorRows ?? [], search), sort)
   rowCountRef.current = tableIsCursor ? cursorTableRows.length : tokenRows.length
@@ -955,8 +823,6 @@ async function fetchScopeTable(scope: Account[], tz: string): Promise<TableData>
   return mergeTables(valid)
 }
 
-// Assemble a sort label with its direction arrow at call time (so the active
-// glyph set is used, not the default one captured at module load).
 function sortLabel(entry: { label: string; dir: 'up' | 'down' | null }): string {
   if (entry.dir === 'up') return `${entry.label} ${glyphs().arrowU}`
   if (entry.dir === 'down') return `${entry.label} ${glyphs().arrowD}`
@@ -1017,37 +883,18 @@ function AccountStrip({ slots, activeIdx, onSelect }: { slots: Slot[]; activeIdx
 }
 
 function Footer({ hasAccounts, paginated, cols }: { hasAccounts: boolean; paginated: boolean; cols: number }) {
-  // The footer is a single row of Text siblings; if it overflows the inner
-  // content width Ink clips it mid-word ("David Ili"), so drop the optional
-  // hints from the right when the terminal is too narrow to hold them. The
-  // branding + O=repo + s=settings + q=quit essentials always survive. Display
-  // widths (the · is 1 col but 3 bytes, so count glyphs, not bytes).
-  const inner = cols - 4   // outer paddingX={2} on both sides
-  // O=repo is the universal keyboard route to the GitHub repo (mouse-click on
-  // the links doesn't reach the app in Terminal.app). It's part of the base.
-  const BASE = 'by David Ilie (davidilie.com)  ·  O=repo  s=settings  q=quit'.length  // ~60 cols
-  // ⌥ in Unicode mode, 'opt' in ASCII mode — keep the budget in sync with the
-  // glyph actually rendered below.
+  const inner = cols - 4
+  const BASE = 'by David Ilie (davidilie.com)  ·  O=repo  s=settings  q=quit'.length
   const optHint = (glyphs().shift === '⇧' ? '⌥' : 'opt') + '-click links  '
   const OPT = IS_APPLE_TERMINAL ? optHint.length : 0
   const JUMP = '0-9=jump  a/A=cycle  '.length
   const PAGE = 'scroll=page  '.length
-  // In Terminal.app, the only mouse route is ⌥-click (and OSC 8 ⌘-click is
-  // unsupported) — show that hint first when it fits, since the underline alone
-  // would suggest a plain click that won't work there.
   const showOpt = IS_APPLE_TERMINAL && inner >= BASE + OPT
   const showJump = hasAccounts && inner >= BASE + (showOpt ? OPT : 0) + JUMP + (paginated ? PAGE : 0)
   const showPage = paginated && inner >= BASE + (showOpt ? OPT : 0) + (showJump ? JUMP : 0) + PAGE
   return (
     <Box marginTop={1} flexWrap="nowrap">
       <Text dimColor>by </Text>
-      {/* Clickable via mouse where the terminal forwards clicks (iTerm/VSCode/
-          WezTerm/kitty — and Terminal.app only on ⌥-click). underline = visible
-          link cue; Transform adds an OSC 8 link on top for native ⌘/Ctrl-click
-          where supported (applied after layout so Ink measures only the visible
-          text and never truncates it). LinkBox aligns the mouse hit zone with
-          the glyphs (fixes ink-mouse's 1-based vs 0-based off-by-one). The O
-          keyboard shortcut is the universal fallback that works everywhere. */}
       <LinkBox onClick={() => openUrl(REPO_URL)}>
         <Transform transform={(s) => osc8(s, REPO_URL)}><Text underline>David Ilie</Text></Transform>
       </LinkBox>
@@ -1064,18 +911,13 @@ function Footer({ hasAccounts, paginated, cols }: { hasAccounts: boolean; pagina
   )
 }
 
-/**
- * Guaranteed-fits view for terminals below the layout floor (cols<40 or
- * rows<12). One borderless condensed line per provider — no grid, no bars — so
- * it can never overflow and never overlaps the footer. q/s stay live.
- */
 function TinyFallback({ groups, stats, rows, cols }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
   stats: Map<string, AccountStats>
   rows: number
   cols: number
 }) {
-  const maxLines = Math.max(1, rows - 4)  // title + footer + padding headroom
+  const maxLines = Math.max(1, rows - 4)
   const visible = groups.slice(0, maxLines)
   const hidden = groups.length - visible.length
   const w = Math.max(8, cols - 2)

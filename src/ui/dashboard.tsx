@@ -12,15 +12,10 @@ type Item = { account: Account; s: AccountStats | undefined }
 const GAP = 2
 const MIN_CARD = 56
 const MIN_CARD_DENSE = 44
-// Conservative per-card heights (tallest card in the set: usage + billing +
-// sparkline, single account). Includes the 2 border rows. The fit math sizes to
-// the tallest card so a short card (e.g. billing-only Cursor) never overflows.
 const CARD_H = { full: 14, compact: 12, mini: 8 } as const
 export type Variant = keyof typeof CARD_H
 const VARIANT_ORDER: Variant[] = ['full', 'compact', 'mini']
-// One row reserved inside the budget for the page indicator when paginating.
 const INDICATOR_ROWS = 1
-// Single huge card shouldn't sprawl across a 200-col terminal — cap its width.
 const MAX_SINGLE_CARD = Math.round(MIN_CARD * 1.6)
 
 export type GridLayout = {
@@ -30,29 +25,19 @@ export type GridLayout = {
   pageCount: number
 }
 
-/**
- * Pure layout solver (testable like detectUnicode). Given the content width and
- * the vertical row budget, pick columns + card variant that fit, paginating only
- * as a last resort. Preference order mirrors bpytop: reflow columns → drop
- * sparkline (compact) → drop bars (mini) → paginate.
- */
 export function chooseLayout(content: number, budget: number, n: number, single: boolean, cols: number): GridLayout {
   if (n <= 0) return { ncols: 1, variant: 'mini', cardsPerPage: 1, pageCount: 1 }
 
-  // Vertical cost of `rows` card-rows of height H (rowGap=1 between rows).
   const gridHeight = (rows: number, H: number) => rows * H + Math.max(0, rows - 1)
 
   const colCap = single ? 1
-    : cols >= 3 * MIN_CARD_DENSE + 2 * GAP ? 3   // 136: three dense cards + gaps
-    : cols >= 2 * MIN_CARD + GAP ? 2             // 114: two readable cards + gap
+    : cols >= 3 * MIN_CARD_DENSE + 2 * GAP ? 3
+    : cols >= 2 * MIN_CARD + GAP ? 2
     : 1
   const maxCols = Math.max(1, Math.min(colCap, n))
   const cardWidthAt = (nc: number) => nc <= 1 ? content : Math.floor((content - GAP * (nc - 1)) / nc)
   const minWidthAt = (nc: number) => nc >= 3 ? MIN_CARD_DENSE : MIN_CARD
 
-  // Try richest-detail-that-fits: prefer more columns at a given variant before
-  // degrading the variant. Walk variants outer, columns inner (most cols first
-  // shortens the grid the most).
   for (const variant of VARIANT_ORDER) {
     for (let nc = maxCols; nc >= 1; nc--) {
       if (nc > 1 && cardWidthAt(nc) < minWidthAt(nc)) continue
@@ -63,15 +48,12 @@ export function chooseLayout(content: number, budget: number, n: number, single:
     }
   }
 
-  // Nothing fits whole — paginate the densest variant at the widest valid column
-  // count. Reserve a row for the indicator.
   let ncols = 1
   for (let nc = maxCols; nc >= 1; nc--) {
     if (nc === 1 || cardWidthAt(nc) >= minWidthAt(nc)) { ncols = nc; break }
   }
   const H = CARD_H.mini
   const fitBudget = budget - INDICATOR_ROWS
-  // Invert gridHeight: rows*H + (rows-1) <= fitBudget  ⇒  rows <= (fitBudget+1)/(H+1)
   const rowsThatFit = Math.max(1, Math.floor((fitBudget + 1) / (H + 1)))
   const cardsPerPage = Math.max(1, rowsThatFit * ncols)
   const pageCount = Math.max(1, Math.ceil(n / cardsPerPage))
@@ -91,8 +73,6 @@ export function DashboardView({ groups, stats, cols, budget, focusId, layout, pa
     return <Text dimColor>No providers enabled {glyphs().emDash} press s to pick providers.</Text>
   }
 
-  // 'single' mode shows one provider at a time (cycle with 1-9 / a). When no
-  // specific account is focused, default to the first provider.
   let shown = groups
   if (layout === 'single' && focusId === null) shown = groups.slice(0, 1)
 
@@ -108,8 +88,6 @@ export function DashboardView({ groups, stats, cols, budget, focusId, layout, pa
     ? shown.slice(pg * cardsPerPage, pg * cardsPerPage + cardsPerPage)
     : shown
 
-  // Fixed-height + overflow:hidden is the hard backstop: any underestimate clips
-  // INSIDE the grid, never displacing the focus strip / footer below it.
   return (
     <Box height={budget} flexDirection="column" overflow="hidden">
       <Box width={content} flexWrap="wrap" columnGap={GAP} rowGap={1}>
@@ -142,8 +120,8 @@ function ProviderCard({ provider, accounts, stats, width, variant }: {
   const inner = width - 4
   const barW = Math.max(10, Math.min(46, inner - 20))
   const hasSpark = !!agg && agg.series.some(v => v > 0)
-  const showBars = variant !== 'mini'   // rate-limit / spend bars
-  const showSpark = variant === 'full'  // 14-day sparkline footer
+  const showBars = variant !== 'mini'
+  const showSpark = variant === 'full'
 
   return (
     <Box flexDirection="column" width={width} borderStyle={glyphs().border} borderColor={meta.color} paddingX={1}>
@@ -174,7 +152,6 @@ function ProviderCard({ provider, accounts, stats, width, variant }: {
           <LimitsBlock items={items} barW={barW} />
         </>
       )}
-      {/* Billing-only card under mini: keep one signal line instead of bars. */}
       {meta.hasBilling && !showBars && !meta.hasUsage && (
         <CompactBilling items={items} />
       )}
@@ -200,7 +177,6 @@ function ProviderCard({ provider, accounts, stats, width, variant }: {
   )
 }
 
-/** One-line billing summary for a mini billing-only card (Cursor under mini). */
 function CompactBilling({ items }: { items: Item[] }) {
   const billing = items.map(i => i.s?.billing).find(Boolean)
   if (!billing) return <Text dimColor>Fetching{glyphs().ellipsis}</Text>
@@ -314,13 +290,6 @@ function aggregate(list: DashboardData[]): DashboardData {
   return z
 }
 
-/**
- * Combined totals across the visible usage-provider groups (those with a
- * DashboardData). Billing-only groups contribute no cost history and are
- * skipped. Always renders in dashboard mode — shows $0.00 until data lands.
- * Single-line, dim; drops token totals first, then the period labels, on
- * narrow widths so it never wraps into the footer.
- */
 export function TotalsRow({ groups, stats, cols }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
   stats: Map<string, AccountStats>
@@ -339,10 +308,8 @@ export function TotalsRow({ groups, stats, cols }: {
     }
   }
 
-  const inner = cols - 4   // outer paddingX={2} both sides
+  const inner = cols - 4
   const dot = glyphs().middot
-  // Widest form ≈ "Σ  Today $X (Y tok)  ·  Week $X (Y tok)  ·  Month $X (Y tok)".
-  // Two condense steps so it never wraps: drop tokens, then drop period words.
   const full = `${glyphs().dotAll}  Today ${fmt.currency(t.cost)} (${fmt.tokens(t.tokens)} tok)  ${dot}  Week ${fmt.currency(w.cost)} (${fmt.tokens(w.tokens)} tok)  ${dot}  Month ${fmt.currency(m.cost)} (${fmt.tokens(m.tokens)} tok)`
   const noTok = `${glyphs().dotAll}  Today ${fmt.currency(t.cost)}  ${dot}  Week ${fmt.currency(w.cost)}  ${dot}  Month ${fmt.currency(m.cost)}`
   const tight = `${glyphs().dotAll}  ${fmt.currency(t.cost)}  ${dot}  ${fmt.currency(w.cost)}  ${dot}  ${fmt.currency(m.cost)}`

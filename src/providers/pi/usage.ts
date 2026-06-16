@@ -7,11 +7,6 @@ import type { DashboardData, TableData } from '../../types'
 import { startOfMonth, startOfWeek, monthsAgoStart } from '../../tz'
 import { type Entry, summarize, tabulate, SPARK_DAYS, loadCachedEntries, safeNum } from '../usage-core'
 
-// pi (@mariozechner/pi-coding-agent) logs each turn to
-// ~/.pi/agent/sessions/<project>/<id>.jsonl. Assistant `message.usage` carries
-// input/output/cacheRead/cacheWrite token counts AND pi's own computed cost
-// (message.usage.cost.*) — pi is multi-provider, so we trust its stored cost
-// rather than re-pricing every model it might route to.
 export function piSessionsDir(homeDir?: string): string {
   return join(homeDir ?? homedir(), '.pi', 'agent', 'sessions')
 }
@@ -20,7 +15,6 @@ export async function detectPi(homeDir?: string): Promise<boolean> {
   try { await access(piSessionsDir(homeDir)); return true } catch { return false }
 }
 
-/** A positive finite number (cost may be fractional), else 0. */
 function pos(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0
 }
@@ -45,14 +39,10 @@ async function parseFile(path: string): Promise<Entry[]> {
       const cacheCreate = safeNum(u.cacheWrite)
       if (input + output + cacheRead + cacheCreate === 0) continue
       const c = u.cost ?? {}
-      // Cache savings from pi's own per-component costs: what the cache reads
-      // would have cost at the input per-token rate, minus what they did cost.
       const costInput = pos(c.input)
       const cacheSavings = input > 0 && cacheRead > 0
         ? Math.max(0, cacheRead * (costInput / input) - pos(c.cacheRead))
         : 0
-      // Label by the model that actually responded when pi records it (matches
-      // devrage), falling back to the requested model.
       const model = (typeof msg.responseModel === 'string' && msg.responseModel)
         || (typeof msg.model === 'string' && msg.model)
         || 'unknown'

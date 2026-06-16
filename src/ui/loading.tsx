@@ -9,13 +9,6 @@ import { truncateName, metricValueText } from './shared'
 
 type Group = { provider: ProviderId; accounts: Account[] }
 
-/**
- * Per-account readiness predicate — the single source of truth for both the
- * loader's row marks and App's show/hide decision, so they can never disagree.
- * An account is "ready" once it has every reading its provider promises
- * (`hasUsage` → dashboard, `hasBilling` → billing). A populated billing error
- * also counts as settled so a hard failure can't hang the loader.
- */
 export function accountReady(s: AccountStats | undefined, providerId: ProviderId): boolean {
   if (!s) return false
   const p = PROVIDERS[providerId]
@@ -25,7 +18,6 @@ export function accountReady(s: AccountStats | undefined, providerId: ProviderId
   return true
 }
 
-/** Sum the group's today-cost across its accounts' dashboards (usage providers). */
 function groupTodayCost(items: (AccountStats | undefined)[]): number {
   return items.reduce((sum, s) => {
     const d: DashboardData | null | undefined = s?.dashboard
@@ -33,12 +25,6 @@ function groupTodayCost(items: (AccountStats | undefined)[]): number {
   }, 0)
 }
 
-/**
- * The headline value a ready row shows — matched to the dashboard card's idiom
- * so the flashed value equals the card that replaces it:
- *   - usage providers → "$X today" (aggregated today.cost)
- *   - billing-only    → first metric value, else plan, else "no data"
- */
 function headlineFor(group: Group, items: (AccountStats | undefined)[]): string {
   const meta = PROVIDERS[group.provider]
   if (meta.hasUsage) return `${fmt.currency(groupTodayCost(items))} today`
@@ -61,18 +47,15 @@ export function LoadingView({ groups, stats, cols, rows }: {
   const sp = glyphs().spinner
   const [frame, setFrame] = useState(0)
   useEffect(() => {
-    const id = setInterval(() => setFrame(f => f + 1), 80)   // raw counter; mod where used
+    const id = setInterval(() => setFrame(f => f + 1), 80)
     return () => clearInterval(id)
   }, [])
 
-  // Longest visible name → column width for the name segment (clamped).
   const nameW = Math.min(13, groups.reduce((w, g) => Math.max(w, PROVIDERS[g.provider].name.length), 0))
 
   const readyCount = groups.filter(g =>
     g.accounts.every(a => accountReady(stats.get(a.id), g.provider))).length
 
-  // Clip the row list to the available height, mirroring TinyFallback's headroom
-  // (title + blank + heading + blank + footer ≈ 5 chrome rows).
   const maxRows = Math.max(1, rows - 7)
   const visible = groups.slice(0, maxRows)
   const hidden = groups.length - visible.length
@@ -96,7 +79,6 @@ export function LoadingView({ groups, stats, cols, rows }: {
           const name = truncateName(meta.name, nameW)
           const namePad = ' '.repeat(Math.max(0, nameW - name.length))
 
-          // Until staggered-in, hold a dim placeholder so the layout doesn't jump.
           if (!revealed) {
             return (
               <Box key={g.provider}>

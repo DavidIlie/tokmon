@@ -2,12 +2,6 @@ import { type Config, expandHome } from './config'
 import { PROVIDER_ORDER, PROVIDERS } from './providers'
 import type { Account, ProviderId } from './providers/types'
 
-/**
- * Resolve the persisted config + detected providers into the runtime account
- * list, grouped by provider order. A provider with configured accounts uses
- * those; otherwise, if its data is detected on the system, it gets one implicit
- * default account. Disabled providers are skipped.
- */
 export function buildAccounts(config: Config, detected: ProviderId[]): Account[] {
   const out: Account[] = []
   for (const pid of PROVIDER_ORDER) {

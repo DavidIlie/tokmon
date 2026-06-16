@@ -1,13 +1,6 @@
 import { cursorStateDb } from './billing'
 import { runSqlite } from './sqlite'
 
-/**
- * Cursor records per-conversation spend in `cursorDiskKV` under composerData:*
- * as `usageData = { "<model>": { costInCents, amount } }`. Aggregating it
- * server-side (json_each, no blob materialization → ~0.3s, ~12MB RSS) gives a
- * live per-model cost breakdown the billing API doesn't expose. Bubble-level
- * tokenCount is deliberately ignored — Cursor stopped writing it in Jan 2026.
- */
 export interface CursorModelSpend {
   name: string
   usd: number
@@ -15,13 +8,11 @@ export interface CursorModelSpend {
 }
 export interface CursorSpend {
   total: number
-  models: CursorModelSpend[]  // sorted desc by spend
+  models: CursorModelSpend[]
 }
 
 export async function cursorModelSpend(homeDir?: string): Promise<CursorSpend | null> {
   const db = cursorStateDb(homeDir)
-  // Columns are aliased because node:sqlite keys rows by the literal expression
-  // text for unaliased aggregates (e.g. "sum(json_extract(...))").
   const sql =
     "SELECT mk.key AS name, sum(json_extract(mk.value,'$.costInCents')) AS cents, " +
     "sum(json_extract(mk.value,'$.amount')) AS amt " +

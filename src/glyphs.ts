@@ -1,13 +1,5 @@
-/**
- * Every non-ASCII glyph tokmon prints, in two interchangeable sets. Legacy
- * terminals (Windows conhost, raster fonts, non-UTF-8 locales) render Unicode
- * block/box/braille/geometric glyphs as tofu, so the ASCII set is a safe
- * fallback. ASCII variants are deliberately width-1 wherever the glyph sits in
- * a width-constrained layout (dots, carets, arrows, bars, tree connectors) so
- * columns never drift; only `ellipsis` widens (handled at its call site).
- */
 export interface GlyphSet {
-  spark: string[]      // 8 sparkline rungs, low → high
+  spark: string[]
   barFull: string
   barEmpty: string
   rule: string
@@ -35,7 +27,7 @@ export interface GlyphSet {
   emDash: string
   eur: string
   gbp: string
-  border: 'round' | 'classic'  // Ink borderStyle
+  border: 'round' | 'classic'
 }
 
 export const GLYPHS_UNICODE: GlyphSet = {
@@ -62,23 +54,18 @@ export const GLYPHS_ASCII: GlyphSet = {
   eur: 'EUR', gbp: 'GBP', border: 'classic',
 }
 
-/** True when the terminal can be trusted to render Unicode glyphs. Pure (env injected) for testability. */
 export function detectUnicode(env: NodeJS.ProcessEnv, isTTY: boolean, platform: NodeJS.Platform): boolean {
-  if (!isTTY) return false                 // piped/redirected → plain ASCII
+  if (!isTTY) return false
   if (env.TERM === 'dumb') return false
   if (platform === 'win32') {
-    // Legacy conhost has no reliable signal; only trust modern hosts.
     return Boolean(env.WT_SESSION || env.ConEmuANSI === 'ON' || env.TERM_PROGRAM === 'vscode' || /xterm/i.test(env.TERM ?? ''))
   }
-  // mac/Linux: capable unless the locale is EXPLICITLY a non-UTF-8 charset
-  // (leave unset / *.UTF-8 as capable to avoid Docker/CI false negatives).
   const loc = env.LC_ALL || env.LC_CTYPE || env.LANG || ''
   if (loc && /\.(iso|latin|ascii|cp\d|koi|gbk|big5)/i.test(loc)) return false
   if (/^(C|POSIX)$/i.test(loc)) return false
   return true
 }
 
-/** Precedence: CLI flag > TOKMON_ASCII env > config > auto-detect. */
 export function resolveGlyphs(opts: {
   flag?: 'on' | 'off' | null
   env: NodeJS.ProcessEnv
@@ -100,8 +87,6 @@ export function resolveGlyphs(opts: {
   return ascii ? GLYPHS_ASCII : GLYPHS_UNICODE
 }
 
-// Resolved once at startup (cli.tsx) and read everywhere — including plain
-// helper functions that can't use a React hook. The mode never changes mid-run.
 let active: GlyphSet = GLYPHS_UNICODE
 export function setGlyphs(set: GlyphSet): void { active = set }
 export function glyphs(): GlyphSet { return active }

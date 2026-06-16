@@ -1,7 +1,7 @@
 export interface UsageSummary {
   cost: number
   tokens: number
-  /** Cache-read tokens included in `tokens` (Codex re-reads dominate this). */
+  /** Cache-read tokens included in `tokens`. */
   cacheRead: number
   /** USD the cache saved vs paying full input rate for those reads. */
   cacheSavings: number

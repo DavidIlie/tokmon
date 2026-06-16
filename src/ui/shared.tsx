@@ -19,20 +19,6 @@ export function ClickableBox(
   return <Box ref={ref} {...props}>{children}</Box>
 }
 
-// --- LinkBox click routing ---------------------------------------------------
-// LinkBox does NOT use ink-mouse's click event for two reasons we verified:
-//   1. ink-mouse's parser only recognizes button code 0 (plain left). macOS
-//      Terminal.app forwards a click only while ⌥ Option is held, which arrives
-//      with the meta modifier bit set (button 8) and never matches — so the
-//      'click' event never fires there at all.
-//   2. ink-mouse re-subscribes its click listener on every render, so a click
-//      that lands mid-render can find no listener attached.
-// Instead, App taps stdin ONCE (right where it enables mouse reporting, the only
-// place a process.stdin 'data' listener reliably receives bytes — Ink v5 drains
-// stdin via 'readable'+read(), so a listener added later sees nothing) and feeds
-// each raw chunk to `dispatchLinkClicks` below, which hit-tests every mounted
-// LinkBox. The keyboard shortcut (O) stays the universal fallback for terminals
-// that forward no clicks at all.
 
 // Match an SGR mouse report ending in `M` (press): ESC [ < <btn> ; <col> ; <row> M.
 const SGR_PRESS = /\x1b\[<(\d+);(\d+);(\d+)M/g
@@ -40,32 +26,23 @@ const SGR_PRESS = /\x1b\[<(\d+);(\d+);(\d+)M/g
 type LinkHit = (mx: number, my: number) => boolean
 const linkHits = new Set<LinkHit>()
 
-/** Feed a raw stdin chunk; fire the onClick of every LinkBox whose glyphs the
- *  press lands on. Called once per chunk by App's stdin tap. */
 export function dispatchLinkClicks(chunk: Buffer | string): void {
   if (linkHits.size === 0) return
   const s = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
   SGR_PRESS.lastIndex = 0
   let m: RegExpExecArray | null
   while ((m = SGR_PRESS.exec(s)) !== null) {
-    // Wheel reports carry bit 64, motion/drag bit 32 — neither is a click on a
-    // link. Lower bits select the button; modifiers (4=shift, 8=meta/⌥, 16=ctrl)
-    // are deliberately ignored so ⌥-click (the only click Terminal.app forwards)
-    // still registers.
     const code = Number(m[1])
     if (code & 0x40 || code & 0x20) continue
-    const mx = Number(m[2]) - 1   // SGR coords are 1-based; yoga is 0-based
+    const mx = Number(m[2]) - 1
     const my = Number(m[3]) - 1
     if (process.env.TOKMON_LINKDEBUG) { try { appendFileSync(process.env.TOKMON_LINKDEBUG, `DISPATCH code=${code} mx=${mx} my=${my} hits=${linkHits.size}\n`) } catch {} }
     for (const hit of [...linkHits]) {
-      if (hit(mx, my)) break   // topmost match wins; don't double-fire siblings
+      if (hit(mx, my)) break
     }
   }
 }
 
-/** Absolute (screen-space) box of a laid-out Ink node, or null if not yet laid
- *  out. Reads the live yoga layout on each call (walking parents to an absolute
- *  origin) so the hit zone is never a value cached stale at mount. */
 function nodeBox(node: DOMElement | null): { left: number; top: number; width: number; height: number } | null {
   const yn = (node as { yogaNode?: { getComputedLayout(): { left: number; top: number; width: number; height: number } } } | null)?.yogaNode
   if (!yn) return null
@@ -90,7 +67,7 @@ export function LinkBox(
 
   useEffect(() => {
     const hit: LinkHit = (mx, my) => {
-      const box = nodeBox(ref.current)   // live geometry — never stale
+      const box = nodeBox(ref.current)
       if (process.env.TOKMON_LINKDEBUG) { try { appendFileSync(process.env.TOKMON_LINKDEBUG, `HIT? mx=${mx} my=${my} box=${box ? `${box.left},${box.top} ${box.width}x${box.height}` : 'null'}\n`) } catch {} }
       if (!box || box.width <= 0 || box.height <= 0) return false
       if (mx >= box.left && mx < box.left + box.width && my >= box.top && my < box.top + box.height) {
@@ -159,7 +136,6 @@ function currencySymbol(cur?: string): string {
   return cur === 'EUR' ? glyphs().eur : cur === 'GBP' ? glyphs().gbp : '$'
 }
 
-/** Render values as a unicode sparkline; zero days keep a flat baseline. */
 export function sparkline(values: number[]): string {
   if (values.length === 0) return ''
   const spark = glyphs().spark
@@ -172,7 +148,6 @@ export function sparkline(values: number[]): string {
   }).join('')
 }
 
-/** Bar for a percentage value, color-graded by utilization. */
 export function Bar({ pct, color, width = 24 }: { pct: number; color: string; width?: number }) {
   const filled = Math.max(0, Math.min(width, Math.round((pct / 100) * width)))
   return (
@@ -183,7 +158,6 @@ export function Bar({ pct, color, width = 24 }: { pct: number; color: string; wi
   )
 }
 
-/** Non-percent metric value as a string (dollars / counts). */
 export function metricValueText(m: Metric): string {
   if (m.format.kind === 'dollars') {
     const sym = currencySymbol(m.format.currency)

@@ -5,12 +5,6 @@ import type { DashboardData } from './types'
 import type { BillingResult } from './providers/types'
 import type { AccountStats } from './stats'
 
-/**
- * Last-rendered dashboard/billing values, persisted per account so a relaunch
- * paints real numbers instantly (then the live poll refreshes them) instead of
- * showing "Fetching…" while slow network/cold-parse providers load — the same
- * idea as incremental rendering: show what we have, fill the rest in.
- */
 type Snapshot = Record<string, { dashboard: DashboardData | null; billing: BillingResult | null }>
 
 function snapshotFile(): string {
@@ -28,7 +22,6 @@ export async function loadSnapshot(): Promise<Snapshot> {
 
 let saveQueue: Promise<void> = Promise.resolve()
 
-/** Serialize the current per-account display values (atomic, queued, best-effort). */
 export function saveSnapshot(stats: Map<string, AccountStats>): void {
   const obj: Snapshot = {}
   for (const [id, s] of stats) {
@@ -41,6 +34,6 @@ export function saveSnapshot(stats: Map<string, AccountStats>): void {
       const tmp = join(dir, `dashboard-snapshot.json.${process.pid}.tmp`)
       await writeFile(tmp, JSON.stringify(obj))
       await rename(tmp, snapshotFile())
-    } catch { /* best-effort — the snapshot is only a startup optimization */ }
+    } catch {}
   })
 }

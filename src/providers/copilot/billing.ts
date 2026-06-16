@@ -42,8 +42,7 @@ interface CopilotUsage {
   }
 }
 
-/** The GitHub CLI config dir — honoring GH_CONFIG_DIR, the Windows %AppData%\GitHub CLI
- *  location, and XDG_CONFIG_HOME, the way gh itself resolves it. */
+/** Resolve GH_CONFIG_DIR, honoring platform defaults and env vars. */
 function ghConfigDir(homeDir?: string): string {
   if (!homeDir) {
     const explicit = process.env.GH_CONFIG_DIR
@@ -208,10 +207,7 @@ function resetDate(value: unknown): string | null {
 
 function percentMetric(label: string, snapshot: QuotaSnapshot | undefined, reset: string | null, primary?: boolean): Metric | null {
   if (!snapshot || typeof snapshot.percent_remaining !== 'number') return null
-  // A bucket with zero entitlement (the plan has no quota of this kind) or an
-  // unlimited bucket has no meaningful "used" fraction — GitHub reports
-  // percent_remaining:0 for it, which would otherwise render as a misleading
-  // maxed-out (red 100%) bar. Drop it rather than imply it's exhausted.
+  // Skip unlimited/zero-entitlement buckets (percent_remaining:0 is misleading).
   if (snapshot.unlimited === true || snapshot.entitlement === 0) return null
   const used = Math.min(100, Math.max(0, 100 - snapshot.percent_remaining))
   return { label, used, limit: 100, format: { kind: 'percent' }, resetsAt: reset, primary }

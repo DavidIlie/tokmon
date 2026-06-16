@@ -8,16 +8,6 @@ import { cacheDir } from '../config'
 export const SPARK_DAYS = 14
 const DAY_MS = 86_400_000
 
-/**
- * One normalized usage record. Providers parse their own log formats into
- * Entry[]; everything downstream (summaries, tables, burn rate) is shared so
- * Claude and Codex render through the exact same pipeline.
- *
- * `model` is already the short display name. `id` is a stable dedup key when one
- * exists (Claude message id — Claude logs the same message's usage repeatedly);
- * omit it for records that are unique by value (Codex turns), which fall back to
- * a value-tuple dedup.
- */
 export interface Entry {
   ts: number
   id?: string
@@ -31,13 +21,6 @@ export interface Entry {
   cacheSavings: number
 }
 
-// ---- Persistent parse cache ------------------------------------------------
-// Parsing every Claude/Codex log on each launch is the dominant cost (Codex
-// cold ≈ 10s). We cache each file's fully-parsed Entry[] keyed by path+mtime to
-// disk, so a relaunch only re-parses files that actually changed. Only stable
-// (immutable) files are persisted — today's still-being-written files re-parse
-// cheaply and would otherwise churn the cache file every poll.
-
 const CACHE_VERSION = 4
 const STABLE_AGE_MS = 5 * 60_000
 const PRUNE_AGE_MS = 200 * DAY_MS   // drop files older than any view needs (table = 6mo)
@@ -46,7 +29,6 @@ let diskLoaded = false
 let dirty = false
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 
-/** Compact per-file shard: mtime + size (invalidation), model dictionary + rows. */
 type Shard = { m: number; s: number; mods: string[]; rows: (number | string)[][] }
 
 function cacheFile(): string {
@@ -59,7 +41,6 @@ function encode(mtimeMs: number, size: number, entries: Entry[]): Shard {
   const rows = entries.map(e => {
     let mi = idx.get(e.model)
     if (mi === undefined) { mi = mods.length; mods.push(e.model); idx.set(e.model, mi) }
-    // trailing slot is the dedup id (string) or 0 when value-tuple deduped (Codex)
     return [e.ts, mi, e.input, e.output, e.cacheCreate, e.cacheRead, e.cost, e.cacheSavings, e.id ?? 0]
   })
   return { m: mtimeMs, s: size, mods, rows }
@@ -69,7 +50,7 @@ function decode(s: Shard): Entry[] {
   const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : 0)
   const out: Entry[] = []
   for (const r of s.rows) {
-    if (!Array.isArray(r) || r.length < 8) continue           // skip malformed/old rows
+    if (!Array.isArray(r) || r.length < 8) continue
     const ts = r[0]
     if (typeof ts !== 'number' || !Number.isFinite(ts)) continue
     const mi = r[1]
@@ -109,10 +90,10 @@ export async function flushDisk(): Promise<void> {
   }
   try {
     await mkdir(cacheDir(), { recursive: true })
-    const tmp = `${cacheFile()}.${process.pid}.tmp`   // per-process temp avoids concurrent clobber
+    const tmp = `${cacheFile()}.${process.pid}.tmp`
     await writeFile(tmp, JSON.stringify(obj))
-    await rename(tmp, cacheFile())                     // atomic publish
-    dirty = false                                      // clear only after a successful write (retry on failure)
+    await rename(tmp, cacheFile())
+    dirty = false
   } catch { /* best-effort; cache is an optimization only */ }
 }
 
@@ -122,11 +103,6 @@ function scheduleFlush(): void {
   flushTimer.unref?.()
 }
 
-/**
- * Load entries from a set of files, using the persistent cache. `parse` must
- * return ALL entries in a file (no time filtering) so one cache entry serves
- * every window; results are filtered to `since` here and de-duplicated.
- */
 /** Run `fn` over items with at most `limit` in flight (bounds FDs/CPU on cold load). */
 async function mapLimit<T>(items: T[], limit: number, fn: (t: T) => Promise<void>): Promise<void> {
   let i = 0
@@ -144,8 +120,6 @@ export async function loadCachedEntries(
   await mapLimit(files, 8, async (f) => {
     try {
       let c = memCache.get(f.path)
-      // Re-parse when EITHER mtime or size changed (append-only logs move both;
-      // size also catches a rare same-mtime edit — far cheaper than hashing bytes).
       if (!c || c.mtimeMs !== f.mtimeMs || c.size !== f.size) {
         const entries = await parse(f.path)
         c = { mtimeMs: f.mtimeMs, size: f.size, entries }
@@ -159,13 +133,6 @@ export async function loadCachedEntries(
   return dedupe(chunks.flat().filter(e => e.ts >= since))
 }
 
-/**
- * Drop duplicates that arise when the same turn/message appears in multiple
- * files (Claude resumed sessions, Codex branched rollouts). Keyed on the full
- * value tuple — two identical events at the same millisecond are the same event.
- */
-/** Coerce an untrusted log field to a safe non-negative integer token count.
- * Requires an actual number — numeric strings like "1e6"/"0x10" are rejected. */
 export function safeNum(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0
 }
@@ -195,8 +162,6 @@ export function summarize(entries: Entry[], tz: string): DashboardData {
   let oldestToday = now
   let hadToday = false
 
-  // Single pass: accumulate the three windows, the daily series, and burn-rate
-  // inputs at once (one dayKey() per entry instead of three filters + two keys).
   const add = (s: UsageSummary, e: Entry) => {
     s.cost += e.cost
     s.tokens += e.input + e.output + e.cacheCreate + e.cacheRead
@@ -211,7 +176,6 @@ export function summarize(entries: Entry[], tz: string): DashboardData {
     byDay.set(dk, (byDay.get(dk) ?? 0) + e.cost)
   }
 
-  // Clamp the span to ≥1 min so a single recent event can't show a wild $/hr.
   const hrs = Math.max((now - oldestToday) / 3_600_000, 1 / 60)
   const burnRate = hadToday ? today.cost / hrs : 0
 
@@ -302,7 +266,6 @@ function mergeRows(groups: TableRow[][]): TableRow[] {
   return [...byLabel.values()].sort((a, b) => a.label.localeCompare(b.label))
 }
 
-/** Combine multiple accounts' tables into one (for the "All" scope). */
 export function mergeTables(list: TableData[]): TableData {
   return {
     daily: mergeRows(list.map(t => t.daily)),

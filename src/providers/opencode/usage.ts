@@ -6,12 +6,6 @@ import { startOfMonth, startOfWeek, monthsAgoStart } from '../../tz'
 import { type Entry, summarize, tabulate, SPARK_DAYS } from '../usage-core'
 import { runSqlite } from '../cursor/sqlite'
 
-// opencode (SST) stores every message in a single SQLite DB (`message` table:
-// `time_created` ms + a JSON `data` column). Assistant rows carry providerID /
-// modelID, the token breakdown, and opencode's own computed `cost`. opencode is
-// multi-provider and much of its usage is subscription-/free-tier (cost 0), so
-// we surface the stored cost as-is (actual marginal spend) plus token volumes —
-// the same way openusage reads it, rather than re-pricing every model.
 export function opencodeDbPaths(homeDir?: string): string[] {
   const base = homeDir ?? homedir()
   const paths: string[] = []
@@ -55,7 +49,7 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
     const ts = pos(row.ts)
     if (!ts) continue
     const input = pos(row.input)
-    const output = pos(row.output)  // opencode's output total already includes reasoning tokens
+    const output = pos(row.output)
     const cacheRead = pos(row.cacheRead)
     const cacheCreate = pos(row.cacheWrite)
     if (input + output + cacheRead + cacheCreate === 0) continue
@@ -67,7 +61,7 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
       output,
       cacheCreate,
       cacheRead,
-      cacheSavings: 0,  // opencode stores only a total cost, no per-component split to derive savings
+      cacheSavings: 0,
     })
   }
   return entries

@@ -8,11 +8,6 @@ import { startOfMonth, startOfWeek, monthsAgoStart } from '../../tz'
 import { envDir } from '../../config'
 import { type Entry, summarize, tabulate, SPARK_DAYS, loadCachedEntries, safeNum } from '../usage-core'
 
-// Per-token USD pricing keyed by model id. Matched by LONGEST prefix, so the
-// specific legacy entries win over the generic family bucket. Rates from
-// LiteLLM. Legacy Opus 4.0/4.1 and Claude-3 Opus are $15/$75 (3x the 4.5+
-// Opus rate); Fable 5 is $10/$50 — getting these via a coarse prefix would
-// mis-bill them, so they're explicit.
 const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> = {
   'claude-opus-4-1': { i: 15e-6, o: 75e-6, cc: 18.75e-6, cr: 1.5e-6 },
   'claude-opus-4-0': { i: 15e-6, o: 75e-6, cc: 18.75e-6, cr: 1.5e-6 },
@@ -26,7 +21,6 @@ const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> 
 const PRICE_KEYS = Object.keys(PRICING).sort((a, b) => b.length - a.length)
 const FALLBACK = PRICING['claude-opus-4']
 
-/** Base Claude config dirs (each may contain `projects/` and `.credentials.json`). */
 export function claudeConfigDirs(homeDir?: string): string[] {
   if (homeDir) {
     return [join(homeDir, '.claude'), join(homeDir, '.config', 'claude')]
@@ -42,8 +36,6 @@ export function claudeConfigDirs(homeDir?: string): string[] {
   const appData = envDir('APPDATA')
   if (appData) dirs.push(join(appData, 'claude'))
   if (process.env.CLAUDE_CONFIG_DIR) {
-    // A list of override dirs (Claude uses ',' everywhere, ';' on Windows).
-    // Only honor absolute entries — a relative one would resolve against cwd.
     for (const p of process.env.CLAUDE_CONFIG_DIR.split(process.platform === 'win32' ? ';' : ',')) {
       const t = p.trim()
       if (t && isAbsolute(t)) dirs.push(t)
@@ -66,10 +58,6 @@ export async function detectClaude(homeDir?: string): Promise<boolean> {
 function priceFor(model: string) {
   for (const key of PRICE_KEYS) {
     if (!model.startsWith(key)) continue
-    // Only accept a match that ends at a token boundary (end-of-id or '-'), so a
-    // versioned legacy key like 'claude-opus-4-1' ($15/$75) can't swallow a
-    // future 'claude-opus-4-10' — which must fall through to the current Opus
-    // family rate instead of being billed 3x.
     const rest = model.slice(key.length)
     if (rest === '' || rest[0] === '-') return PRICING[key]
   }
@@ -111,13 +99,10 @@ async function parseFile(path: string): Promise<Entry[]> {
       const output = safeNum(u.output_tokens)
       const cacheCreate = safeNum(u.cache_creation_input_tokens)
       const cacheRead = safeNum(u.cache_read_input_tokens)
-      // Skip empty/malformed rows so a zero copy can't dedup-suppress a real one.
       if (input + output + cacheCreate + cacheRead === 0) continue
       const p = priceFor(model)
       const msgId = obj.message?.id
       entries.push({
-        // Claude logs a message's usage repeatedly and copies it into resumed
-        // sessions — dedup by message id (+ requestId when present).
         id: msgId ? msgId + (obj.requestId ? ':' + obj.requestId : '') : undefined,
         ts,
         model: shortModel(model),
@@ -128,15 +113,15 @@ async function parseFile(path: string): Promise<Entry[]> {
         cacheRead,
         cacheSavings: cacheRead * (p.i - p.cr),
       })
-    } catch { /* skip malformed lines */ }
+    } catch {}
   }
   return entries
 }
 
 async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   const files: { path: string; mtimeMs: number; size: number }[] = []
-  const seen = new Set<string>()      // by path
-  const seenIno = new Set<string>()   // by inode — collapses symlink-loop duplicates
+  const seen = new Set<string>()
+  const seenIno = new Set<string>()
 
   for (const dir of getClaudeDirs(homeDir)) {
     let listing: string[]
@@ -152,7 +137,7 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
       seen.add(path)
       try {
         const s = await fsStat(path)
-        if (s.mtimeMs < since) continue  // file untouched in window — skip entirely
+        if (s.mtimeMs < since) continue
         if (s.ino && process.platform !== 'win32') {
           const idn = `${s.dev}:${s.ino}`
           if (seenIno.has(idn)) continue
@@ -168,8 +153,6 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
 
 export async function claudeDashboard(tz: string, homeDir?: string): Promise<DashboardData> {
   const now = Date.now()
-  // Reach back far enough for week start (can precede month start) and the
-  // SPARK_DAYS history window.
   const since = Math.min(startOfMonth(now, tz), startOfWeek(now, tz), now - SPARK_DAYS * 86_400_000)
   const entries = await loadEntries(since, homeDir)
   return summarize(entries, tz)

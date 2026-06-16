@@ -45,7 +45,6 @@ function parseAuth(raw: string): ClaudeAuth | null {
 }
 
 async function readCredentialsFile(homeDir?: string): Promise<ClaudeAuth | null> {
-  // Same dir resolution as the usage parser (honors CLAUDE_CONFIG_DIR lists).
   for (const dir of claudeConfigDirs(homeDir)) {
     try {
       const auth = parseAuth(await readFile(join(dir, '.credentials.json'), 'utf-8'))
@@ -75,11 +74,6 @@ async function getAuth(homeDir?: string): Promise<ClaudeAuth | null> {
   return readCredentialsFile(homeDir)
 }
 
-/**
- * Human plan label from local credentials — "Max 20x", "Max 5x", "Pro" — the
- * same way openusage derives it: capitalize subscriptionType, then append the
- * "Nx" rate-limit multiplier parsed out of rateLimitTier when present.
- */
 function planLabel(auth: ClaudeAuth): string | null {
   const sub = auth.subscriptionType
   if (!sub) return null

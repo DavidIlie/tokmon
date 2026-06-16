@@ -58,9 +58,6 @@ function planLabel(planType: unknown): string | null {
   return planType.charAt(0).toUpperCase() + planType.slice(1)
 }
 
-// Bounded ISO conversion: a corrupt/far-future epoch would make toISOString()
-// throw RangeError, which (in snapshotBilling) runs outside a try and would drop
-// the fallback. Reject anything outside the Date range (±8.64e15 ms).
 function isoOrNull(ms: number): string | null {
   return Number.isFinite(ms) && Math.abs(ms) <= 8.64e15 ? new Date(ms).toISOString() : null
 }
@@ -78,7 +75,6 @@ function percentMetric(label: string, used: number, resets: string | null, prima
   return { label, used, limit: 100, format: { kind: 'percent' }, resetsAt: resets, primary }
 }
 
-/** Live rate-limit % from the ChatGPT backend. Returns null on any failure. */
 async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {
   try {
     const headers: Record<string, string> = {
@@ -98,8 +94,6 @@ async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {
     const primary = rl?.primary_window ?? null
     const secondary = rl?.secondary_window ?? null
 
-    // A missing header is null → Number(null) is 0, which would falsely show 0%.
-    // Only use the header when it's actually present; otherwise fall back to body.
     const headerPct = (name: string): number | undefined => {
       const h = res.headers.get(name)
       if (h === null || h.trim() === '') return undefined
@@ -142,7 +136,6 @@ async function newestRolloutFile(homeDir?: string): Promise<string | null> {
   return best?.path ?? null
 }
 
-/** Fallback: the most recent rollout file embeds a live `rate_limits` snapshot. */
 async function snapshotBilling(homeDir?: string): Promise<BillingResult | null> {
   const path = await newestRolloutFile(homeDir)
   if (!path) return null
