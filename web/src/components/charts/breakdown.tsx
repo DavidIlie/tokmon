@@ -3,7 +3,7 @@ import { Bar, BarChart, Cell, LabelList, Pie, PieChart, ResponsiveContainer, Too
 import type { Derived } from '../../lib/derive'
 import { fmtCost, fmtCostAxis, fmtPct, fmtTokens } from '../../lib/format'
 import { shortModel, TOKEN_BUCKET } from '../../lib/colors'
-import { AXIS, ChartShell, GRID, makeTooltip, useEnterOnce } from '../chart'
+import { AXIS, ChartShell, GRID, makeTooltip, useEnterOnce, useMediaQuery } from '../chart'
 import { EmptyHint, Panel } from '../ui'
 
 const BAR_FILL = { fill: 'var(--color-bg-2)' }
@@ -30,6 +30,9 @@ export function CostByModel({ derived, height = 280, limit = 10, metric = 'cost'
   periodLabel?: string
 }) {
   const enter = useEnterOnce()
+  const wide = useMediaQuery('(min-width: 768px)')
+  const yw = wide ? 124 : 92
+  const rm = wide ? 60 : 44
   const isTokens = metric === 'tokens'
   const top = [...derived.byModel]
     .sort((a, b) => (isTokens ? b.tokens - a.tokens : b.cost - a.cost))
@@ -39,10 +42,10 @@ export function CostByModel({ derived, height = 280, limit = 10, metric = 'cost'
       {top.length === 0 ? <EmptyHint>no models in period</EmptyHint> : (
         <ChartShell height={height}>
           <ResponsiveContainer>
-            <BarChart data={top} layout="vertical" margin={{ top: 4, right: 60, left: 4, bottom: 0 }}>
+            <BarChart data={top} layout="vertical" margin={{ top: 4, right: rm, left: 4, bottom: 0 }}>
               <CartesianGrid {...GRID} horizontal={false} vertical />
               <XAxis type="number" {...AXIS} tickFormatter={isTokens ? fmtTokens : fmtCostAxis} />
-              <YAxis type="category" dataKey="model" {...AXIS} width={124} tickFormatter={shortModel} />
+              <YAxis type="category" dataKey="model" {...AXIS} width={yw} tickFormatter={shortModel} />
               <Tooltip content={isTokens ? tokensTip : modelTip} cursor={BAR_FILL} />
               <Bar dataKey={isTokens ? 'tokens' : 'cost'} radius={[0, 3, 3, 0]} isAnimationActive={enter} animationDuration={350}>
                 {top.map(m => <Cell key={m.model} fill={m.color} />)}
@@ -64,6 +67,9 @@ export function CacheByModel({ derived, height = 240, limit = 12, periodLabel }:
   periodLabel?: string
 }) {
   const enter = useEnterOnce()
+  const wide = useMediaQuery('(min-width: 768px)')
+  const yw = wide ? 124 : 92
+  const rm = wide ? 60 : 44
   const top = [...derived.byModel]
     .filter(m => m.cacheSavings > 0)
     .sort((a, b) => b.cacheSavings - a.cacheSavings)
@@ -73,10 +79,10 @@ export function CacheByModel({ derived, height = 240, limit = 12, periodLabel }:
       {top.length === 0 ? <EmptyHint>no cache savings in period</EmptyHint> : (
         <ChartShell height={height}>
           <ResponsiveContainer>
-            <BarChart data={top} layout="vertical" margin={{ top: 4, right: 60, left: 4, bottom: 0 }}>
+            <BarChart data={top} layout="vertical" margin={{ top: 4, right: rm, left: 4, bottom: 0 }}>
               <CartesianGrid {...GRID} horizontal={false} vertical />
               <XAxis type="number" {...AXIS} tickFormatter={fmtCostAxis} />
-              <YAxis type="category" dataKey="model" {...AXIS} width={124} tickFormatter={shortModel} />
+              <YAxis type="category" dataKey="model" {...AXIS} width={yw} tickFormatter={shortModel} />
               <Tooltip content={cacheTip} cursor={BAR_FILL} />
               <Bar dataKey="cacheSavings" radius={[0, 3, 3, 0]} fill="var(--color-positive)" isAnimationActive={enter} animationDuration={350}>
                 <LabelList dataKey="cacheSavings" position="right" offset={6} {...BAR_LABEL} formatter={(v: number) => fmtCost(v)} />

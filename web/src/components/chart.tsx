@@ -12,6 +12,20 @@ export function useEnterOnce(): boolean {
   return enter
 }
 
+// Reactive media-query match — for the few places (Recharts numeric props) that
+// can't be driven by CSS breakpoints.
+export function useMediaQuery(query: string): boolean {
+  const [m, setM] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(query)
+    const on = () => setM(mq.matches)
+    mq.addEventListener('change', on)
+    on()
+    return () => mq.removeEventListener('change', on)
+  }, [query])
+  return m
+}
+
 export const AXIS = {
   tick: { fill: 'var(--color-fg-dim)', fontSize: 10, fontFamily: 'var(--font-mono)' },
   tickLine: false,

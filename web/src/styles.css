@@ -85,6 +85,7 @@ html.light {
 
   body {
     margin: 0;
+    overflow-x: hidden;
     background-color: var(--color-bg-0);
     background-image: radial-gradient(var(--color-line-faint) 0.5px, transparent 0.5px);
     background-size: 24px 24px;

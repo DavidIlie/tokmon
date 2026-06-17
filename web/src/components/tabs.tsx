@@ -43,13 +43,13 @@ export function OverviewTab({ derived, periodLabel, scopeLabel, providers }: {
 export function AnalyticsTab({ derived, scopeLabel }: { derived: Derived; scopeLabel?: string }) {
   const multiProvider = derived.byProvider.length > 1
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <div className="lg:col-span-2"><CalendarHeatmap derived={derived} /></div>
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div className="md:col-span-2"><CalendarHeatmap derived={derived} /></div>
       <CostByModel derived={derived} periodLabel={scopeLabel} />
       {multiProvider ? <ProviderDonut derived={derived} periodLabel={scopeLabel} /> : <TokenComposition derived={derived} periodLabel={scopeLabel} />}
       {multiProvider && <TokenComposition derived={derived} periodLabel={scopeLabel} />}
-      <CacheSavings derived={derived} periodLabel={scopeLabel} />
-      <div className="lg:col-span-2"><CumulativeSpend derived={derived} height={300} periodLabel={scopeLabel} /></div>
+      <div className={multiProvider ? undefined : 'md:col-span-2'}><CacheSavings derived={derived} periodLabel={scopeLabel} /></div>
+      <div className="md:col-span-2"><CumulativeSpend derived={derived} height={300} periodLabel={scopeLabel} /></div>
     </div>
   )
 }

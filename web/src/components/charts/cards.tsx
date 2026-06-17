@@ -11,7 +11,7 @@ export function KpiStrip({ derived, periodLabel }: { derived: Derived; periodLab
   const tokens = derived.timeline.map(p => p.tokens).slice(-30)
   const saved = derived.cacheSavingsSeries.map(p => p.value).slice(-30)
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
       <Kpi label={`spend · ${periodLabel}`} value={fmtCost(t.cost)} accent="text-cost" spark={spend} sparkColor="var(--color-cost)" />
       <Kpi label="tokens" value={fmtTokens(t.tokens)} spark={tokens} sparkColor="var(--color-fg-dim)" />
       <Kpi label="cache saved" value={fmtCost(t.cacheSavings)} accent="text-positive" spark={saved} sparkColor="var(--color-positive)" />
@@ -29,9 +29,9 @@ function Kpi({ label, value, accent = 'text-fg-bright', spark, sparkColor }: {
   sparkColor?: string
 }) {
   return (
-    <div className="rise flex flex-col rounded-md border border-line bg-bg-1/80 p-3.5 transition-colors hover:border-line-2">
+    <div className="rise flex min-w-0 flex-col rounded-md border border-line bg-bg-1/80 p-3.5 transition-colors hover:border-line-2">
       <div className="font-display text-[10px] uppercase tracking-wide text-fg-faint">{label}</div>
-      <div className={`tnum mt-1.5 text-2xl ${accent}`}>{value}</div>
+      <div className={`tnum mt-1.5 text-xl sm:text-2xl ${accent}`}>{value}</div>
       {spark && spark.length > 1 && (
         <div className="mt-auto overflow-hidden pt-2 text-right">
           <Sparkline data={spark} color={sparkColor ?? 'currentColor'} className="text-sm opacity-70" />
@@ -50,7 +50,7 @@ export function ProviderCards({ accounts, nameOf }: { accounts: WebAccount[]; na
     )
   }
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fit,minmax(340px,1fr))]">
+    <div className="grid grid-cols-1 justify-center gap-4 sm:grid-cols-[repeat(auto-fit,minmax(340px,460px))]">
       {accounts.map((a, i) => <ProviderCard key={a.id} account={a} index={i} providerName={nameOf(a.providerId)} />)}
     </div>
   )

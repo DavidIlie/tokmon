@@ -55,7 +55,7 @@ function ThemeToggle({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: (
       onClick={onToggle}
       title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
       aria-label="Toggle theme"
-      className="rounded border border-line bg-bg-1 p-1.5 text-fg-dim transition hover:border-line-2 hover:text-fg"
+      className="rounded border border-line bg-bg-1 p-1.5 text-fg-dim transition hover:border-line-2 hover:text-fg max-sm:p-2.5"
     >
       {theme === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
     </button>
@@ -75,7 +75,7 @@ function ConnDot({ conn, freshAt, now }: { conn: ConnState; freshAt: number | nu
         {conn === 'live' && <span className="absolute inline-flex size-full animate-ping rounded-full opacity-60" style={{ background: color }} />}
         <span className="relative inline-flex size-2 rounded-full" style={{ background: color }} />
       </span>
-      <span className="text-fg-dim" aria-hidden>{label}</span>
+      <span className="inline-block truncate text-fg-dim max-sm:max-w-[7rem]" aria-hidden>{label}</span>
     </span>
   )
 }
@@ -130,7 +130,7 @@ export function App() {
   return (
     <div className="min-h-screen">
       <header className="relative z-30 border-b border-line bg-bg-0/80 backdrop-blur">
-        <div className="mx-auto max-w-[1600px] px-5">
+        <div className="mx-auto max-w-[1600px] px-5 2xl:max-w-[1920px]">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3.5">
             <span className="font-display text-2xl text-fg-bright">TOKMON</span>
             <span className="hidden text-sm text-fg-faint sm:inline">
@@ -138,19 +138,19 @@ export function App() {
               <span className="text-fg-dim">{tab}</span>
               <span className="cursor-blink text-accent">▋</span>
             </span>
-            <div className="ml-auto flex items-center gap-3">
+            <div className="ml-auto flex min-w-0 items-center gap-3">
               <ConnDot conn={conn} freshAt={snapshot?.generatedAt ?? null} now={now} />
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
               <ShareControl derived={derived} periodLabel={periodLabel} tz={snapshot?.tz ?? ''} version={snapshot?.version ?? ''} />
             </div>
           </div>
 
-          <nav className="flex items-center gap-1 -mb-px">
+          <nav className="-mb-px flex items-center gap-1 overflow-x-auto">
             {TABS.map(t => (
               <button
                 key={t.key}
                 onClick={() => setTab(t.key)}
-                className={`relative border-b-2 px-3 py-2 font-display text-xs uppercase tracking-wider transition ${
+                className={`relative shrink-0 border-b-2 px-3 py-2 font-display text-xs uppercase tracking-wider transition ${
                   tab === t.key ? 'border-accent text-fg-bright' : 'border-transparent text-fg-faint hover:text-fg-dim'
                 }`}
               >
@@ -162,7 +162,7 @@ export function App() {
         <FilterBar snapshot={snapshot} derived={derived} filters={filters} setFilters={setFilters} />
       </header>
 
-      <main className="mx-auto max-w-[1600px] px-5 py-5">
+      <main className="mx-auto max-w-[1600px] px-5 2xl:max-w-[1920px] py-5">
         {!snapshot ? (
           <Connecting label={conn === 'error' ? 'connection lost — retrying…' : 'reading usage…'} />
         ) : !hasUsage && !hasBilling ? (
@@ -181,7 +181,7 @@ export function App() {
         )}
       </main>
 
-      <footer className="mx-auto max-w-[1600px] px-5 py-6 text-center text-[11px] text-fg-faint">
+      <footer className="mx-auto max-w-[1600px] px-5 2xl:max-w-[1920px] py-6 text-center text-[11px] text-fg-faint">
         tokmon{snapshot?.version ? ` v${snapshot.version}` : ''} · by David Ilie · live LLM usage dashboard
       </footer>
     </div>

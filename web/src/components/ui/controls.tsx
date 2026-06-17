@@ -15,7 +15,7 @@ export function Segmented<T extends string>({
   ariaLabel?: string
 }) {
   const defaultContainer = 'flex items-center overflow-hidden rounded border border-line'
-  const defaultBtn = size === 'xs' ? 'px-1.5 py-0.5 text-[10px] transition' : 'px-2 py-1 text-xs transition'
+  const defaultBtn = size === 'xs' ? 'px-1.5 py-0.5 text-[10px] transition max-sm:py-1.5' : 'px-2 py-1 text-xs transition max-sm:py-2'
   const activeClass = size === 'xs' ? 'bg-bg-3 text-accent' : 'bg-bg-2 text-accent'
   const inactiveClass = size === 'xs' ? 'text-fg-faint hover:text-fg' : 'text-fg-dim hover:text-fg'
   return (
@@ -57,14 +57,14 @@ export function Dropdown({ label, value, children }: {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen(o => !o)}
-        className={`flex items-center gap-1.5 rounded border border-line bg-bg-1 px-2 py-1 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg ${FOCUS}`}
+        className={`flex items-center gap-1.5 rounded border border-line bg-bg-1 px-2 py-1 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg max-sm:py-2 ${FOCUS}`}
       >
         <span className="text-fg-faint">{label}:</span>
         <span className="text-fg">{value}</span>
         <ChevronDown className={`size-3 transition ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 z-50 mt-1 min-w-44 rounded-md border border-line-2 bg-bg-2 p-1 shadow-xl">
+        <div role="menu" className="absolute right-0 z-50 mt-1 min-w-44 max-w-[calc(100vw-2.5rem)] rounded-md border border-line-2 bg-bg-2 p-1 shadow-xl">
           {children(() => setOpen(false))}
         </div>
       )}
@@ -86,7 +86,7 @@ export function MenuItem({ active, onClick, children }: {
       type="button"
       role="menuitem"
       onClick={onClick}
-      className={`flex items-center gap-2 rounded px-2 py-1 text-left text-xs transition ${FOCUS} ${
+      className={`flex min-w-0 items-center gap-2 rounded px-2 py-1 text-left text-xs transition ${FOCUS} ${
         active ? 'bg-bg-3 text-fg-bright' : 'text-fg-dim hover:bg-bg-3 hover:text-fg'
       }`}
     >

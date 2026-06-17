@@ -35,8 +35,8 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
 
   return (
     <div className="border-t border-line bg-bg-0/70">
-      <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-x-4 gap-y-2 px-5 py-2.5">
-        <span className="text-xs text-fg-faint">filter:</span>
+      <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-x-4 gap-y-2 px-5 py-2.5 2xl:max-w-[1920px]">
+        <span className="hidden text-xs text-fg-faint sm:inline">filter:</span>
 
         <div className="flex flex-wrap items-center gap-1.5">
           {chipProviders.map(p => {
@@ -48,7 +48,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
                 type="button"
                 aria-pressed={on}
                 onClick={() => handleToggleProvider(p.id)}
-                className="flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                className="flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent max-sm:py-1.5"
                 style={{
                   borderColor: on ? p.color : 'var(--color-line)',
                   color: dim ? 'var(--color-fg-faint)' : on ? p.color : 'var(--color-fg-dim)',
@@ -74,7 +74,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
           ))}
         </div>
 
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 md:ml-auto md:w-auto">
           {usageAccounts.length > 1 ? (
             <Dropdown label="account" value={filters.account === 'all' ? 'all' : (selectedAccount ? acctLabel(selectedAccount) : 'all')}>
               {close => (
@@ -86,7 +86,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
                   <div className="max-h-64 overflow-y-auto">
                     {usageAccounts.map(a => (
                       <MenuItem key={a.id} active={filters.account === a.id} onClick={() => { setFilters(f => ({ ...f, account: a.id })); close() }}>
-                        <span style={{ color: a.color }} aria-hidden>●</span> {acctLabel(a)}
+                        <span style={{ color: a.color }} aria-hidden>●</span> <span className="truncate">{acctLabel(a)}</span>
                       </MenuItem>
                     ))}
                   </div>
@@ -128,7 +128,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
             )}
           </Dropdown>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
             <span className="text-xs text-fg-faint">range:</span>
             <Segmented
               options={PERIODS.map(p => ({ value: p.key, label: p.key === 'mtd' ? 'MTD' : p.key === 'all' ? 'ALL' : p.key }))}

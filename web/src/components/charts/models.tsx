@@ -13,7 +13,10 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 ]
 
 // One template drives both the header and the rows so they can never drift.
-const COLS = '1.75rem minmax(6rem,12rem) minmax(3.5rem,1fr) 3rem 5.5rem 5rem 5rem 5rem 4rem'
+// Model name flexes (1fr) and the share bar is capped (16rem) so it doesn't balloon
+// on ultrawide; the trailing optional columns are `auto` so they collapse to 0 width
+// when hidden at a breakpoint instead of reserving dead space (which caused h-scroll).
+const COLS = '1.75rem minmax(6rem,12rem) minmax(3.5rem,1fr) 3rem 5.5rem 5rem auto auto auto'
 
 export function ModelLeaderboard({ derived, limit, periodLabel }: { derived: Derived; limit?: number; periodLabel?: string }) {
   const [sort, setSort] = useState<SortKey>('cost')
@@ -41,7 +44,7 @@ export function ModelLeaderboard({ derived, limit, periodLabel }: { derived: Der
       }
     >
       {rows.length === 0 ? <EmptyHint>no models in period</EmptyHint> : (
-        <div className="mt-6 flex flex-col">
+        <div className="mt-6 flex flex-col overflow-x-auto">
           <div
             className="grid items-center gap-x-3 border-b border-line px-2 pb-1.5 font-display text-[10px] uppercase tracking-wide text-fg-faint"
             style={{ gridTemplateColumns: COLS }}

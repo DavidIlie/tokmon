@@ -81,7 +81,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; 
     <>
     <Panel title="daily spend" titleTag="all-time" captureName="calendar">
       {!grid || !stats ? <div className="py-6 text-center text-xs text-fg-faint">no spend yet</div> : (
-        <div className="grid gap-x-8 gap-y-5 pt-1 lg:grid-cols-[minmax(0,1fr)_210px] lg:items-center">
+        <div className="grid gap-x-8 gap-y-5 pt-1 md:grid-cols-[minmax(0,1fr)_210px] md:items-center">
           {/* Heatmap stretches to fill the row — no more dead space on the right. */}
           <div className="flex min-w-0 flex-col gap-1.5">
             <div className="pl-6">
@@ -127,7 +127,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; 
           </div>
 
           {/* Derived spend stats fill the right side. */}
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4 border-line-faint lg:grid-cols-1 lg:border-l lg:pl-6">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-4 border-line-faint md:grid-cols-1 md:border-l md:pl-6">
             <StatBlock label="busiest day" value={fmtCost(stats.top.cost)} sub={fmtDayLabel(stats.top.date)} valueClass="text-cost" />
             <StatBlock label="daily average" value={fmtCost(stats.avg)} sub={`across ${stats.active} active days`} />
             <StatBlock label="top weekday" value={WEEKDAYS[stats.busiest]} valueClass="text-fg-bright" />
@@ -141,9 +141,9 @@ export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; 
       const above = hover.top > 260
       return (
         <div
-          className="pointer-events-none fixed z-50 w-56 rounded-md border border-line-2 bg-bg-2/95 px-3 py-2.5 font-mono text-[11px] shadow-xl backdrop-blur"
+          className="pointer-events-none fixed z-50 w-[min(14rem,calc(100vw-16px))] rounded-md border border-line-2 bg-bg-2/95 px-3 py-2.5 font-mono text-[11px] shadow-xl backdrop-blur"
           style={{
-            left: hover.x,
+            left: Math.min(Math.max(hover.x, 116), window.innerWidth - 116),
             top: above ? hover.top : hover.bottom,
             transform: above ? 'translate(-50%, calc(-100% - 10px))' : 'translate(-50%, 10px)',
           }}

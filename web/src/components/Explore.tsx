@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { TableRow } from '@shared'
-import { fmtCost, fmtDayLabel, fmtNum, fmtTokens } from '../lib/format'
+import { fmtCost, fmtCount, fmtDayLabel, fmtNum, fmtTokens } from '../lib/format'
 import { modelColor, shortModel } from '../lib/colors'
 import { Panel } from './ui'
 
@@ -68,7 +68,7 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
   return (
     <Panel title={`explore · ${granLabel}`} captureName="explore" className="flex flex-1 flex-col" bodyClassName="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-full border-collapse text-xs">
+        <table className="mx-auto w-full max-w-[1100px] border-collapse text-xs">
           <colgroup>
             <col />
             <col style={{ width: '34%' }} />
@@ -86,10 +86,10 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
               <th className="py-2 pr-3 font-normal">
                 <SortHeader sortKey="total" label="tokens" sort={sort} dir={dir} onSort={handleSort} />
               </th>
-              <th className="py-2 pr-3 font-normal">
+              <th className="hidden py-2 pr-3 font-normal sm:table-cell">
                 <SortHeader sortKey="cacheSavings" label="saved" sort={sort} dir={dir} onSort={handleSort} />
               </th>
-              <th className="py-2 pr-3 font-normal">
+              <th className="hidden py-2 pr-3 font-normal sm:table-cell">
                 <SortHeader sortKey="count" label="calls" sort={sort} dir={dir} onSort={handleSort} />
               </th>
               <th className="py-2 font-normal">
@@ -110,8 +110,8 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
               <tr className="sticky bottom-0 z-10 bg-bg-1 text-fg shadow-[inset_0_1px_0_var(--color-line)]">
                 <td className="py-2 pr-3 font-display text-[11px] uppercase text-fg-dim" colSpan={2}>total · {filtered.length}</td>
                 <td className="tnum py-2 pr-3 text-right">{fmtTokens(totals.total)}</td>
-                <td className="tnum py-2 pr-3 text-right text-positive">{fmtCost(totals.cacheSavings)}</td>
-                <td className="tnum py-2 pr-3 text-right">{fmtNum(totals.count)}</td>
+                <td className="tnum hidden py-2 pr-3 text-right text-positive sm:table-cell">{fmtCost(totals.cacheSavings)}</td>
+                <td className="tnum hidden py-2 pr-3 text-right sm:table-cell">{fmtCount(totals.count)}</td>
                 <td className="tnum py-2 text-right text-cost">{fmtCost(totals.cost)}</td>
               </tr>
             </tfoot>
@@ -144,8 +144,8 @@ function FragmentRow({ row, isOpen, onToggle }: { row: TableRow; isOpen: boolean
           <span className="line-clamp-1">{row.models.map(shortModel).join(', ')}</span>
         </td>
         <td className="tnum py-2 pr-3 text-right text-fg">{fmtTokens(row.total)}</td>
-        <td className="tnum py-2 pr-3 text-right text-positive">{fmtCost(row.cacheSavings)}</td>
-        <td className="tnum py-2 pr-3 text-right text-fg-dim">{fmtNum(row.count)}</td>
+        <td className="tnum hidden py-2 pr-3 text-right text-positive sm:table-cell">{fmtCost(row.cacheSavings)}</td>
+        <td className="tnum hidden py-2 pr-3 text-right text-fg-dim sm:table-cell">{fmtCount(row.count)}</td>
         <td className="tnum py-2 text-right text-cost">{fmtCost(row.cost)}</td>
       </tr>
       {isOpen && row.breakdown.map(m => (
