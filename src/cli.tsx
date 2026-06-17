@@ -18,6 +18,16 @@ process.emitWarning = ((warning: string | Error, ...rest: unknown[]) => {
 }) as typeof process.emitWarning
 
 const args = process.argv.slice(2)
+
+// Subcommands must be handled before flag parsing / Ink render. `serve` (alias
+// `web`) launches the local web dashboard headlessly and owns the process.
+const subcommand = args[0]?.toLowerCase()
+if (subcommand === 'serve' || subcommand === 'web') {
+  const { startWeb } = await import('./web/index')
+  await startWeb(args.slice(1))
+  process.exit(typeof process.exitCode === 'number' ? process.exitCode : 0)
+}
+
 let interval: number | undefined
 let asciiFlag: 'on' | 'off' | null = null
 
@@ -31,7 +41,8 @@ for (let i = 0; i < args.length; i++) {
   if (args[i] === '--help' || args[i] === '-h') {
     console.log('tokmon - Terminal usage dashboard for your AI coding tools\n')
     console.log('  Claude · Codex · Cursor · Copilot · opencode · pi · Antigravity · Gemini\n')
-    console.log('Usage: tokmon [options]\n')
+    console.log('Usage: tokmon [options]')
+    console.log('       tokmon serve [--port <n>] [--no-open]   Launch the web dashboard\n')
     console.log('Options:')
     console.log('  -i, --interval <seconds>  Refresh interval (default: from config or 2)')
     console.log('      --ascii               Force ASCII glyphs (also: TOKMON_ASCII=1)')
@@ -43,6 +54,7 @@ for (let i = 0; i < args.length; i++) {
     console.log('  a / A       Cycle account focus')
     console.log('  0-9         Jump to account focus')
     console.log('  ↑↓          Scroll table')
+    console.log('  W           Toggle web dashboard')
     console.log('  s           Settings')
     console.log('  q           Quit')
     process.exit(0)

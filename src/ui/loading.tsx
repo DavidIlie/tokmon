@@ -116,6 +116,7 @@ export function LoadingView({ groups, stats, cols, rows }: {
 
       <Box marginTop={1}>
         <Text dimColor>loading {readyCount} / {groups.length}</Text>
+        <Text dimColor>  {glyphs().middot}  W opens the web dashboard once loaded</Text>
       </Box>
     </Box>
   )
