@@ -82,7 +82,7 @@ For **Cursor** — a per-model spend table (cost, request count, share of total,
 
 ## Web Dashboard
 
-Prefer a browser? tokmon ships a local web dashboard with the same data — charts, filtering, and shareable images — in a terminal-styled UI.
+Prefer a browser? `tokmon serve` starts a local web dashboard with the same data as the TUI — charts, global filtering, and shareable images — in a terminal-styled UI. Press `w` (or `W`) inside the TUI to toggle it without leaving the terminal; the header shows `● web :4317` while it's running.
 
 ```bash
 tokmon serve            # opens http://127.0.0.1:4317 in your browser
@@ -90,13 +90,31 @@ tokmon serve --port 8080
 tokmon serve --no-open  # don't auto-open the browser
 ```
 
-Or press `w` (or `W`) inside the TUI to toggle it without leaving the terminal — the header shows `● web :4317` while it's running.
+It binds to `127.0.0.1` only and reads the same data read-only — nothing leaves your machine. It renders instantly from a cached snapshot, then streams live updates over SSE, and goes idle when no tab is open. Filter by provider, model, account, and period (the URL updates, so a filtered view is shareable), flip between dark and light, and export any panel — or a summary card — as a PNG with the **Share** button.
 
-- **Local & private** — binds to `127.0.0.1` only; same read-only data as the TUI, nothing leaves your machine.
-- **Four tabs** — **Overview** (KPIs, live cost-over-time, provider cards), **Analytics** (cost-by-model, provider split, token composition, cache savings, a GitHub-style daily-spend calendar), **Models** (leaderboard by cost/tokens/calls), and **Explore** (the filterable, sortable, drill-down table).
-- **Global filters** — by provider, model, account, and period; the URL updates so a filtered view is shareable.
-- **Dark / light** theme toggle, and a **Share** button that exports a PNG summary card (or any panel) to download or clipboard.
-- **Fast** — renders instantly from a cached snapshot, then refreshes live over SSE; idle when no tab is open.
+### Overview
+
+KPIs with inline sparklines, provider cards with live rate-limit bars, and a cost-over-time chart that spans your full history by default. Toggle **merged** (one combined total) vs **split** (a line per provider), **all-time** vs the selected period, and linear vs log.
+
+![tokmon web dashboard — overview](docs/web/overview.png)
+
+### Analytics
+
+A full-width, all-time daily-spend calendar with at-a-glance stats — busiest day, daily average, top weekday, current streak — alongside cost-by-model, provider split, token composition, cache savings, and cumulative spend.
+
+![tokmon web dashboard — analytics](docs/web/analytics.png)
+
+### Models
+
+A leaderboard sortable by cost / tokens / calls, each row showing a per-model trend sparkline, cost-per-call, tokens, and calls — over tokens-by-model and cache-savings-by-model charts.
+
+![tokmon web dashboard — models](docs/web/models.png)
+
+### Explore
+
+The full daily / weekly / monthly table — searchable, sortable on every column, with expandable per-model breakdowns.
+
+![tokmon web dashboard — explore](docs/web/explore.png)
 
 The dashboard is a prebuilt static bundle shipped in the package — no build step, fully offline.
 

@@ -62,6 +62,11 @@ export function makeTooltip(
   }
 }
 
-export function ChartShell({ height = 240, children }: { height?: number; children: ReactNode }) {
+export function ChartShell({ height = 240, heightClass, children }: {
+  height?: number
+  heightClass?: string
+  children: ReactNode
+}) {
+  if (heightClass) return <div className={heightClass} style={{ width: '100%' }}>{children}</div>
   return <div style={{ height, width: '100%' }}>{children}</div>
 }

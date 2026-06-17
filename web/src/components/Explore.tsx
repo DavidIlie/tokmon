@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react'
 import type { TableRow } from '@shared'
 import { fmtCost, fmtDayLabel, fmtNum, fmtTokens } from '../lib/format'
-import { shortModel } from '../lib/colors'
-import { Search, X } from './icons'
+import { modelColor, shortModel } from '../lib/colors'
 import { Panel } from './ui'
 
-type SortKey = 'label' | 'cost' | 'total' | 'count'
+type SortKey = 'label' | 'cost' | 'total' | 'count' | 'cacheSavings'
 type Dir = 'asc' | 'desc'
 
 function SortHeader({ sortKey, label, align = 'text-right', sort, dir, onSort }: {
@@ -27,10 +26,9 @@ function SortHeader({ sortKey, label, align = 'text-right', sort, dir, onSort }:
   )
 }
 
-export function ExploreTable({ rows, granLabel }: { rows: TableRow[]; granLabel: string }) {
+export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLabel: string; q: string }) {
   const [sort, setSort] = useState<SortKey>('label')
   const [dir, setDir] = useState<Dir>('desc')
-  const [q, setQ] = useState('')
   const [open, setOpen] = useState<Set<string>>(new Set())
 
   const handleSort = (key: SortKey) => {
@@ -67,34 +65,29 @@ export function ExploreTable({ rows, granLabel }: { rows: TableRow[]; granLabel:
   const dateColLabel = granLabel === 'monthly' ? 'month' : granLabel === 'weekly' ? 'week' : 'date'
 
   return (
-    <Panel
-      title={`explore · ${granLabel}`}
-      captureName="explore"
-      right={
-        <div className="flex items-center gap-1.5 rounded border border-line bg-bg-1 px-2 py-0.5 text-xs">
-          <Search className="size-3 text-fg-faint" />
-          <input
-            value={q}
-            onChange={e => setQ(e.target.value)}
-            placeholder="filter…"
-            className="w-24 bg-transparent text-fg outline-none placeholder:text-fg-faint"
-          />
-          {q && <button onClick={() => setQ('')}><X className="size-3 text-fg-faint hover:text-fg" /></button>}
-        </div>
-      }
-    >
-      <div className="overflow-x-auto">
+    <Panel title={`explore · ${granLabel}`} captureName="explore" className="flex flex-1 flex-col" bodyClassName="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 overflow-auto">
         <table className="w-full border-collapse text-xs">
+          <colgroup>
+            <col />
+            <col style={{ width: '34%' }} />
+            <col style={{ width: '13%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '13%' }} />
+          </colgroup>
           <thead>
-            <tr className="border-b border-line text-[11px]">
-              <th className="py-2 pr-3 text-left font-normal" style={{ width: '1%' }}>
+            <tr className="sticky top-0 z-10 bg-bg-1 text-[11px] shadow-[inset_0_-1px_0_var(--color-line)]">
+              <th className="py-2 pr-3 text-left font-normal">
                 <SortHeader sortKey="label" label={dateColLabel} align="text-left" sort={sort} dir={dir} onSort={handleSort} />
               </th>
               <th className="py-2 pr-3 text-left font-normal text-fg-faint">models</th>
               <th className="py-2 pr-3 font-normal">
                 <SortHeader sortKey="total" label="tokens" sort={sort} dir={dir} onSort={handleSort} />
               </th>
-              <th className="py-2 pr-3 font-normal text-fg-faint"><span className="block text-right">saved</span></th>
+              <th className="py-2 pr-3 font-normal">
+                <SortHeader sortKey="cacheSavings" label="saved" sort={sort} dir={dir} onSort={handleSort} />
+              </th>
               <th className="py-2 pr-3 font-normal">
                 <SortHeader sortKey="count" label="calls" sort={sort} dir={dir} onSort={handleSort} />
               </th>
@@ -113,7 +106,7 @@ export function ExploreTable({ rows, granLabel }: { rows: TableRow[]; granLabel:
           </tbody>
           {filtered.length > 0 && (
             <tfoot>
-              <tr className="border-t border-line text-fg">
+              <tr className="sticky bottom-0 z-10 bg-bg-1 text-fg shadow-[inset_0_1px_0_var(--color-line)]">
                 <td className="py-2 pr-3 font-display text-[11px] uppercase text-fg-dim" colSpan={2}>total · {filtered.length}</td>
                 <td className="tnum py-2 pr-3 text-right">{fmtTokens(totals.total)}</td>
                 <td className="tnum py-2 pr-3 text-right text-positive">{fmtCost(totals.cacheSavings)}</td>
@@ -131,9 +124,15 @@ export function ExploreTable({ rows, granLabel }: { rows: TableRow[]; granLabel:
 function FragmentRow({ row, isOpen, onToggle }: { row: TableRow; isOpen: boolean; onToggle: () => void }) {
   return (
     <>
-      <tr className="cursor-pointer border-b border-line-faint transition hover:bg-bg-2/60" onClick={onToggle}>
+      <tr
+        className="cursor-pointer border-b border-line-faint transition hover:bg-bg-2/60 focus-visible:bg-bg-2/60 focus-visible:outline-none"
+        onClick={onToggle}
+        tabIndex={0}
+        aria-expanded={isOpen}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } }}
+      >
         <td className="whitespace-nowrap py-2 pr-3">
-          <span className="text-fg-faint">{isOpen ? '▾' : '▸'}</span>{' '}
+          <span className={isOpen ? 'text-accent' : 'text-fg-faint'}>{isOpen ? '▾' : '▸'}</span>{' '}
           <span className="text-fg">{fmtDayLabel(row.label)}</span>
         </td>
         <td className="py-2 pr-3 text-fg-dim">
@@ -147,7 +146,8 @@ function FragmentRow({ row, isOpen, onToggle }: { row: TableRow; isOpen: boolean
       {isOpen && row.breakdown.map(m => (
         <tr key={m.name} className="border-b border-line-faint bg-bg-0/40 text-[11px]">
           <td className="py-1.5 pr-3 pl-5 text-fg-dim" colSpan={2}>
-            <span className="text-fg-faint">└ </span>{shortModel(m.name)}
+            <span className="mr-1.5 inline-block size-1.5 rounded-full align-middle" style={{ background: modelColor(m.name) }} />
+            {shortModel(m.name)}
           </td>
           <td className="tnum py-1.5 pr-3 text-right text-fg-dim">{fmtTokens(m.input + m.output + m.cacheCreate + m.cacheRead)}</td>
           <td className="tnum py-1.5 pr-3 text-right text-positive/80">{fmtCost(m.cacheSavings)}</td>

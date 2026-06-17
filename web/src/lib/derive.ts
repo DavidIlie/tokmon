@@ -67,6 +67,7 @@ export interface ModelAgg {
 export interface TimelinePoint {
   date: string
   total: number
+  tokens: number
   byProvider: Record<string, number>
 }
 
@@ -78,6 +79,13 @@ export interface Derived {
   month: Totals
   burnRate: number
   timeline: TimelinePoint[]
+  // All-time daily series (account/model filters apply, but NOT the period window).
+  // Powers the hero trend so it spans the full history regardless of the period filter.
+  fullTimeline: TimelinePoint[]
+  fullCacheSeries: { date: string; value: number }[]
+  // All-time provider aggregates (names/colors) so the hero's split view can draw
+  // every provider with history, not just those active in the period window.
+  fullByProvider: ProviderAgg[]
   cumulative: { date: string; total: number }[]
   cacheSavingsSeries: { date: string; value: number }[]
   calendar: { date: string; cost: number }[]
@@ -201,8 +209,9 @@ function accumulateDayRow(
 
   addInto(acc.totals, rCost, rTok, rSav, rCalls)
 
-  const tp = acc.timelineMap.get(row.label) ?? { date: row.label, total: 0, byProvider: {} }
+  const tp = acc.timelineMap.get(row.label) ?? { date: row.label, total: 0, tokens: 0, byProvider: {} }
   tp.total += rCost
+  tp.tokens += rTok
   tp.byProvider[pid] = (tp.byProvider[pid] ?? 0) + rCost
   acc.timelineMap.set(row.label, tp)
 
@@ -267,10 +276,29 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
 
   const timeline = buildTimeline(acc)
 
+  // Second pass over every row (no date window) for the full-history hero trend.
+  const accAll = makeAccState()
+  for (const a of accounts) {
+    const pid = a.providerId
+    const color = providerColor.get(pid) ?? a.color
+    for (const row of a.table?.daily ?? []) {
+      accumulateDayRow(accAll, row, pid, color, modelSet)
+    }
+  }
+  const fullTimeline = buildTimeline(accAll)
+  const fullCacheSeries = fullTimeline.map(p => ({ date: p.date, value: accAll.cacheByDay.get(p.date) ?? 0 }))
+  for (const pa of accAll.provAgg.values()) {
+    const name = providerName.get(pa.id)
+    if (name) pa.name = name
+  }
+  const fullByProvider = [...accAll.provAgg.values()].sort((x, y) => y.cost - x.cost)
+
   let running = 0
   const cumulative = timeline.map(p => { running += p.total; return { date: p.date, total: running } })
   const cacheSavingsSeries = timeline.map(p => ({ date: p.date, value: acc.cacheByDay.get(p.date) ?? 0 }))
-  const calendar = timeline.map(p => ({ date: p.date, cost: p.total }))
+  // Calendar is a history view — always all-time (provider/model filters still apply),
+  // never clipped to the period window, which a daily heatmap would render meaningless.
+  const calendar = fullTimeline.map(p => ({ date: p.date, cost: p.total }))
 
   const byProvider = [...acc.provAgg.values()].sort((x, y) => y.cost - x.cost)
   const byModel = buildByModel(acc, timeline, acc.totals.cost)
@@ -279,7 +307,7 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
     filteredAccounts: accounts,
     totals: acc.totals, today: acc.today, week: acc.week, month: acc.month,
     burnRate: acc.burnRate,
-    timeline, cumulative, cacheSavingsSeries, calendar,
+    timeline, fullTimeline, fullCacheSeries, fullByProvider, cumulative, cacheSavingsSeries, calendar,
     byProvider, byModel, tokenComposition: acc.tokenComposition,
     modelOptions: [...acc.modelOptionSet].sort(),
     latestDay, rangeStart,

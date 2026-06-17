@@ -26,7 +26,8 @@ export function Panel({
           <span className="font-display text-[11px] uppercase tracking-wider text-fg-dim">{title}</span>
         </div>
       )}
-      <div className="absolute right-2 top-2 flex items-center gap-1.5">
+      {/* z-20 keeps controls clickable above Recharts' relatively-positioned surface. */}
+      <div className="absolute right-2 top-2 z-20 flex items-center gap-1.5">
         {right}
         {captureName && <CaptureButton getNode={() => ref.current} name={captureName} />}
       </div>
