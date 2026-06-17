@@ -1,6 +1,9 @@
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import type { ServerResponse } from 'node:http'
 import type { DashboardData, TableData } from '../types'
 import type { BillingResult } from '../providers/types'
+import { cacheDir } from '../config'
 import {
   assembleSnapshot, fetchAccountBilling, fetchAccountSummary, fetchAccountTable,
   type ResolvedAccount,
@@ -11,6 +14,11 @@ const TABLE_INTERVAL_MS = 300_000
 const SSE_HEARTBEAT_MS = 25_000
 // Skip refreshes when no SSE clients and idle — keeps CPU near-zero.
 const IDLE_PAUSE_MS = 60_000
+// Persist the last good snapshot so the next launch renders instantly from cache
+// (the full-history table pass takes seconds on large histories) while fresh data
+// loads in the background. Throttle writes; only cache once tables are present.
+const SNAPSHOT_CACHE_THROTTLE_MS = 20_000
+const snapshotCacheFile = () => join(cacheDir(), 'web-snapshot.json')
 
 interface DataEngineOptions {
   version: string
@@ -45,6 +53,8 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   let tableTimer: ReturnType<typeof setInterval> | undefined
   let billingTimer: ReturnType<typeof setInterval> | undefined
 
+  let lastPersist = 0
+
   const idle = () => sseClients.size === 0 && Date.now() - lastActivity > IDLE_PAUSE_MS
 
   const usageEntry = (id: string) => {
@@ -53,9 +63,37 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     return u
   }
 
+  // Seed in-memory state from the on-disk cache so the first paint is instant.
+  // Fresh fetches replace these values within seconds.
+  const hydrateFromCache = () => {
+    try {
+      const cached = JSON.parse(readFileSync(snapshotCacheFile(), 'utf-8')) as WebSnapshot
+      if (!cached || !Array.isArray(cached.accounts)) return
+      for (const a of cached.accounts) {
+        if (a.dashboard || a.table) usage.set(a.id, { dashboard: a.dashboard, table: a.table })
+        if (a.billing) billing.set(a.id, a.billing)
+      }
+      current = assembleSnapshot({ version, tz, intervalMs: summaryIntervalMs, resolved, usage, billing })
+    } catch { /* no/invalid cache — first run loads live */ }
+  }
+
+  const persist = () => {
+    if (!current) return
+    // Only cache snapshots that carry table data; never overwrite a good cache
+    // with a summary-only one captured mid-warmup.
+    if (!current.accounts.some(a => a.hasUsage && a.table != null)) return
+    if (Date.now() - lastPersist < SNAPSHOT_CACHE_THROTTLE_MS) return
+    lastPersist = Date.now()
+    try {
+      mkdirSync(cacheDir(), { recursive: true })
+      writeFileSync(snapshotCacheFile(), JSON.stringify(current))
+    } catch { /* best-effort */ }
+  }
+
   const rebuild = () => {
     if (stopped) return
     current = assembleSnapshot({ version, tz, intervalMs: summaryIntervalMs, resolved, usage, billing })
+    persist()
     if (sseClients.size === 0) return
     const payload = `event: snapshot\ndata: ${JSON.stringify(current)}\n\n`
     for (const res of sseClients.keys()) {
@@ -111,6 +149,10 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       billingBusy = false
     }
   }
+
+  // Seed `current` from disk now (before the server listens) so the very first
+  // client — even one connecting in the first millisecond — gets real data.
+  hydrateFromCache()
 
   return {
     snapshot: () => current,
