@@ -127,8 +127,12 @@ function selectAccounts(snap: WebSnapshot, f: Filters): WebAccount[] {
 // honoring the account filter (and the effective provider filter where it applies).
 function selectCardAccounts(snap: WebSnapshot, f: Filters): WebAccount[] {
   const provFilter = activeProviderFilter(snap, f)
+  const hasBillingSignal = (a: WebAccount) => a.hasBilling && (
+    a.billing?.metrics?.length || a.billing?.plan || a.billing?.error ||
+    a.billing?.activity?.series?.length || a.billing?.modelSpend?.length
+  )
   return snap.accounts.filter(a => {
-    if (!a.hasUsage && !(a.hasBilling && (a.billing?.metrics?.length || a.billing?.plan))) return false
+    if (!a.hasUsage && !hasBillingSignal(a)) return false
     if (f.account !== 'all' && a.id !== f.account) return false
     // Only constrain by provider when that provider filter is meaningful (has usage);
     // billing-only providers aren't filterable chips, so don't strip them here.

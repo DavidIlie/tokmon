@@ -97,7 +97,11 @@ export async function cursorBilling(account: Account): Promise<BillingResult> {
       summary: lines ? `${lines} · ${spendLabel}` : spendLabel,
     }
   }
-  return { ...core, activity: merged }
+  // Surface the per-model spend table the web previously discarded (top by cost).
+  const modelSpend = spend?.models?.length
+    ? spend.models.slice(0, 6).map(m => ({ name: m.name, usd: m.usd, requests: m.requests }))
+    : null
+  return { ...core, activity: merged, modelSpend }
 }
 
 async function cursorBillingCore(account: Account): Promise<BillingResult> {

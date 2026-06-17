@@ -114,7 +114,10 @@ export function App() {
 
   const usageAccts = snapshot?.accounts.filter(a => a.hasUsage) ?? []
   const hasUsage = usageAccts.length > 0
-  const hasBilling = (snapshot?.accounts ?? []).some(a => a.hasBilling && (a.billing?.metrics?.length || a.billing?.plan))
+  const hasBilling = (snapshot?.accounts ?? []).some(a => a.hasBilling && (
+    a.billing?.metrics?.length || a.billing?.plan || a.billing?.error ||
+    a.billing?.activity?.series?.length || a.billing?.modelSpend?.length
+  ))
   // "ready" = every usage account's table fetched, so charts don't flash empty.
   // Billing-only setups have no tables to wait on, so they're ready immediately.
   const tablesReady = hasUsage && usageAccts.every(a => a.table != null)

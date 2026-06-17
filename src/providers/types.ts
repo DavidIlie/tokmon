@@ -32,6 +32,8 @@ export interface BillingResult {
   metrics: Metric[]
   error: string | null
   activity?: { series: number[]; summary: string } | null
+  /** Optional per-model spend breakdown (Cursor) — additive; other providers omit it. */
+  modelSpend?: { name: string; usd: number; requests: number }[] | null
 }
 
 export interface Provider {

@@ -1,7 +1,7 @@
 import type { Metric, WebAccount } from '@shared'
 import type { Derived } from '../../lib/derive'
 import { fmtCost, fmtNum, fmtTokens } from '../../lib/format'
-import { providerHex } from '../../lib/colors'
+import { providerHex, shortModel } from '../../lib/colors'
 import { Panel, Sparkline } from '../ui'
 
 export function KpiStrip({ derived, periodLabel }: { derived: Derived; periodLabel: string }) {
@@ -59,6 +59,8 @@ export function ProviderCards({ accounts, nameOf }: { accounts: WebAccount[]; na
 function ProviderCard({ account, index, providerName }: { account: WebAccount; index: number; providerName: string }) {
   const d = account.dashboard
   const metrics = account.billing?.metrics ?? []
+  const modelSpend = account.billing?.modelSpend ?? []
+  const activity = account.billing?.activity
   // Colored by provider (Claude=green); the account's custom dot color is only an
   // identity signal in multi-account views — matches the TUI.
   const providerColor = providerHex(account.providerId)
@@ -97,7 +99,19 @@ function ProviderCard({ account, index, providerName }: { account: WebAccount; i
 
       {metrics.length > 0 && (
         <div className={`flex flex-col gap-2 ${d ? 'mt-3 border-t border-line-faint pt-3' : 'mt-4'}`}>
-          {metrics.slice(0, 3).map(m => <QuotaBar key={m.label} metric={m} />)}
+          {metrics.slice(0, 8).map(m => <QuotaBar key={m.label} metric={m} />)}
+        </div>
+      )}
+
+      {modelSpend.length > 0 && (
+        <div className="mt-3 flex flex-col gap-1 border-t border-line-faint pt-3">
+          <div className="text-[10px] uppercase tracking-wide text-fg-faint">spend by model</div>
+          {modelSpend.slice(0, 4).map(m => (
+            <div key={m.name} className="flex items-center justify-between gap-2 text-[11px]">
+              <span className="min-w-0 truncate text-fg-dim">{shortModel(m.name)}</span>
+              <span className="tnum shrink-0 text-cost">{fmtCost(m.usd)}<span className="ml-1.5 text-fg-faint">{fmtNum(m.requests)} req</span></span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -108,7 +122,20 @@ function ProviderCard({ account, index, providerName }: { account: WebAccount; i
         </div>
       )}
 
-      {!d && metrics.length === 0 && (
+      {!d && activity && activity.series.length > 0 && (
+        <div className="mt-3 flex items-center gap-2 border-t border-line-faint pt-3">
+          <Sparkline data={activity.series} color={providerColor} className="text-sm" />
+          <span className="ml-auto text-[10px] text-fg-faint">{activity.summary}</span>
+        </div>
+      )}
+
+      {metrics.length === 0 && account.billing?.error && (
+        <div className={`flex items-start gap-1.5 text-xs text-warning ${d ? 'mt-3 border-t border-line-faint pt-3' : 'mt-4'}`}>
+          <span aria-hidden>⚠</span><span>{account.billing.error}</span>
+        </div>
+      )}
+
+      {!d && metrics.length === 0 && !account.billing?.error && modelSpend.length === 0 && !(activity && activity.series.length) && (
         <div className="py-6 text-center text-xs text-fg-faint">{account.hasUsage ? 'no usage data' : 'billing-only · no live metrics'}</div>
       )}
     </div>
