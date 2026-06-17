@@ -60,7 +60,9 @@ export interface ModelAgg {
   tokens: number
   cacheSavings: number
   calls: number
-  share: number
+  share: number       // cost share (kept for SummaryCard/breakdown)
+  tokenShare: number  // token share — drives the bar when sorting by tokens
+  callShare: number   // call share — drives the bar when sorting by calls
   trend: number[]
 }
 export interface TimelinePoint {
@@ -285,6 +287,8 @@ function buildByModel(acc: AccState, timeline: TimelinePoint[], totalCost: numbe
         color: modelColor(model),
         cost: v.cost, tokens: v.tokens, cacheSavings: v.cacheSavings, calls: v.calls,
         share: totalCost > 0 ? v.cost / totalCost : 0,
+        tokenShare: acc.totals.tokens > 0 ? v.tokens / acc.totals.tokens : 0,
+        callShare: acc.totals.calls > 0 ? v.calls / acc.totals.calls : 0,
         trend: dates.map(d => tr?.get(d) ?? 0),
       }
     })

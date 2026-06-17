@@ -19,9 +19,14 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 const COLS = '1.75rem minmax(6rem,12rem) minmax(3.5rem,1fr) 3rem 5.5rem 5rem auto auto auto'
 
 export function ModelLeaderboard({ derived, limit, periodLabel }: { derived: Derived; limit?: number; periodLabel?: string }) {
-  const [sort, setSort] = useState<SortKey>('cost')
+  // Subscription-routed setups (opencode/pi) have $0 cost but real token usage —
+  // default to a meaningful sort so they aren't all pinned at the bottom.
+  const [sort, setSort] = useState<SortKey>(derived.totals.cost > 0 ? 'cost' : 'tokens')
   const sorted = [...derived.byModel].sort((a, b) => b[sort] - a[sort])
   const rows = limit ? sorted.slice(0, limit) : sorted
+  // The share bar + % column track the active sort, so a token/call sort isn't
+  // misrepresented by cost share (which would leave token-only models near-empty).
+  const shareKey = sort === 'tokens' ? 'tokenShare' : sort === 'calls' ? 'callShare' : 'share'
   // Never let the active sort key hide behind a responsive breakpoint.
   const tokCls = sort === 'tokens' ? 'block' : 'hidden md:block'
   const callCls = sort === 'calls' ? 'block' : 'hidden lg:block'
@@ -71,9 +76,9 @@ export function ModelLeaderboard({ derived, limit, periodLabel }: { derived: Der
                 <span className="truncate text-fg" title={m.model}>{shortModel(m.model)}</span>
               </span>
               <div className="h-1.5 overflow-hidden rounded-full bg-bg-3">
-                <div className="h-full rounded-full" style={{ width: `${Math.min(100, m.share * 100)}%`, minWidth: '2px', background: m.color }} />
+                <div className="h-full rounded-full" style={{ width: `${Math.min(100, m[shareKey] * 100)}%`, minWidth: '2px', background: m.color }} />
               </div>
-              <span className="tnum text-right text-[11px] text-fg-dim">{fmtPct(m.share)}</span>
+              <span className="tnum text-right text-[11px] text-fg-dim">{fmtPct(m[shareKey])}</span>
               <span className="tnum text-right text-xs text-cost">{fmtCost(m.cost)}</span>
               <span className="overflow-hidden text-right"><Sparkline data={m.trend.slice(-30)} color={m.color} className="text-sm" /></span>
               <span className="tnum hidden text-right text-xs text-fg-dim lg:block">{fmtCost(m.calls ? m.cost / m.calls : 0)}</span>
