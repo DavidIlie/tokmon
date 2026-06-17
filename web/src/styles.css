@@ -32,12 +32,13 @@
   --color-fg-faint: #585b5b;
   --color-fg-bright: #f3f5f5;
 
-  /* semantic — mirrors the TUI: gold $ amounts, red burn, green savings */
-  --color-cost: #e6b450;
-  --color-positive: #4ec9a3;
-  --color-warning: #e06c6c;
-  --color-prompt: #4ec9a3;
-  --color-accent: #4ec9a3;
+  /* semantic — the user's Terminal.app "Clear Dark" palette: gold $ amounts
+     (yellow), red burn, green savings, bright-green UI accent (TUI title). */
+  --color-cost: #d9c074;
+  --color-positive: #6caa71;
+  --color-warning: #b45648;
+  --color-prompt: #79be7e;
+  --color-accent: #79be7e;
 
   /* provider brand (distinct hues for stacked charts) */
   --color-p-claude: #00d787;

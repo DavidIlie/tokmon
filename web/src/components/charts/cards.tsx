@@ -1,6 +1,7 @@
 import type { Metric, WebAccount } from '@shared'
 import type { Derived } from '../../lib/derive'
 import { fmtCost, fmtNum, fmtTokens } from '../../lib/format'
+import { providerHex } from '../../lib/colors'
 import { Panel, Sparkline } from '../ui'
 
 export function KpiStrip({ derived, periodLabel }: { derived: Derived; periodLabel: string }) {
@@ -39,14 +40,17 @@ export function ProviderCards({ accounts }: { accounts: WebAccount[] }) {
 function ProviderCard({ account, index }: { account: WebAccount; index: number }) {
   const d = account.dashboard
   const metrics = account.billing?.metrics ?? []
+  // Match the TUI: cards are colored by PROVIDER (Claude=green), not the
+  // account's custom color (which only marks identity in multi-account views).
+  const providerColor = providerHex(account.providerId)
   return (
     <div
       className="rise group relative overflow-hidden rounded-md border bg-bg-1/50 p-4 transition-colors"
-      style={{ animationDelay: `${index * 40}ms`, borderColor: `color-mix(in oklab, ${account.color} 50%, var(--color-line))` }}
+      style={{ animationDelay: `${index * 40}ms`, borderColor: `color-mix(in oklab, ${providerColor} 50%, var(--color-line))` }}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span style={{ color: account.color }}>●</span>
+          <span style={{ color: providerColor }}>●</span>
           <span className="font-display text-sm tracking-wide text-fg-bright">{account.name}</span>
         </div>
         {account.billing?.plan && <span className="rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-dim">{account.billing.plan}</span>}
@@ -70,7 +74,7 @@ function ProviderCard({ account, index }: { account: WebAccount; index: number }
           )}
           {d.series.length > 0 && (
             <div className="mt-3 flex items-center gap-2 border-t border-line-faint pt-3">
-              <Sparkline data={d.series} color={account.color} className="text-sm" />
+              <Sparkline data={d.series} color={providerColor} className="text-sm" />
               <span className="ml-auto text-[10px] text-fg-faint">{d.series.length}d</span>
             </div>
           )}

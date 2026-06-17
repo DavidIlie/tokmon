@@ -1,36 +1,43 @@
-import type { ProviderId } from '../providers/types'
-
-export const PROVIDER_HEX: Record<ProviderId, string> = {
-  claude: '#00d787',
-  codex: '#00d7ff',
-  cursor: '#5f87ff',
-  copilot: '#5fd7a7',
-  pi: '#e6b450',
-  opencode: '#d75f87',
-  antigravity: '#d75f5f',
-  gemini: '#af87ff',
+// Map the TUI's Ink color NAMES to hex so the web matches the terminal exactly.
+// Values are the user's actual Terminal.app "Clear Dark" ANSI palette (decoded
+// from com.apple.Terminal) so the web reads identically to the live TUI.
+export const NAMED_HEX: Record<string, string> = {
+  green: '#6caa71',
+  greenBright: '#79be7e',
+  cyan: '#7ccbcd',
+  cyanBright: '#84dde0',
+  blue: '#6d96b4',
+  blueBright: '#67b5ed',
+  magenta: '#bd7bcd',
+  magentaBright: '#d389e5',
+  yellow: '#c4ac62',
+  yellowBright: '#d9c074',
+  red: '#b45648',
+  redBright: '#cf6a5a',
+  white: '#dee5eb',
+  whiteBright: '#f3f5f5',
+  gray: '#8d9090',
+  grey: '#8d9090',
 }
 
-const NAMED_HEX: Record<string, string> = {
-  green: '#00d787',
-  cyan: '#00d7ff',
-  blue: '#5f87ff',
-  yellow: '#e6b450',
-  magenta: '#d75f87',
-  red: '#d75f5f',
-  greenBright: '#5cffbf',
-  cyanBright: '#5fe9ff',
-  blueBright: '#87afff',
-  yellowBright: '#ffd75f',
-  magentaBright: '#ff87c7',
-  redBright: '#ff8787',
+const FALLBACK = '#8d9090'
+
+/** Resolve an Ink color name (or hex) to a web hex. */
+export function namedHex(name: string | undefined): string {
+  if (!name) return FALLBACK
+  if (name.startsWith('#')) return name
+  return NAMED_HEX[name] ?? FALLBACK
 }
 
-export function colorHex(color: string | undefined, providerId: ProviderId): string {
-  if (color) {
-    if (color.startsWith('#')) return color
-    const named = NAMED_HEX[color]
+/**
+ * Resolve an account's display color: its custom color if set, else the
+ * provider's color name. `providerColorName` is the provider's Ink `.color`.
+ */
+export function colorHex(accountColor: string | undefined, providerColorName: string): string {
+  if (accountColor) {
+    if (accountColor.startsWith('#')) return accountColor
+    const named = NAMED_HEX[accountColor]
     if (named) return named
   }
-  return PROVIDER_HEX[providerId] ?? '#8b979c'
+  return namedHex(providerColorName)
 }

@@ -1,14 +1,17 @@
 import type { ProviderId } from '@shared'
 
+// Mirrors the TUI provider colors as rendered by the user's Terminal.app
+// "Clear Dark" palette (Ink color name → terminal hex). Keep in sync with
+// src/web/colors.ts NAMED_HEX and each provider's `.color`.
 export const PROVIDER_HEX: Record<string, string> = {
-  claude: '#00d787',
-  codex: '#00d7ff',
-  cursor: '#5f87ff',
-  copilot: '#5fd7a7',
-  pi: '#e6b450',
-  opencode: '#d75f87',
-  antigravity: '#d75f5f',
-  gemini: '#af87ff',
+  claude: '#6caa71', // green
+  codex: '#7ccbcd', // cyan
+  cursor: '#bd7bcd', // magenta
+  copilot: '#dee5eb', // white
+  pi: '#6d96b4', // blue
+  opencode: '#c4ac62', // yellow
+  antigravity: '#b45648', // red
+  gemini: '#79be7e', // greenBright
 }
 
 export function providerHex(id: ProviderId | string): string {
@@ -33,10 +36,10 @@ export function modelColor(name: string): string {
 }
 
 export const TOKEN_BUCKET = {
-  input: '#5f87ff',
-  output: '#00d787',
-  cacheCreate: '#e6b450',
-  cacheRead: '#00d7ff',
+  input: '#6d96b4', // blue
+  output: '#6caa71', // green
+  cacheCreate: '#c4ac62', // yellow
+  cacheRead: '#7ccbcd', // cyan
 } as const
 
 export function shortModel(name: string): string {

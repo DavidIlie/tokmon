@@ -59,9 +59,9 @@ export function ShareControl({ derived, periodLabel, tz, version }: {
           className="flex flex-col"
         >
           <div className="flex items-center gap-2 border-b border-line px-6 py-3.5">
-            <span className="size-3 rounded-full" style={{ background: '#d75f5f' }} />
-            <span className="size-3 rounded-full" style={{ background: '#e6b450' }} />
-            <span className="size-3 rounded-full" style={{ background: '#00d787' }} />
+            <span className="size-3 rounded-full" style={{ background: '#b45648' }} />
+            <span className="size-3 rounded-full" style={{ background: '#c4ac62' }} />
+            <span className="size-3 rounded-full" style={{ background: '#6caa71' }} />
             <span className="ml-3 text-sm text-fg-dim">tokmon — usage · last {periodLabel}</span>
             <span className="ml-auto text-xs text-fg-faint">{tz}</span>
           </div>
@@ -71,12 +71,12 @@ export function ShareControl({ derived, periodLabel, tz, version }: {
             <div className="tnum mt-1 text-7xl text-cost" style={{ lineHeight: 1 }}>{fmtCost(derived.totals.cost)}</div>
 
             <div className="mt-5">
-              <Sparkline data={derived.timeline.map(t => t.total)} color="#00d7ff" className="text-3xl" />
+              <Sparkline data={derived.timeline.map(t => t.total)} color="#7ccbcd" className="text-3xl" />
             </div>
 
             <div className="mt-auto grid grid-cols-4 gap-4 border-t border-line pt-5">
               <ShareStat label="tokens" value={fmtTokens(derived.totals.tokens)} />
-              <ShareStat label="cache saved" value={fmtCost(derived.totals.cacheSavings)} color="#00d787" />
+              <ShareStat label="cache saved" value={fmtCost(derived.totals.cacheSavings)} color="#6caa71" />
               <ShareStat label="calls" value={fmtNum(derived.totals.calls)} />
               <ShareStat label="top model" value={top ? shortModel(top.model) : '—'} color={top?.color} />
             </div>

@@ -54,7 +54,7 @@ for (let i = 0; i < args.length; i++) {
     console.log('  a / A       Cycle account focus')
     console.log('  0-9         Jump to account focus')
     console.log('  ↑↓          Scroll table')
-    console.log('  W           Toggle web dashboard')
+    console.log('  w / W       Toggle web dashboard')
     console.log('  s           Settings')
     console.log('  q           Quit')
     process.exit(0)

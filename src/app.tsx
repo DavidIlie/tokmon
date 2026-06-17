@@ -630,9 +630,12 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
 
     if (input === 'q') { exit(); return }
     if (input === 'O') { openUrl(REPO_URL); return }
-    // Web toggle is only available once the initial load has finished rendering
-    // the dashboard — pressing it mid-load is confusing and races the data layer.
-    if (input === 'W') { if (showLoader || !configReady) return; void toggleWeb(); return }
+    // Web toggle: `W` anywhere, plus lowercase `w` outside the Table tab (where
+    // `w` = Weekly). Gated until the initial load finishes rendering the dashboard.
+    if (input === 'W' || (input === 'w' && tab !== 1 && !showSettings)) {
+      if (showLoader || !configReady) return
+      void toggleWeb(); return
+    }
 
     if (showSettings) {
       if (key.escape || input === 's') { setShowSettings(false); return }

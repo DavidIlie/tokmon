@@ -4,7 +4,7 @@ import { resolveTimezone } from '../tz'
 import type { Config } from '../config'
 import type { Account, BillingResult } from '../providers/types'
 import type { DashboardData, TableData } from '../types'
-import { colorHex, PROVIDER_HEX } from './colors'
+import { colorHex, namedHex } from './colors'
 import type { WebSnapshot, WebAccount, WebProviderInfo } from './contract'
 
 export interface ResolvedAccount {
@@ -24,7 +24,7 @@ export async function resolveAccounts(config: Config): Promise<ResolvedAccount[]
       account: a,
       hasUsage: p.hasUsage,
       hasBilling: p.hasBilling,
-      color: colorHex(a.color, a.providerId),
+      color: colorHex(a.color, PROVIDERS[a.providerId].color),
     }
   })
 }
@@ -78,7 +78,7 @@ export function assembleSnapshot(opts: {
     providers.push({
       id: r.account.providerId,
       name: PROVIDERS[r.account.providerId].name,
-      color: PROVIDER_HEX[r.account.providerId] ?? r.color,
+      color: namedHex(PROVIDERS[r.account.providerId].color),
     })
   }
 
