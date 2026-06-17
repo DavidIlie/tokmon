@@ -100,7 +100,7 @@ KPIs with inline sparklines, provider cards with live rate-limit bars, and a cos
 
 ### Analytics
 
-A full-width, all-time daily-spend calendar with at-a-glance stats — busiest day, daily average, top weekday, current streak — alongside cost-by-model, provider split, token composition, cache savings, and cumulative spend.
+A full-width, all-time daily-spend calendar — hover any day for a per-model spend breakdown — with at-a-glance stats (busiest day, daily average, top weekday, current streak), alongside cost-by-model, an interactive provider split, token composition, cache savings, and cumulative spend.
 
 ![tokmon web dashboard — analytics](docs/web/analytics.png)
 

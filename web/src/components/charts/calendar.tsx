@@ -1,7 +1,10 @@
-import { useMemo } from 'react'
-import type { Derived } from '../../lib/derive'
-import { fmtCost, fmtDayLabel } from '../../lib/format'
+import { useMemo, useState } from 'react'
+import type { CalendarDay, Derived } from '../../lib/derive'
+import { fmtCost, fmtDayLabel, fmtNum, fmtPct, fmtTokens } from '../../lib/format'
+import { modelColor, shortModel } from '../../lib/colors'
 import { Panel, StatBlock } from '../ui'
+
+interface Hover { x: number; top: number; bottom: number; day: CalendarDay }
 
 const DAY = 86_400_000
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -22,6 +25,8 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 interface Cell { date: string; cost: number; level: number }
 
 export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; maxWeeks?: number }) {
+  const [hover, setHover] = useState<Hover | null>(null)
+  const detail = useMemo(() => new Map(derived.calendar.map(c => [c.date, c])), [derived.calendar])
   const stats = useMemo(() => {
     const cal = derived.calendar
     const active = cal.filter(c => c.cost > 0)
@@ -73,6 +78,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; 
   const cols = grid ? `repeat(${grid.weeks.length}, minmax(0,1fr))` : undefined
 
   return (
+    <>
     <Panel title="daily spend" captureName="calendar">
       {!grid || !stats ? <div className="py-6 text-center text-xs text-fg-faint">no spend yet</div> : (
         <div className="grid gap-x-8 gap-y-5 pt-1 lg:grid-cols-[minmax(0,1fr)_210px] lg:items-center">
@@ -98,9 +104,15 @@ export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; 
                       : (
                         <div
                           key={di}
-                          className="aspect-square rounded-[3px] transition hover:ring-1 hover:ring-accent"
+                          className="aspect-square cursor-default rounded-[3px] transition duration-150 hover:scale-[1.18] hover:ring-1 hover:ring-accent"
                           style={{ background: heatFill(cell.level) }}
-                          title={`${fmtDayLabel(cell.date)} · ${fmtCost(cell.cost)}`}
+                          onMouseEnter={e => {
+                            const day = detail.get(cell.date)
+                            if (!day) return
+                            const r = e.currentTarget.getBoundingClientRect()
+                            setHover({ x: r.left + r.width / 2, top: r.top, bottom: r.bottom, day })
+                          }}
+                          onMouseLeave={() => setHover(null)}
                         />
                       ))}
                   </div>
@@ -124,5 +136,47 @@ export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; 
         </div>
       )}
     </Panel>
+    {hover && (() => {
+      const d = hover.day
+      const above = hover.top > 260
+      return (
+        <div
+          className="pointer-events-none fixed z-50 w-56 rounded-md border border-line-2 bg-bg-2/95 px-3 py-2.5 font-mono text-[11px] shadow-xl backdrop-blur"
+          style={{
+            left: hover.x,
+            top: above ? hover.top : hover.bottom,
+            transform: above ? 'translate(-50%, calc(-100% - 10px))' : 'translate(-50%, 10px)',
+          }}
+        >
+          <div className="flex items-baseline justify-between gap-3 border-b border-line-faint pb-2">
+            <span className="text-fg-dim">{WEEKDAYS[dowMonday(parseDate(d.date))]} · {fmtDayLabel(d.date)}</span>
+            <span className="tnum text-cost">{d.cost > 0 ? fmtCost(d.cost) : '—'}</span>
+          </div>
+          {d.cost > 0 ? (
+            <>
+              <div className="grid grid-cols-3 gap-2 py-2 text-[10px]">
+                <div><div className="text-fg-faint">calls</div><div className="tnum text-fg">{fmtNum(d.calls)}</div></div>
+                <div><div className="text-fg-faint">tokens</div><div className="tnum text-fg">{fmtTokens(d.tokens)}</div></div>
+                <div><div className="text-fg-faint">saved</div><div className="tnum text-positive">{fmtCost(d.cacheSavings)}</div></div>
+              </div>
+              <div className="flex flex-col gap-1 border-t border-line-faint pt-2">
+                {d.models.slice(0, 5).map(m => (
+                  <div key={m.name} className="flex items-center gap-2">
+                    <span className="size-1.5 shrink-0 rounded-full" style={{ background: modelColor(m.name) }} />
+                    <span className="min-w-0 flex-1 truncate text-fg-dim">{shortModel(m.name)}</span>
+                    <span className="tnum shrink-0 text-fg-faint">{fmtPct(m.cost / d.cost)}</span>
+                    <span className="tnum w-14 shrink-0 text-right text-fg">{fmtCost(m.cost)}</span>
+                  </div>
+                ))}
+                {d.models.length > 5 && <div className="pt-0.5 text-fg-faint">+{d.models.length - 5} more models</div>}
+              </div>
+            </>
+          ) : (
+            <div className="pt-2 text-fg-faint">no spend this day</div>
+          )}
+        </div>
+      )
+    })()}
+    </>
   )
 }

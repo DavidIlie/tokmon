@@ -70,6 +70,14 @@ export interface TimelinePoint {
   tokens: number
   byProvider: Record<string, number>
 }
+export interface CalendarDay {
+  date: string
+  cost: number
+  tokens: number
+  calls: number
+  cacheSavings: number
+  models: { name: string; cost: number }[]
+}
 
 export interface Derived {
   filteredAccounts: WebAccount[]
@@ -88,7 +96,7 @@ export interface Derived {
   fullByProvider: ProviderAgg[]
   cumulative: { date: string; total: number }[]
   cacheSavingsSeries: { date: string; value: number }[]
-  calendar: { date: string; cost: number }[]
+  calendar: CalendarDay[]
   byProvider: ProviderAgg[]
   byModel: ModelAgg[]
   tokenComposition: { input: number; output: number; cacheCreate: number; cacheRead: number }
@@ -298,7 +306,33 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
   const cacheSavingsSeries = timeline.map(p => ({ date: p.date, value: acc.cacheByDay.get(p.date) ?? 0 }))
   // Calendar is a history view — always all-time (provider/model filters still apply),
   // never clipped to the period window, which a daily heatmap would render meaningless.
-  const calendar = fullTimeline.map(p => ({ date: p.date, cost: p.total }))
+  // Carry per-day model spend + call/token/savings detail for the hover card.
+  const dayDetail = new Map<string, { tokens: number; calls: number; cacheSavings: number; models: Map<string, number> }>()
+  for (const a of accounts) {
+    for (const row of a.table?.daily ?? []) {
+      const bd = modelSet ? row.breakdown.filter(m => modelSet.has(m.name)) : row.breakdown
+      if (modelSet && bd.length === 0) continue
+      let dd = dayDetail.get(row.label)
+      if (!dd) { dd = { tokens: 0, calls: 0, cacheSavings: 0, models: new Map() }; dayDetail.set(row.label, dd) }
+      for (const m of bd) {
+        dd.tokens += m.input + m.output + m.cacheCreate + m.cacheRead
+        dd.calls += m.count
+        dd.cacheSavings += m.cacheSavings
+        dd.models.set(m.name, (dd.models.get(m.name) ?? 0) + m.cost)
+      }
+    }
+  }
+  const calendar: CalendarDay[] = fullTimeline.map(p => {
+    const dd = dayDetail.get(p.date)
+    return {
+      date: p.date,
+      cost: p.total,
+      tokens: dd?.tokens ?? 0,
+      calls: dd?.calls ?? 0,
+      cacheSavings: dd?.cacheSavings ?? 0,
+      models: dd ? [...dd.models.entries()].map(([name, cost]) => ({ name, cost })).sort((x, y) => y.cost - x.cost) : [],
+    }
+  })
 
   const byProvider = [...acc.provAgg.values()].sort((x, y) => y.cost - x.cost)
   const byModel = buildByModel(acc, timeline, acc.totals.cost)

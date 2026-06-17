@@ -28,11 +28,13 @@ function Kpi({ label, value, accent = 'text-fg-bright', spark, sparkColor }: {
   sparkColor?: string
 }) {
   return (
-    <div className="rise flex flex-col rounded-md border border-line bg-bg-1/80 p-3.5">
+    <div className="rise flex flex-col rounded-md border border-line bg-bg-1/80 p-3.5 transition-colors hover:border-line-2">
       <div className="font-display text-[10px] uppercase tracking-wide text-fg-faint">{label}</div>
       <div className={`tnum mt-1.5 text-2xl ${accent}`}>{value}</div>
       {spark && spark.length > 1 && (
-        <Sparkline data={spark} color={sparkColor ?? 'currentColor'} className="mt-auto block pt-2 text-base opacity-70" />
+        <div className="mt-auto overflow-hidden pt-2 text-right">
+          <Sparkline data={spark} color={sparkColor ?? 'currentColor'} className="text-sm opacity-70" />
+        </div>
       )}
     </div>
   )

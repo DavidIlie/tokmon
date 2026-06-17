@@ -1,4 +1,5 @@
-import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts'
+import { useState } from 'react'
+import { Bar, BarChart, Cell, LabelList, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts'
 import type { Derived } from '../../lib/derive'
 import { fmtCost, fmtCostAxis, fmtPct, fmtTokens } from '../../lib/format'
 import { shortModel, TOKEN_BUCKET } from '../../lib/colors'
@@ -6,6 +7,7 @@ import { AXIS, ChartShell, GRID, makeTooltip } from '../chart'
 import { EmptyHint, Panel } from '../ui'
 
 const BAR_FILL = { fill: 'var(--color-bg-2)' }
+const BAR_LABEL = { fill: 'var(--color-fg-dim)', fontSize: 10, fontFamily: 'var(--font-mono)' } as const
 
 const modelTip = makeTooltip(
   p => [{ label: 'cost', value: fmtCost(p[0]?.value ?? 0), color: p[0]?.color }],
@@ -35,13 +37,15 @@ export function CostByModel({ derived, height = 280, limit = 10, metric = 'cost'
       {top.length === 0 ? <EmptyHint>no models in range</EmptyHint> : (
         <ChartShell height={height}>
           <ResponsiveContainer>
-            <BarChart data={top} layout="vertical" margin={{ top: 4, right: 12, left: 4, bottom: 0 }}>
+            <BarChart data={top} layout="vertical" margin={{ top: 4, right: 60, left: 4, bottom: 0 }}>
               <CartesianGrid {...GRID} horizontal={false} vertical />
               <XAxis type="number" {...AXIS} tickFormatter={isTokens ? fmtTokens : fmtCostAxis} />
               <YAxis type="category" dataKey="model" {...AXIS} width={124} tickFormatter={shortModel} />
               <Tooltip content={isTokens ? tokensTip : modelTip} cursor={BAR_FILL} />
               <Bar dataKey={isTokens ? 'tokens' : 'cost'} radius={[0, 3, 3, 0]} isAnimationActive animationDuration={350}>
                 {top.map(m => <Cell key={m.model} fill={m.color} />)}
+                <LabelList dataKey={isTokens ? 'tokens' : 'cost'} position="right" offset={6} {...BAR_LABEL}
+                  formatter={(v: number) => (isTokens ? fmtTokens(v) : fmtCost(v))} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -65,12 +69,14 @@ export function CacheByModel({ derived, height = 240, limit = 12 }: {
       {top.length === 0 ? <EmptyHint>no cache savings in range</EmptyHint> : (
         <ChartShell height={height}>
           <ResponsiveContainer>
-            <BarChart data={top} layout="vertical" margin={{ top: 4, right: 12, left: 4, bottom: 0 }}>
+            <BarChart data={top} layout="vertical" margin={{ top: 4, right: 60, left: 4, bottom: 0 }}>
               <CartesianGrid {...GRID} horizontal={false} vertical />
               <XAxis type="number" {...AXIS} tickFormatter={fmtCostAxis} />
               <YAxis type="category" dataKey="model" {...AXIS} width={124} tickFormatter={shortModel} />
               <Tooltip content={cacheTip} cursor={BAR_FILL} />
-              <Bar dataKey="cacheSavings" radius={[0, 3, 3, 0]} fill="var(--color-positive)" isAnimationActive animationDuration={350} />
+              <Bar dataKey="cacheSavings" radius={[0, 3, 3, 0]} fill="var(--color-positive)" isAnimationActive animationDuration={350}>
+                <LabelList dataKey="cacheSavings" position="right" offset={6} {...BAR_LABEL} formatter={(v: number) => fmtCost(v)} />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </ChartShell>
@@ -79,22 +85,15 @@ export function CacheByModel({ derived, height = 240, limit = 12 }: {
   )
 }
 
-const provTip = makeTooltip(
-  p => {
-    const row = p[0]
-    const d = row?.payload as { cost?: number } | undefined
-    return [{ label: 'cost', value: fmtCost(d?.cost ?? row?.value ?? 0), color: row?.color }]
-  },
-  { title: l => l },
-)
-
 export function ProviderDonut({ derived, height = 280 }: { derived: Derived; height?: number }) {
   const data = derived.byProvider
   const total = derived.totals.cost
+  const [active, setActive] = useState<number | null>(null)
+  const focus = active != null ? data[active] : null
   return (
     <Panel title="provider split" captureName="provider-split">
       {data.length === 0 ? <EmptyHint>no spend in range</EmptyHint> : (
-        <div className="relative">
+        <div className="relative" onMouseLeave={() => setActive(null)}>
           <ChartShell height={height}>
             <ResponsiveContainer>
               <PieChart>
@@ -102,16 +101,26 @@ export function ProviderDonut({ derived, height = 280 }: { derived: Derived; hei
                   data={data} dataKey="cost" nameKey="name" innerRadius="60%" outerRadius="88%"
                   paddingAngle={data.length > 1 ? 2 : 0} stroke="var(--color-bg-1)" strokeWidth={2}
                   isAnimationActive animationDuration={350}
+                  onMouseEnter={(_, i) => setActive(i)}
                 >
-                  {data.map(p => <Cell key={p.id} fill={p.color} />)}
+                  {data.map((p, i) => (
+                    <Cell
+                      key={p.id} fill={p.color}
+                      fillOpacity={active == null || active === i ? 1 : 0.32}
+                      style={{ transition: 'fill-opacity 150ms ease' }}
+                    />
+                  ))}
                 </Pie>
-                <Tooltip content={provTip} offset={16} allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ pointerEvents: 'none', zIndex: 10 }} />
               </PieChart>
             </ResponsiveContainer>
           </ChartShell>
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-            <div className="tnum text-xl text-fg-bright">{fmtCost(total)}</div>
-            <div className="font-display text-[10px] uppercase tracking-wide text-fg-faint">total</div>
+            <div className="tnum text-xl" style={{ color: focus ? focus.color : 'var(--color-fg-bright)' }}>
+              {fmtCost(focus ? focus.cost : total)}
+            </div>
+            <div className="font-display text-[10px] uppercase tracking-wide text-fg-faint">
+              {focus ? `${focus.name} · ${fmtPct(total > 0 ? focus.cost / total : 0)}` : 'total'}
+            </div>
           </div>
         </div>
       )}

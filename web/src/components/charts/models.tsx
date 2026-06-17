@@ -38,7 +38,7 @@ export function ModelLeaderboard({ derived, limit }: { derived: Derived; limit?:
       {rows.length === 0 ? <EmptyHint>no models in range</EmptyHint> : (
         <div className="mt-6 flex flex-col">
           <div
-            className="grid items-center gap-x-3 border-b border-line pb-1.5 font-display text-[10px] uppercase tracking-wide text-fg-faint"
+            className="grid items-center gap-x-3 border-b border-line px-2 pb-1.5 font-display text-[10px] uppercase tracking-wide text-fg-faint"
             style={{ gridTemplateColumns: COLS }}
           >
             <span />
@@ -54,10 +54,10 @@ export function ModelLeaderboard({ derived, limit }: { derived: Derived; limit?:
           {rows.map((m, i) => (
             <div
               key={m.model}
-              className="grid items-center gap-x-3 border-b border-line-faint py-2 last:border-0"
+              className="grid items-center gap-x-3 rounded border-b border-line-faint px-2 py-2 transition-colors last:border-0 hover:bg-bg-2/40"
               style={{ gridTemplateColumns: COLS }}
             >
-              <span className="tnum text-xs text-fg-faint">#{i + 1}</span>
+              <span className={`tnum text-xs ${i === 0 ? 'font-medium text-accent' : i < 3 ? 'text-fg-dim' : 'text-fg-faint'}`}>#{i + 1}</span>
               <span className="flex min-w-0 items-center gap-2">
                 <span className="size-2 shrink-0 rounded-[2px]" style={{ background: m.color }} />
                 <span className="truncate text-fg" title={m.model}>{shortModel(m.model)}</span>
