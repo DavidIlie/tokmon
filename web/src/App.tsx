@@ -180,7 +180,7 @@ export function App() {
             {tab === 'overview' && <OverviewTab derived={derived} periodLabel={periodLabel} scopeLabel={scopeLabel} providers={snapshot.providers} />}
             {tab === 'analytics' && <AnalyticsTab derived={derived} scopeLabel={scopeLabel} />}
             {tab === 'models' && <ModelsTab derived={derived} scopeLabel={scopeLabel} />}
-            {tab === 'explore' && <ExploreTab snapshot={snapshot} filters={filters} />}
+            {tab === 'explore' && <ExploreTab snapshot={snapshot} filters={filters} periodLabel={periodLabel} />}
           </div>
         )}
       </main>

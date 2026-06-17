@@ -1,9 +1,11 @@
 import { forwardRef } from 'react'
 import type { Derived } from '../lib/derive'
-import { fmtCost, fmtNum, fmtTokens } from '../lib/format'
+import { fmtCost, fmtNum, fmtPct, fmtTokens } from '../lib/format'
 import { shortModel } from '../lib/colors'
 import { Sparkline } from './ui'
 import { Watermark } from './Watermark'
+
+const scopeLabel = (p: string) => (p === 'all time' ? 'all time' : `last ${p}`)
 
 export interface SummaryOpts {
   glow: boolean
@@ -19,7 +21,7 @@ export const SummaryCard = forwardRef<HTMLDivElement, {
   version: string
   opts: SummaryOpts
 }>(function SummaryCard({ derived, periodLabel, tz, version, opts }, ref) {
-  const top = derived.byModel[0]
+  const models = derived.byModel.slice(0, 5)
   return (
     <div
       ref={ref}
@@ -38,22 +40,40 @@ export const SummaryCard = forwardRef<HTMLDivElement, {
         <span className="size-3 rounded-full bg-warning" />
         <span className="size-3 rounded-full bg-cost" />
         <span className="size-3 rounded-full bg-positive" />
-        <span className="ml-3 text-sm text-fg-dim">tokmon — usage · last {periodLabel}</span>
+        <span className="ml-3 text-sm text-fg-dim">tokmon — usage · {scopeLabel(periodLabel)}</span>
         <span className="ml-auto text-xs text-fg-faint">{tz}</span>
       </div>
 
-      <div className="flex flex-1 flex-col px-9 py-7">
-        <div className="font-display text-xs uppercase tracking-widest text-fg-faint">total spend</div>
-        <div className="tnum mt-1 text-cost" style={{ fontSize: 72, lineHeight: 1 }}>{fmtCost(derived.totals.cost)}</div>
-        <div className="mt-5">
-          <Sparkline data={derived.timeline.map(t => t.total)} color="var(--color-accent)" className="text-3xl" />
+      <div className="flex flex-1 gap-9 px-9 py-7">
+        <div className="flex w-[300px] shrink-0 flex-col">
+          <div className="font-display text-xs uppercase tracking-widest text-fg-faint">total spend</div>
+          <div className="tnum mt-1 text-cost" style={{ fontSize: 64, lineHeight: 1 }}>{fmtCost(derived.totals.cost)}</div>
+          <div className="mt-auto flex flex-col gap-3">
+            <ShareStat label="tokens" value={fmtTokens(derived.totals.tokens)} />
+            <ShareStat label="cache saved" value={fmtCost(derived.totals.cacheSavings)} className="text-positive" />
+            <ShareStat label="calls" value={fmtNum(derived.totals.calls)} />
+          </div>
         </div>
-        <div className="mt-auto grid grid-cols-4 gap-4 border-t border-line pt-5">
-          <ShareStat label="tokens" value={fmtTokens(derived.totals.tokens)} />
-          <ShareStat label="cache saved" value={fmtCost(derived.totals.cacheSavings)} className="text-positive" />
-          <ShareStat label="calls" value={fmtNum(derived.totals.calls)} />
-          <ShareStat label="top model" value={top ? shortModel(top.model) : '—'} />
+        <div className="flex flex-1 flex-col gap-2 border-l border-line pl-9">
+          <div className="font-display text-xs uppercase tracking-widest text-fg-faint">top models · {scopeLabel(periodLabel)}</div>
+          {models.length === 0
+            ? <div className="flex flex-1 items-center text-sm text-fg-faint">no model usage in range</div>
+            : models.map(m => (
+              <div key={m.model} className="flex items-center gap-3">
+                <span className="size-2 shrink-0 rounded-[2px]" style={{ background: m.color }} />
+                <span className="w-28 shrink-0 truncate text-sm text-fg">{shortModel(m.model)}</span>
+                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-3">
+                  <span className="block h-full rounded-full" style={{ width: `${Math.min(100, m.share * 100)}%`, minWidth: 2, background: m.color }} />
+                </span>
+                <span className="tnum w-10 shrink-0 text-right text-xs text-fg-faint">{fmtPct(m.share)}</span>
+                <span className="tnum w-20 shrink-0 text-right text-sm text-cost">{fmtCost(m.cost)}</span>
+              </div>
+            ))}
         </div>
+      </div>
+
+      <div className="border-t border-line px-9 pt-3">
+        <Sparkline data={derived.timeline.map(t => t.total)} color="var(--color-accent)" className="text-2xl tracking-tight" />
       </div>
 
       <div className="flex items-center justify-between border-t border-line px-9 py-3.5">

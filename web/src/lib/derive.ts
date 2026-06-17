@@ -15,7 +15,8 @@ export const DEFAULT_FILTERS: Filters = {
   providers: [],
   models: [],
   account: 'all',
-  period: '30d',
+  // Default to full history so first paint shows everything; chips narrow from there.
+  period: 'all',
 }
 
 export const PERIODS: { key: PeriodKey; label: string }[] = [
@@ -158,6 +159,19 @@ function rangeStartOf(period: PeriodKey, latest: string | null): string | null {
   if (period === 'mtd') return latest.slice(0, 7) + '-01'
   const days = period === '7d' ? 7 : period === '90d' ? 90 : 30
   return fmtDay(parseDay(latest) - (days - 1) * DAY)
+}
+
+// Explore window: bucket SIZE (granularity) is decoupled from window LENGTH (period).
+// Daily honors the period exactly; weekly/monthly widen to a floor (~12 buckets) so a
+// short period never collapses them to one row — and 'all' always stays all-time.
+function granRangeStart(period: PeriodKey, gran: Granularity, latest: string | null): string | null {
+  if (!latest || period === 'all') return null
+  const periodStart = rangeStartOf(period, latest)
+  if (gran === 'daily') return periodStart
+  const floorDays = gran === 'monthly' ? 365 : 84
+  const floorStart = fmtDay(parseDay(latest) - (floorDays - 1) * DAY)
+  // The earlier (smaller) start wins, so coarse views show at least the floor.
+  return periodStart && periodStart < floorStart ? periodStart : floorStart
 }
 
 function summaryTotals(a: WebAccount, which: 'today' | 'week' | 'month'): Totals {
@@ -311,31 +325,15 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
 
   const timeline = buildTimeline(acc)
 
-  // The calendar is always all-time. When a period window clips `acc`, do a second
-  // unwindowed pass for it; when period='all' the windowed pass already IS all-time,
-  // so reuse `timeline` and skip the redundant ~full re-accumulation.
-  let fullTimeline = timeline
-  if (rangeStart) {
-    const accAll = makeAccState()
-    for (const a of accounts) {
-      const pid = a.providerId
-      const color = providerColor.get(pid) ?? a.color
-      for (const row of a.table?.daily ?? []) {
-        accumulateDayRow(accAll, row, pid, color, modelSet)
-      }
-    }
-    fullTimeline = buildTimeline(accAll)
-  }
-
   let running = 0
   const cumulative = timeline.map(p => { running += p.total; return { date: p.date, total: running } })
   const cacheSavingsSeries = timeline.map(p => ({ date: p.date, value: acc.cacheByDay.get(p.date) ?? 0 }))
-  // Calendar is a history view — always all-time (provider/model filters still apply),
-  // never clipped to the period window, which a daily heatmap would render meaningless.
-  // Carry per-day model spend + call/token/savings detail for the hover card.
+  // Calendar reflects the selected period (scoped via inRange, like every other panel);
+  // carries per-day model spend + call/token/savings detail for the hover card.
   const dayDetail = new Map<string, { tokens: number; calls: number; cacheSavings: number; models: Map<string, number> }>()
   for (const a of accounts) {
     for (const row of a.table?.daily ?? []) {
+      if (!inRange(row.label)) continue
       const bd = modelSet ? row.breakdown.filter(m => modelSet.has(m.name)) : row.breakdown
       if (modelSet && bd.length === 0) continue
       let dd = dayDetail.get(row.label)
@@ -348,7 +346,7 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
       }
     }
   }
-  const calendar: CalendarDay[] = fullTimeline.map(p => {
+  const calendar: CalendarDay[] = timeline.map(p => {
     const dd = dayDetail.get(p.date)
     return {
       date: p.date,
@@ -379,7 +377,7 @@ export function exploreRows(snap: WebSnapshot | null, f: Filters, gran: Granular
   if (!snap) return []
   const accounts = selectAccounts(snap, f)
   const latest = latestDayOf(accounts)
-  const dailyCut = rangeStartOf(f.period, latest)
+  const dailyCut = granRangeStart(f.period, gran, latest)
   const cutoff = !dailyCut ? null
     : gran === 'monthly' ? dailyCut.slice(0, 7)
       : gran === 'weekly' ? weekStartStr(dailyCut)

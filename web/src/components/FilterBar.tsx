@@ -61,17 +61,20 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
               </button>
             )
           })}
-          {billingProviders.map(p => (
+          {billingProviders.length > 0 && (
             <span
-              key={p.id}
-              className="flex cursor-default items-center gap-1.5 rounded border border-dashed border-line px-2 py-0.5 text-xs text-fg-faint"
-              title={`${p.name} is billing-only — shown as a card, no usage timeline to filter`}
+              className="flex items-center gap-1.5 text-xs text-fg-faint"
+              title="Billing-only providers — shown as cards with plan & quota; no usage timeline to filter"
             >
-              <span style={{ color: p.color, opacity: 0.6 }} aria-hidden>●</span>
-              {p.name}
-              <span className="text-[9px] uppercase tracking-wide text-fg-faint/70">billing</span>
+              {chipProviders.length > 0 && <span className="text-line-2">|</span>}
+              <span>billing-only:</span>
+              {billingProviders.map(p => (
+                <span key={p.id} className="flex items-center gap-1 text-fg-dim">
+                  <span style={{ color: p.color, opacity: 0.55 }} aria-hidden>·</span>{p.name}
+                </span>
+              ))}
             </span>
-          ))}
+          )}
         </div>
 
         <div className="flex w-full flex-wrap items-center gap-2 md:ml-auto md:w-auto">

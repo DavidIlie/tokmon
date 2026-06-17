@@ -66,9 +66,9 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
   const dateColLabel = granLabel === 'monthly' ? 'month' : granLabel === 'weekly' ? 'week' : 'date'
 
   return (
-    <Panel title={`explore · ${granLabel}`} captureName="explore" className="flex flex-1 flex-col" bodyClassName="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-auto">
-        <table className="mx-auto w-full max-w-[1100px] border-collapse text-xs">
+    <Panel title={`explore · ${granLabel}`} captureName="explore">
+      <div className="max-h-[calc(100vh-240px)] overflow-auto">
+        <table className="w-full max-w-[1100px] border-collapse text-xs">
           <colgroup>
             <col />
             <col style={{ width: '34%' }} />

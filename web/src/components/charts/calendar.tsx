@@ -24,7 +24,7 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 interface Cell { date: string; cost: number; level: number }
 
-export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; maxWeeks?: number }) {
+export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { derived: Derived; maxWeeks?: number; periodLabel?: string }) {
   const [hover, setHover] = useState<Hover | null>(null)
   const detail = useMemo(() => new Map(derived.calendar.map(c => [c.date, c])), [derived.calendar])
   const stats = useMemo(() => {
@@ -79,7 +79,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; 
 
   return (
     <>
-    <Panel title="daily spend" titleTag="all-time" captureName="calendar">
+    <Panel title="daily spend" titleTag={periodLabel} captureName="calendar">
       {!grid || !stats ? <div className="py-6 text-center text-xs text-fg-faint">no spend yet</div> : (
         <div className="grid gap-x-8 gap-y-5 pt-1 md:grid-cols-[minmax(0,1fr)_210px] md:items-center">
           {/* Heatmap stretches to fill the row — no more dead space on the right. */}
