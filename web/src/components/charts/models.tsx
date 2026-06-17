@@ -77,7 +77,7 @@ export function ModelLeaderboard({ derived, limit, periodLabel }: { derived: Der
               <span className="tnum text-right text-xs text-cost">{fmtCost(m.cost)}</span>
               <span className="overflow-hidden text-right"><Sparkline data={m.trend.slice(-30)} color={m.color} className="text-sm" /></span>
               <span className="tnum hidden text-right text-xs text-fg-dim lg:block">{fmtCost(m.calls ? m.cost / m.calls : 0)}</span>
-              <span className={`tnum text-right text-xs text-fg-dim ${tokCls}`}>{fmtTokens(m.tokens)}</span>
+              <span className={`tnum text-right text-xs text-fg-dim ${tokCls}`}>{m.tokens > 0 ? fmtTokens(m.tokens) : <span className="text-fg-faint">—</span>}</span>
               <span className={`tnum text-right text-xs text-fg-faint ${callCls}`}>{fmtNum(m.calls)}</span>
             </div>
           ))}

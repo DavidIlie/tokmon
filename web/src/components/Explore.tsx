@@ -143,7 +143,7 @@ function FragmentRow({ row, isOpen, onToggle }: { row: TableRow; isOpen: boolean
         <td className="py-2 pr-3 text-fg-dim">
           <span className="line-clamp-1">{row.models.map(shortModel).join(', ')}</span>
         </td>
-        <td className="tnum py-2 pr-3 text-right text-fg">{fmtTokens(row.total)}</td>
+        <td className="tnum py-2 pr-3 text-right text-fg">{row.total > 0 ? fmtTokens(row.total) : <span className="text-fg-faint">—</span>}</td>
         <td className="tnum hidden py-2 pr-3 text-right text-positive sm:table-cell">{fmtCost(row.cacheSavings)}</td>
         <td className="tnum hidden py-2 pr-3 text-right text-fg-dim sm:table-cell">{fmtCount(row.count)}</td>
         <td className="tnum py-2 text-right text-cost">{fmtCost(row.cost)}</td>
@@ -154,7 +154,7 @@ function FragmentRow({ row, isOpen, onToggle }: { row: TableRow; isOpen: boolean
             <span className="mr-1.5 inline-block size-1.5 rounded-full align-middle" style={{ background: modelColor(m.name) }} />
             {shortModel(m.name)}
           </td>
-          <td className="tnum py-1.5 pr-3 text-right text-fg-dim">{fmtTokens(m.input + m.output + m.cacheCreate + m.cacheRead)}</td>
+          <td className="tnum py-1.5 pr-3 text-right text-fg-dim">{(m.input + m.output + m.cacheCreate + m.cacheRead) > 0 ? fmtTokens(m.input + m.output + m.cacheCreate + m.cacheRead) : <span className="text-fg-faint">—</span>}</td>
           <td className="tnum py-1.5 pr-3 text-right text-positive/80">{fmtCost(m.cacheSavings)}</td>
           <td className="tnum py-1.5 pr-3 text-right text-fg-faint">{fmtNum(m.count)}</td>
           <td className="tnum py-1.5 text-right text-cost/90">{fmtCost(m.cost)}</td>

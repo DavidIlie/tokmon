@@ -25,7 +25,10 @@ export async function resolveAccounts(config: Config): Promise<ResolvedAccount[]
     const p = PROVIDERS[a.providerId]
     return {
       account: a,
-      hasUsage: p.hasUsage,
+      // Web-only: a provider with a usage table (e.g. Cursor's local composer history)
+      // shows in the dashboard's leaderboard/calendar/explore even when its TUI flag is
+      // false. The TUI reads PROVIDERS[id].hasUsage directly, so it is unaffected.
+      hasUsage: p.hasUsage || !!p.fetchTable,
       hasBilling: p.hasBilling,
       color: colorHex(a.color, PROVIDERS[a.providerId].color),
     }
