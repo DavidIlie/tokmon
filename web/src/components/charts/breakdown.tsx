@@ -12,7 +12,11 @@ const modelTip = makeTooltip(
   { title: l => shortModel(l) },
 )
 
-export function CostByModel({ derived, height = 280, limit = 10 }: { derived: Derived; height?: number; limit?: number }) {
+export function CostByModel({ derived, height = 280, limit = 10 }: {
+  derived: Derived
+  height?: number
+  limit?: number
+}) {
   const top = derived.byModel.slice(0, limit)
   return (
     <Panel title="cost by model" captureName="cost-by-model">

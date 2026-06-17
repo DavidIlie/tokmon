@@ -21,7 +21,11 @@ const costTip = makeTooltip(payload => {
   return rows
 })
 
-export function CostTimeline({ derived, title = 'cost over time', height = 260 }: { derived: Derived; title?: string; height?: number }) {
+export function CostTimeline({ derived, title = 'cost over time', height = 260 }: {
+  derived: Derived
+  title?: string
+  height?: number
+}) {
   const [scale, setScale] = useState<Scale>('linear')
   const provs = derived.byProvider
   const data = derived.timeline.map(p => {
@@ -31,7 +35,19 @@ export function CostTimeline({ derived, title = 'cost over time', height = 260 }
     return row
   })
   return (
-    <Panel title={title} captureName="cost-over-time" right={<Segmented options={SCALE_OPTIONS} value={scale} onChange={setScale} size="xs" containerClassName="flex items-center overflow-hidden rounded border border-line text-[10px]" />}>
+    <Panel
+      title={title}
+      captureName="cost-over-time"
+      right={
+        <Segmented
+          options={SCALE_OPTIONS}
+          value={scale}
+          onChange={setScale}
+          size="xs"
+          containerClassName="flex items-center overflow-hidden rounded border border-line text-[10px]"
+        />
+      }
+    >
       {data.length === 0 ? <EmptyHint>no spend in range</EmptyHint> : (
         <ChartShell height={height}>
           <ResponsiveContainer>

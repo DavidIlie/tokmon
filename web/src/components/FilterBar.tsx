@@ -14,7 +14,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
   const accounts = snapshot?.accounts.filter(a => a.hasUsage) ?? []
   const activeProv = (id: string) => filters.providers.length === 0 || filters.providers.includes(id)
 
-  const toggleProvider = (id: string) => setFilters(f => {
+  const handleToggleProvider = (id: string) => setFilters(f => {
     const has = f.providers.includes(id)
     return { ...f, providers: has ? f.providers.filter(p => p !== id) : [...f.providers, id] }
   })
@@ -33,7 +33,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
             return (
               <button
                 key={p.id}
-                onClick={() => toggleProvider(p.id)}
+                onClick={() => handleToggleProvider(p.id)}
                 className={`flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs transition ${
                   on ? 'bg-bg-2' : 'bg-transparent hover:border-line-2'
                 }`}
@@ -52,10 +52,15 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {accounts.length > 1 && (
-            <Dropdown label="account" value={filters.account === 'all' ? 'All' : (accounts.find(a => a.id === filters.account)?.name ?? 'All')}>
+            <Dropdown
+              label="account"
+              value={filters.account === 'all' ? 'All' : (accounts.find(a => a.id === filters.account)?.name ?? 'All')}
+            >
               {close => (
                 <Menu>
-                  <MenuItem active={filters.account === 'all'} onClick={() => { setFilters(f => ({ ...f, account: 'all' })); close() }}>All accounts</MenuItem>
+                  <MenuItem active={filters.account === 'all'} onClick={() => { setFilters(f => ({ ...f, account: 'all' })); close() }}>
+                    All accounts
+                  </MenuItem>
                   {accounts.map(a => (
                     <MenuItem key={a.id} active={filters.account === a.id} onClick={() => { setFilters(f => ({ ...f, account: a.id })); close() }}>
                       <span style={{ color: a.color }}>●</span> {a.name}
@@ -66,13 +71,20 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
             </Dropdown>
           )}
 
-          <Dropdown label="model" value={filters.models.length === 0 ? 'all' : filters.models.length === 1 ? shortModel(filters.models[0]) : `${filters.models.length} models`}>
+          <Dropdown
+            label="model"
+            value={filters.models.length === 0 ? 'all' : filters.models.length === 1 ? shortModel(filters.models[0]) : `${filters.models.length} models`}
+          >
             {() => (
               <Menu>
-                <MenuItem active={filters.models.length === 0} onClick={() => setFilters(f => ({ ...f, models: [] }))}>All models</MenuItem>
+                <MenuItem active={filters.models.length === 0} onClick={() => setFilters(f => ({ ...f, models: [] }))}>
+                  All models
+                </MenuItem>
                 <div className="my-1 h-px bg-line" />
                 <div className="max-h-64 overflow-y-auto">
-                  {derived.modelOptions.length === 0 && <div className="px-2 py-1 text-xs text-fg-faint">no models in range</div>}
+                  {derived.modelOptions.length === 0 && (
+                    <div className="px-2 py-1 text-xs text-fg-faint">no models in range</div>
+                  )}
                   {derived.modelOptions.map(m => {
                     const on = filters.models.includes(m)
                     return (
@@ -109,4 +121,3 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
     </div>
   )
 }
-

@@ -1,8 +1,6 @@
 import type { ProviderId } from '@shared'
 
-// Mirrors the TUI provider colors as rendered by the user's Terminal.app
-// "Clear Dark" palette (Ink color name → terminal hex). Keep in sync with
-// src/web/colors.ts NAMED_HEX and each provider's `.color`.
+// Keep in sync with TUI palette (Ink color name → terminal hex) and each provider's `.color`.
 export const PROVIDER_HEX: Record<string, string> = {
   claude: '#6caa71', // green
   codex: '#7ccbcd', // cyan

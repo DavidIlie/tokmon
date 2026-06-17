@@ -28,7 +28,11 @@ function Kpi({ label, value, accent = 'text-fg-bright' }: { label: string; value
 
 export function ProviderCards({ accounts }: { accounts: WebAccount[] }) {
   if (accounts.length === 0) {
-    return <Panel title="accounts"><div className="py-6 text-center text-xs text-fg-faint">no accounts match the current filter</div></Panel>
+    return (
+      <Panel title="accounts">
+        <div className="py-6 text-center text-xs text-fg-faint">no accounts match the current filter</div>
+      </Panel>
+    )
   }
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -40,8 +44,8 @@ export function ProviderCards({ accounts }: { accounts: WebAccount[] }) {
 function ProviderCard({ account, index }: { account: WebAccount; index: number }) {
   const d = account.dashboard
   const metrics = account.billing?.metrics ?? []
-  // Match the TUI: cards are colored by PROVIDER (Claude=green), not the
-  // account's custom color (which only marks identity in multi-account views).
+  // Cards are colored by provider (Claude=green), not the account's custom color
+  // which only marks identity in multi-account views — matches the TUI behavior.
   const providerColor = providerHex(account.providerId)
   return (
     <div
@@ -53,7 +57,9 @@ function ProviderCard({ account, index }: { account: WebAccount; index: number }
           <span style={{ color: providerColor }}>●</span>
           <span className="font-display text-sm tracking-wide text-fg-bright">{account.name}</span>
         </div>
-        {account.billing?.plan && <span className="rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-dim">{account.billing.plan}</span>}
+        {account.billing?.plan && (
+          <span className="rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-dim">{account.billing.plan}</span>
+        )}
       </div>
 
       {d ? (
@@ -108,14 +114,22 @@ function QuotaBar({ metric }: { metric: Metric }) {
     : metric.limit != null && metric.limit > 0
       ? Math.min(1, Math.max(0, metric.used / metric.limit))
       : null
-  const color = ratio == null ? 'var(--color-accent)' : ratio >= 0.9 ? 'var(--color-warning)' : ratio >= 0.7 ? 'var(--color-cost)' : 'var(--color-positive)'
+  const color = ratio == null
+    ? 'var(--color-accent)'
+    : ratio >= 0.9 ? 'var(--color-warning)'
+    : ratio >= 0.7 ? 'var(--color-cost)'
+    : 'var(--color-positive)'
   return (
     <div>
       <div className="flex items-center justify-between text-[11px]">
         <span className="truncate text-fg-dim">{metric.label}</span>
         <span className="tnum text-fg">
           {fmtMetricValue(metric)}
-          {metric.format.kind !== 'percent' && metric.limit != null && <span className="text-fg-faint"> / {metric.format.kind === 'dollars' ? fmtCost(metric.limit) : fmtNum(metric.limit)}</span>}
+          {metric.format.kind !== 'percent' && metric.limit != null && (
+            <span className="text-fg-faint">
+              {' / '}{metric.format.kind === 'dollars' ? fmtCost(metric.limit) : fmtNum(metric.limit)}
+            </span>
+          )}
           {metric.resetsAt && <span className="ml-1.5 text-fg-faint">· {metric.resetsAt}</span>}
         </span>
       </div>

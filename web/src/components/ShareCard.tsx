@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { Derived } from '../lib/derive'
 import { fmtCost, fmtNum, fmtTokens } from '../lib/format'
 import { shortModel } from '../lib/colors'
@@ -7,12 +8,15 @@ import { Check, Copy, Download, Share } from './icons'
 import { Sparkline } from './ui'
 
 export function ShareControl({ derived, periodLabel, tz, version }: {
-  derived: Derived; periodLabel: string; tz: string; version: string
+  derived: Derived
+  periodLabel: string
+  tz: string
+  version: string
 }) {
   const cardRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -21,11 +25,17 @@ export function ShareControl({ derived, periodLabel, tz, version }: {
     return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
-  const onDownload = async () => { if (cardRef.current) await downloadNode(cardRef.current, shareFilename('summary'), { pixelRatio: 2 }); setOpen(false) }
-  const onCopy = async () => {
+  const handleDownload = async () => {
+    if (cardRef.current) await downloadNode(cardRef.current, shareFilename('summary'), { pixelRatio: 2 })
+    setOpen(false)
+  }
+
+  const handleCopy = async () => {
     if (!cardRef.current) return
     const ok = await copyNode(cardRef.current, { pixelRatio: 2 })
-    setCopied(ok); setTimeout(() => setCopied(false), 1400); setOpen(false)
+    setCopied(ok)
+    setTimeout(() => setCopied(false), 1400)
+    setOpen(false)
   }
 
   const top = derived.byModel[0]
@@ -40,13 +50,15 @@ export function ShareControl({ derived, periodLabel, tz, version }: {
         {copied ? <Check className="size-3.5 text-positive" /> : <Share className="size-3.5" />}
         <span>{copied ? 'copied' : 'share'}</span>
       </button>
+
       {open && (
         <div className="absolute right-0 z-40 mt-1 w-44 rounded-md border border-line-2 bg-bg-2 p-1 shadow-xl">
-          <MenuBtn onClick={onDownload}><Download className="size-3.5" /> Download PNG</MenuBtn>
-          <MenuBtn onClick={onCopy}><Copy className="size-3.5" /> Copy to clipboard</MenuBtn>
+          <MenuBtn onClick={handleDownload}><Download className="size-3.5" /> Download PNG</MenuBtn>
+          <MenuBtn onClick={handleCopy}><Copy className="size-3.5" /> Copy to clipboard</MenuBtn>
         </div>
       )}
 
+      {/* Off-screen card rendered for html-to-image capture */}
       <div style={{ position: 'fixed', left: -99999, top: 0, pointerEvents: 'none' }} aria-hidden>
         <div
           ref={cardRef}
@@ -101,7 +113,7 @@ function ShareStat({ label, value, color = '#f0f5f6' }: { label: string; value: 
   )
 }
 
-function MenuBtn({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+function MenuBtn({ onClick, children }: { onClick: () => void; children: ReactNode }) {
   return (
     <button onClick={onClick} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-fg-dim transition hover:bg-bg-3 hover:text-fg">
       {children}

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useSnapshot } from './lib/useSnapshot'
-import { useFilters } from './lib/useFilters'
-import { deriveAll, PERIODS } from './lib/derive'
-import { fmtAgo } from './lib/format'
+
 import { FilterBar } from './components/FilterBar'
 import { ShareControl } from './components/ShareCard'
 import { Moon, Sun } from './components/icons'
 import { AnalyticsTab, ExploreTab, ModelsTab, OverviewTab, TABS, type TabKey } from './components/tabs'
+import { deriveAll, PERIODS } from './lib/derive'
+import { fmtAgo } from './lib/format'
+import { useFilters } from './lib/useFilters'
+import { useSnapshot } from './lib/useSnapshot'
 
 function useTab(): [TabKey, (t: TabKey) => void] {
   const read = (): TabKey => {
@@ -31,6 +32,58 @@ function useNow(intervalMs = 1000): number {
   return now
 }
 
+/** Persists only on toggle so a mount effect can never clobber the saved value.
+ *  Initial class is set pre-paint in index.html to avoid flash. */
+function useTheme(): ['dark' | 'light', () => void] {
+  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+    document.documentElement.classList.contains('light') ? 'light' : 'dark')
+  useEffect(() => {
+    // Keep <html> class in sync (idempotent — safe under StrictMode double-invoke).
+    document.documentElement.classList.toggle('light', theme === 'light')
+  }, [theme])
+  const toggle = () => {
+    const next = theme === 'dark' ? 'light' : 'dark'
+    try { localStorage.setItem('tokmon-theme', next) } catch { /* private browsing */ }
+    setTheme(next)
+  }
+  return [theme, toggle]
+}
+
+function ThemeToggle({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
+      aria-label="Toggle theme"
+      className="rounded border border-line bg-bg-1 p-1.5 text-fg-dim transition hover:border-line-2 hover:text-fg"
+    >
+      {theme === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
+    </button>
+  )
+}
+
+function ConnDot({ conn, receivedAt, now }: { conn: string; receivedAt: number | null; now: number }) {
+  const color = conn === 'live' ? 'var(--color-positive)' : conn === 'error' ? 'var(--color-warning)' : 'var(--color-cost)'
+  return (
+    <span className="flex items-center gap-1.5 text-xs">
+      <span className="relative flex size-2">
+        {conn === 'live' && <span className="absolute inline-flex size-full animate-ping rounded-full opacity-60" style={{ background: color }} />}
+        <span className="relative inline-flex size-2 rounded-full" style={{ background: color }} />
+      </span>
+      <span className="text-fg-dim">{conn === 'live' && receivedAt ? fmtAgo(receivedAt, now) : conn}</span>
+    </span>
+  )
+}
+
+function Connecting({ label }: { label: string }) {
+  return (
+    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-2 text-sm text-fg-dim">
+      <span className="font-display text-lg text-fg-dim">tokmon<span className="cursor-blink text-accent">▋</span></span>
+      <span className="text-fg-faint">{label}</span>
+    </div>
+  )
+}
+
 export function App() {
   const { snapshot, conn, receivedAt } = useSnapshot()
   const [filters, setFilters] = useFilters()
@@ -43,8 +96,8 @@ export function App() {
 
   const usageAccts = snapshot?.accounts.filter(a => a.hasUsage) ?? []
   const hasUsage = usageAccts.length > 0
-  // "ready" = every usage account's table has actually been fetched (non-null),
-  // so charts/totals have data on first paint instead of flashing empty.
+  // "ready" = every usage account's table has been fetched (non-null),
+  // so charts don't flash empty on first paint.
   const tablesReady = hasUsage && usageAccts.every(a => a.table != null)
   const everReady = useRef(false)
   useEffect(() => { if (tablesReady) everReady.current = true }, [tablesReady])
@@ -90,13 +143,13 @@ export function App() {
 
       <main className="mx-auto max-w-[1600px] px-5 py-5">
         {!snapshot ? (
-          <Connecting conn={conn} label={conn === 'error' ? 'connection lost — retrying…' : 'reading usage…'} />
+          <Connecting label={conn === 'error' ? 'connection lost — retrying…' : 'reading usage…'} />
         ) : !hasUsage ? (
           <div className="rounded-md border border-line bg-bg-1 p-8 text-center text-sm text-fg-dim">
             No usage-tracking providers detected. Open tokmon and enable a provider, then refresh.
           </div>
         ) : !ready ? (
-          <Connecting conn={conn} label="reading usage history…" />
+          <Connecting label="reading usage history…" />
         ) : (
           <div key={tab} className="rise">
             {tab === 'overview' && <OverviewTab derived={derived} periodLabel={periodLabel} />}
@@ -110,58 +163,6 @@ export function App() {
       <footer className="mx-auto max-w-[1600px] px-5 py-6 text-center text-[11px] text-fg-faint">
         tokmon{snapshot?.version ? ` v${snapshot.version}` : ''} · by David Ilie · live LLM usage dashboard
       </footer>
-    </div>
-  )
-}
-
-/** Theme state synced to <html class="light">. Persisted only on toggle so a
- * mount effect can never clobber the saved value. Initial class set pre-paint. */
-function useTheme(): ['dark' | 'light', () => void] {
-  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
-    document.documentElement.classList.contains('light') ? 'light' : 'dark')
-  // Keep the <html> class in sync with state (idempotent — safe under StrictMode).
-  useEffect(() => {
-    document.documentElement.classList.toggle('light', theme === 'light')
-  }, [theme])
-  const toggle = () => {
-    const next = theme === 'dark' ? 'light' : 'dark'
-    try { localStorage.setItem('tokmon-theme', next) } catch { /* private mode */ }
-    setTheme(next)
-  }
-  return [theme, toggle]
-}
-
-function ThemeToggle({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: () => void }) {
-  return (
-    <button
-      onClick={onToggle}
-      title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
-      aria-label="Toggle theme"
-      className="rounded border border-line bg-bg-1 p-1.5 text-fg-dim transition hover:border-line-2 hover:text-fg"
-    >
-      {theme === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
-    </button>
-  )
-}
-
-function ConnDot({ conn, receivedAt, now }: { conn: string; receivedAt: number | null; now: number }) {
-  const color = conn === 'live' ? 'var(--color-positive)' : conn === 'error' ? 'var(--color-warning)' : 'var(--color-cost)'
-  return (
-    <span className="flex items-center gap-1.5 text-xs">
-      <span className="relative flex size-2">
-        {conn === 'live' && <span className="absolute inline-flex size-full animate-ping rounded-full opacity-60" style={{ background: color }} />}
-        <span className="relative inline-flex size-2 rounded-full" style={{ background: color }} />
-      </span>
-      <span className="text-fg-dim">{conn === 'live' && receivedAt ? fmtAgo(receivedAt, now) : conn}</span>
-    </span>
-  )
-}
-
-function Connecting({ label }: { conn: string; label: string }) {
-  return (
-    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-2 text-sm text-fg-dim">
-      <span className="font-display text-lg text-fg-dim">tokmon<span className="cursor-blink text-accent">▋</span></span>
-      <span className="text-fg-faint">{label}</span>
     </div>
   )
 }

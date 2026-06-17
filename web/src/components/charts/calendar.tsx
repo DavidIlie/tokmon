@@ -4,11 +4,19 @@ import { fmtCost, fmtDayLabel } from '../../lib/format'
 import { Panel } from '../ui'
 
 const DAY = 86_400_000
-const parse = (s: string) => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d) }
-const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 10)
-// weekday with Monday = 0
-const dow = (ms: number) => (new Date(ms).getUTCDay() + 6) % 7
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+// UTC-safe date helpers — avoids local-timezone shifts on parsed date strings.
+const parseDate = (s: string) => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d) }
+const fmtDate = (ms: number) => new Date(ms).toISOString().slice(0, 10)
+// Monday = 0, Sunday = 6 (ISO week order for the grid rows).
+const dowMonday = (ms: number) => (new Date(ms).getUTCDay() + 6) % 7
+
+const HEAT_OPACITY = [0, 0.32, 0.55, 0.78, 1]
+const heatFill = (level: number) => {
+  if (level === 0) return 'var(--color-bg-2)'
+  return `color-mix(in oklab, var(--color-cost) ${HEAT_OPACITY[level] * 100}%, var(--color-bg-2))`
+}
 
 interface Cell { date: string; cost: number; level: number }
 
@@ -18,12 +26,11 @@ export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; 
     if (derived.calendar.length === 0) return null
     const last = derived.calendar[derived.calendar.length - 1].date
     const firstData = derived.rangeStart ?? derived.calendar[0].date
-    let endMs = parse(last)
-    let startMs = parse(firstData)
-    // clamp window length
+    let endMs = parseDate(last)
+    let startMs = parseDate(firstData)
     if ((endMs - startMs) / (DAY * 7) > maxWeeks) startMs = endMs - maxWeeks * 7 * DAY
-    // align start to Monday
-    startMs -= dow(startMs) * DAY
+    // Align start to Monday so each column is a full ISO week.
+    startMs -= dowMonday(startMs) * DAY
     const max = Math.max(...derived.calendar.map(c => c.cost), 0)
     const levelOf = (cost: number) => {
       if (cost <= 0 || max <= 0) return 0
@@ -36,23 +43,17 @@ export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; 
     let lastMonth = -1
     let colIdx = 0
     for (let ms = startMs; ms <= endMs; ms += DAY) {
-      const d = fmt(ms)
-      const wd = dow(ms)
+      const d = fmtDate(ms)
+      const wd = dowMonday(ms)
       if (wd === 0 && col.some(Boolean)) { weeks.push(col); col = new Array(7).fill(null); colIdx++ }
       const month = new Date(ms).getUTCMonth()
       if (month !== lastMonth && wd === 0) { monthLabels.push({ col: colIdx, text: MONTHS[month] }); lastMonth = month }
-      const inData = ms >= parse(firstData)
+      const inData = ms >= parseDate(firstData)
       col[wd] = inData ? { date: d, cost: map.get(d) ?? 0, level: levelOf(map.get(d) ?? 0) } : null
     }
     if (col.some(Boolean)) weeks.push(col)
     return { weeks, monthLabels }
   }, [derived, maxWeeks])
-
-  const fill = (level: number) => {
-    if (level === 0) return 'var(--color-bg-2)'
-    const op = [0, 0.32, 0.55, 0.78, 1][level]
-    return `color-mix(in oklab, var(--color-cost) ${op * 100}%, var(--color-bg-2))`
-  }
 
   return (
     <Panel title="daily spend" captureName="calendar">
@@ -76,7 +77,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; 
                     <div
                       key={di}
                       className="size-[13px] rounded-[3px] transition hover:ring-1 hover:ring-accent"
-                      style={{ background: fill(cell.level) }}
+                      style={{ background: heatFill(cell.level) }}
                       title={`${fmtDayLabel(cell.date)} · ${fmtCost(cell.cost)}`}
                     />
                   ))}
@@ -85,7 +86,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; 
           </div>
           <div className="flex items-center gap-1.5 pl-6 pt-1 text-[9px] text-fg-faint">
             less
-            {[0, 1, 2, 3, 4].map(l => <span key={l} className="size-[11px] rounded-[2px]" style={{ background: fill(l) }} />)}
+            {[0, 1, 2, 3, 4].map(l => <span key={l} className="size-[11px] rounded-[2px]" style={{ background: heatFill(l) }} />)}
             more
           </div>
         </div>

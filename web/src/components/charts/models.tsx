@@ -22,7 +22,16 @@ export function ModelLeaderboard({ derived, limit }: { derived: Derived; limit?:
     <Panel
       title="model leaderboard"
       captureName="models"
-      right={<Segmented options={SORT_OPTIONS} value={sort} onChange={setSort} size="xs" containerClassName="flex items-center gap-0.5" btnClassName="rounded px-1.5 py-0.5 text-[11px] transition" />}
+      right={
+        <Segmented
+          options={SORT_OPTIONS}
+          value={sort}
+          onChange={setSort}
+          size="xs"
+          containerClassName="flex items-center gap-0.5"
+          btnClassName="rounded px-1.5 py-0.5 text-[11px] transition"
+        />
+      }
     >
       {rows.length === 0 ? <EmptyHint>no models in range</EmptyHint> : (
         <div className="mt-1 flex flex-col">

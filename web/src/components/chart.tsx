@@ -21,14 +21,22 @@ export interface TipRow {
   color?: string
 }
 
+type TipPayloadItem = {
+  name?: string
+  value?: number
+  color?: string
+  dataKey?: string
+  payload?: Record<string, unknown>
+}
+
 export function makeTooltip(
-  rows: (payload: ReadonlyArray<{ name?: string; value?: number; color?: string; dataKey?: string; payload?: Record<string, unknown> }>, label: string) => TipRow[],
+  rows: (payload: ReadonlyArray<TipPayloadItem>, label: string) => TipRow[],
   opts: { title?: (label: string) => string } = {},
 ) {
   return function TerminalTooltip(props: { active?: boolean; payload?: unknown; label?: string | number }) {
     const { active, payload, label } = props as {
       active?: boolean
-      payload?: ReadonlyArray<{ name?: string; value?: number; color?: string; dataKey?: string; payload?: Record<string, unknown> }>
+      payload?: ReadonlyArray<TipPayloadItem>
       label?: string | number
     }
     if (!active || !payload || payload.length === 0) return null

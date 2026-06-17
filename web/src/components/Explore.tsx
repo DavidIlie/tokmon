@@ -8,45 +8,63 @@ import { Panel } from './ui'
 type SortKey = 'label' | 'cost' | 'total' | 'count'
 type Dir = 'asc' | 'desc'
 
+function SortHeader({ sortKey, label, align = 'text-right', sort, dir, onSort }: {
+  sortKey: SortKey
+  label: string
+  align?: string
+  sort: SortKey
+  dir: Dir
+  onSort: (key: SortKey) => void
+}) {
+  return (
+    <button
+      onClick={() => onSort(sortKey)}
+      className={`flex w-full items-center gap-1 ${align === 'text-right' ? 'justify-end' : ''} text-fg-faint transition hover:text-fg`}
+    >
+      {label}
+      {sort === sortKey && <span className="text-accent">{dir === 'asc' ? '▲' : '▼'}</span>}
+    </button>
+  )
+}
+
 export function ExploreTable({ rows, granLabel }: { rows: TableRow[]; granLabel: string }) {
   const [sort, setSort] = useState<SortKey>('label')
   const [dir, setDir] = useState<Dir>('desc')
   const [q, setQ] = useState('')
   const [open, setOpen] = useState<Set<string>>(new Set())
 
+  const handleSort = (key: SortKey) => {
+    if (sort === key) setDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSort(key); setDir('desc') }
+  }
+
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase()
     const base = s
       ? rows.filter(r => r.label.toLowerCase().includes(s) || r.models.some(m => m.toLowerCase().includes(s)))
       : rows
-    const sorted = [...base].sort((a, b) => {
+    return [...base].sort((a, b) => {
       const av = sort === 'label' ? a.label : a[sort]
       const bv = sort === 'label' ? b.label : b[sort]
       const cmp = typeof av === 'string' ? av.localeCompare(bv as string) : (av as number) - (bv as number)
       return dir === 'asc' ? cmp : -cmp
     })
-    return sorted
   }, [rows, q, sort, dir])
 
   const totals = useMemo(() => filtered.reduce((t, r) => ({
-    total: t.total + r.total, cost: t.cost + r.cost, cacheSavings: t.cacheSavings + r.cacheSavings, count: t.count + r.count,
+    total: t.total + r.total,
+    cost: t.cost + r.cost,
+    cacheSavings: t.cacheSavings + r.cacheSavings,
+    count: t.count + r.count,
   }), { total: 0, cost: 0, cacheSavings: 0, count: 0 }), [filtered])
 
-  const toggle = (label: string) => setOpen(prev => {
+  const handleToggleOpen = (label: string) => setOpen(prev => {
     const next = new Set(prev)
     next.has(label) ? next.delete(label) : next.add(label)
     return next
   })
 
-  const head = (key: SortKey, label: string, align = 'text-right') => (
-    <button
-      onClick={() => { if (sort === key) setDir(d => d === 'asc' ? 'desc' : 'asc'); else { setSort(key); setDir('desc') } }}
-      className={`flex w-full items-center gap-1 ${align === 'text-right' ? 'justify-end' : ''} text-fg-faint transition hover:text-fg`}
-    >
-      {label}
-      {sort === key && <span className="text-accent">{dir === 'asc' ? '▲' : '▼'}</span>}
-    </button>
-  )
+  const dateColLabel = granLabel === 'monthly' ? 'month' : granLabel === 'weekly' ? 'week' : 'date'
 
   return (
     <Panel
@@ -56,7 +74,9 @@ export function ExploreTable({ rows, granLabel }: { rows: TableRow[]; granLabel:
         <div className="flex items-center gap-1.5 rounded border border-line bg-bg-1 px-2 py-0.5 text-xs">
           <Search className="size-3 text-fg-faint" />
           <input
-            value={q} onChange={e => setQ(e.target.value)} placeholder="filter…"
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            placeholder="filter…"
             className="w-24 bg-transparent text-fg outline-none placeholder:text-fg-faint"
           />
           {q && <button onClick={() => setQ('')}><X className="size-3 text-fg-faint hover:text-fg" /></button>}
@@ -67,24 +87,29 @@ export function ExploreTable({ rows, granLabel }: { rows: TableRow[]; granLabel:
         <table className="w-full border-collapse text-xs">
           <thead>
             <tr className="border-b border-line text-[11px]">
-              <th className="py-2 pr-3 text-left font-normal" style={{ width: '1%' }}>{head('label', granLabel === 'monthly' ? 'month' : granLabel === 'weekly' ? 'week' : 'date', 'text-left')}</th>
+              <th className="py-2 pr-3 text-left font-normal" style={{ width: '1%' }}>
+                <SortHeader sortKey="label" label={dateColLabel} align="text-left" sort={sort} dir={dir} onSort={handleSort} />
+              </th>
               <th className="py-2 pr-3 text-left font-normal text-fg-faint">models</th>
-              <th className="py-2 pr-3 font-normal">{head('total', 'tokens')}</th>
+              <th className="py-2 pr-3 font-normal">
+                <SortHeader sortKey="total" label="tokens" sort={sort} dir={dir} onSort={handleSort} />
+              </th>
               <th className="py-2 pr-3 font-normal text-fg-faint"><span className="block text-right">saved</span></th>
-              <th className="py-2 pr-3 font-normal">{head('count', 'calls')}</th>
-              <th className="py-2 font-normal">{head('cost', 'cost')}</th>
+              <th className="py-2 pr-3 font-normal">
+                <SortHeader sortKey="count" label="calls" sort={sort} dir={dir} onSort={handleSort} />
+              </th>
+              <th className="py-2 font-normal">
+                <SortHeader sortKey="cost" label="cost" sort={sort} dir={dir} onSort={handleSort} />
+              </th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
               <tr><td colSpan={6} className="py-8 text-center text-fg-faint">no rows match</td></tr>
             )}
-            {filtered.map(r => {
-              const isOpen = open.has(r.label)
-              return (
-                <FragmentRow key={r.label} row={r} isOpen={isOpen} onToggle={() => toggle(r.label)} />
-              )
-            })}
+            {filtered.map(r => (
+              <FragmentRow key={r.label} row={r} isOpen={open.has(r.label)} onToggle={() => handleToggleOpen(r.label)} />
+            ))}
           </tbody>
           {filtered.length > 0 && (
             <tfoot>

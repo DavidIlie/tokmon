@@ -16,6 +16,12 @@ export const TABS: { key: TabKey; label: string }[] = [
   { key: 'explore', label: 'explore' },
 ]
 
+const GRAN_OPTIONS: { value: Granularity; label: string }[] = [
+  { value: 'daily', label: 'daily' },
+  { value: 'weekly', label: 'weekly' },
+  { value: 'monthly', label: 'monthly' },
+]
+
 export function OverviewTab({ derived, periodLabel }: { derived: Derived; periodLabel: string }) {
   return (
     <div className="flex flex-col gap-4">
@@ -55,17 +61,12 @@ export function ExploreTab({ snapshot, filters, setFilters }: {
   setFilters: (next: Filters | ((p: Filters) => Filters)) => void
 }) {
   const rows = exploreRows(snapshot, filters)
-  const GRANS: { value: Granularity; label: string }[] = [
-    { value: 'daily', label: 'daily' },
-    { value: 'weekly', label: 'weekly' },
-    { value: 'monthly', label: 'monthly' },
-  ]
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <span className="text-xs text-fg-faint">granularity:</span>
         <Segmented
-          options={GRANS}
+          options={GRAN_OPTIONS}
           value={filters.gran}
           onChange={gran => setFilters(f => ({ ...f, gran }))}
           size="sm"
