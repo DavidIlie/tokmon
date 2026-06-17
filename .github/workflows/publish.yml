@@ -23,7 +23,9 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec tsup
+      - run: pnpm --prefix web install --frozen-lockfile
+      # Builds dist/cli.js (tsup) AND dist/web (vite) — both ship via files:["dist"].
+      - run: pnpm run build
 
       - run: npm publish --access public || true
         env:
@@ -48,7 +50,9 @@ jobs:
           scope: '@DavidIlie'
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec tsup
+      - run: pnpm --prefix web install --frozen-lockfile
+      # Builds dist/cli.js (tsup) AND dist/web (vite) — both ship via files:["dist"].
+      - run: pnpm run build
 
       - run: |
           sed -i 's/"name": "tokmon"/"name": "@davidilie\/tokmon"/' package.json

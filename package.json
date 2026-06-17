@@ -1,6 +1,6 @@
 {
   "name": "tokmon",
-  "version": "0.14.5",
+  "version": "0.15.0",
   "description": "Terminal dashboard for Claude Code, Codex, and Cursor usage, limits, and costs",
   "type": "module",
   "bin": {
@@ -15,8 +15,7 @@
     "build:web": "pnpm --prefix web run build",
     "web:install": "pnpm --prefix web install",
     "dev": "tsx src/cli.tsx",
-    "dev:web": "pnpm --prefix web run dev",
-    "prepublishOnly": "pnpm run web:install && pnpm run build"
+    "dev:web": "pnpm --prefix web run dev"
   },
   "dependencies": {
     "@zenobius/ink-mouse": "^1.0.3",
