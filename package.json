@@ -10,8 +10,13 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
-    "dev": "tsx src/cli.tsx"
+    "build": "pnpm run build:cli && pnpm run build:web",
+    "build:cli": "tsup",
+    "build:web": "pnpm --prefix web run build",
+    "web:install": "pnpm --prefix web install",
+    "dev": "tsx src/cli.tsx",
+    "dev:web": "pnpm --prefix web run dev",
+    "prepublishOnly": "pnpm run web:install && pnpm run build"
   },
   "dependencies": {
     "@zenobius/ink-mouse": "^1.0.3",

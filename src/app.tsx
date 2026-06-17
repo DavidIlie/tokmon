@@ -18,6 +18,7 @@ import { loadSnapshot, saveSnapshot } from './snapshot'
 import { glyphs } from './glyphs'
 import * as fmt from './format'
 import type { AccountStats } from './stats'
+import type { WebServerController } from './web/server'
 import { ClickableBox, LinkBox, Spinner, TabBar, PeakBadge, truncateName, dispatchLinkClicks } from './ui/shared'
 import { DashboardView, chooseLayout, TotalsRow } from './ui/dashboard'
 import { TableProviderBar, ControlBar, TokenTable, CursorSpendTable } from './ui/table'
@@ -135,6 +136,12 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
   const { exit } = useApp()
   const rows = stdout?.rows ?? 24
   const cols = stdout?.columns ?? 80
+
+  const webRef = useRef<WebServerController | null>(null)
+  const webBusyRef = useRef(false)
+  const [webUrl, setWebUrl] = useState<string | null>(null)
+  const [webStatus, setWebStatus] = useState<'off' | 'starting' | 'on' | 'stopping'>('off')
+  useEffect(() => () => { void webRef.current?.stop() }, [])
 
   const cfg = config ?? DEFAULT_CONFIG
   const interval = cliInterval ?? cfg.interval * 1000
@@ -516,6 +523,34 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
 
   const totalSettingsRows = ACCOUNT_ROWS_START + cfg.accounts.length + 1
 
+  async function toggleWeb(): Promise<void> {
+    if (webBusyRef.current) return
+    webBusyRef.current = true
+    try {
+      if (webRef.current) {
+        setWebStatus('stopping')
+        const ctrl = webRef.current
+        webRef.current = null
+        await ctrl.stop()
+        setWebUrl(null)
+        setWebStatus('off')
+      } else {
+        setWebStatus('starting')
+        const { startWebServer } = await import('./web/server')
+        const ctrl = await startWebServer({ config: cfg, log: false })
+        webRef.current = ctrl
+        setWebUrl(ctrl.url)
+        setWebStatus('on')
+        openUrl(ctrl.url)
+      }
+    } catch {
+      // Roll back to a truthful state if start/stop threw.
+      setWebStatus(webRef.current ? 'on' : 'off')
+    } finally {
+      webBusyRef.current = false
+    }
+  }
+
   useInput((input, key) => {
     if (showPicker) {
       if (input === 'q') { exit(); return }
@@ -595,6 +630,12 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
 
     if (input === 'q') { exit(); return }
     if (input === 'O') { openUrl(REPO_URL); return }
+    // Web toggle: `W` anywhere, plus lowercase `w` outside the Table tab (where
+    // `w` = Weekly). Gated until the initial load finishes rendering the dashboard.
+    if (input === 'W' || (input === 'w' && tab !== 1 && !showSettings)) {
+      if (showLoader || !configReady) return
+      void toggleWeb(); return
+    }
 
     if (showSettings) {
       if (key.escape || input === 's') { setShowSettings(false); return }
@@ -730,6 +771,7 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
           <Text dimColor>  {glyphs().middot}  every {cfg.interval}s</Text>
         </Box>
         <Box>
+          {webStatus !== 'off' && (<><WebStatus status={webStatus} url={webUrl} /><Text dimColor>  {glyphs().middot}  </Text></>)}
           {peak && (<><PeakBadge peak={peak} /><Text dimColor>  {glyphs().middot}  </Text></>)}
           <Text dimColor>{fmt.time(updated, tz)}</Text>
         </Box>
@@ -799,7 +841,7 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
         </>
       )}
 
-      {(tab === 0 || showSettings) && <Footer hasAccounts={slots.length > 1} paginated={tab === 0 && dashPaginated} cols={cols} />}
+      {(tab === 0 || showSettings) && <Footer hasAccounts={slots.length > 1} paginated={tab === 0 && dashPaginated} cols={cols} webOn={webStatus === 'on' || webStatus === 'starting'} />}
     </Box>
   )
 }
@@ -882,9 +924,16 @@ function AccountStrip({ slots, activeIdx, onSelect }: { slots: Slot[]; activeIdx
   )
 }
 
-function Footer({ hasAccounts, paginated, cols }: { hasAccounts: boolean; paginated: boolean; cols: number }) {
+function WebStatus({ status, url }: { status: 'off' | 'starting' | 'on' | 'stopping'; url: string | null }) {
+  if (status === 'starting') return <Spinner label="web starting" />
+  if (status === 'stopping') return <Spinner label="web stopping" />
+  if (status === 'on') return <Text color="green">{glyphs().dot} web :{url ? url.split(':').pop() : ''}</Text>
+  return null
+}
+
+function Footer({ hasAccounts, paginated, cols, webOn }: { hasAccounts: boolean; paginated: boolean; cols: number; webOn: boolean }) {
   const inner = cols - 4
-  const BASE = 'by David Ilie (davidilie.com)  ·  O=repo  s=settings  q=quit'.length
+  const BASE = 'by David Ilie (davidilie.com)  ·  O=repo  W=web  s=settings  q=quit'.length
   const optHint = (glyphs().shift === '⇧' ? '⌥' : 'opt') + '-click links  '
   const OPT = IS_APPLE_TERMINAL ? optHint.length : 0
   const JUMP = '0-9=jump  a/A=cycle  '.length
@@ -902,7 +951,7 @@ function Footer({ hasAccounts, paginated, cols }: { hasAccounts: boolean; pagina
       <LinkBox onClick={() => openUrl(SITE_URL)}>
         <Transform transform={(s) => osc8(s, SITE_URL)}><Text color="cyan" underline>davidilie.com</Text></Transform>
       </LinkBox>
-      <Text dimColor>)  {glyphs().middot}  O=repo  s=settings  </Text>
+      <Text dimColor>)  {glyphs().middot}  O=repo  {webOn ? 'W=stop' : 'W=web'}  s=settings  </Text>
       {showOpt && <Text dimColor>{optHint}</Text>}
       {showJump && <Text dimColor>0-9=jump  a/A=cycle  </Text>}
       {showPage && <Text dimColor>scroll=page  </Text>}

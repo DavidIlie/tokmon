@@ -13,7 +13,11 @@ export interface ModelDetail {
   output: number
   cacheCreate: number
   cacheRead: number
+  /** USD the cache saved vs paying full input rate for those reads. */
+  cacheSavings: number
   cost: number
+  /** Number of usage records (≈ API calls) attributed to this model. */
+  count: number
 }
 
 export interface TableRow {
@@ -23,8 +27,12 @@ export interface TableRow {
   output: number
   cacheCreate: number
   cacheRead: number
+  /** USD the cache saved vs paying full input rate for those reads. */
+  cacheSavings: number
   total: number
   cost: number
+  /** Number of usage records (≈ API calls) in this row. */
+  count: number
   breakdown: ModelDetail[]
 }
 

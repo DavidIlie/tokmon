@@ -196,7 +196,7 @@ function groupBy(entries: Entry[], keyFn: (e: Entry) => string): TableRow[] {
 
   const rows: TableRow[] = []
   for (const [label, group] of groups) {
-    let input = 0, output = 0, cacheCreate = 0, cacheRead = 0, cost = 0
+    let input = 0, output = 0, cacheCreate = 0, cacheRead = 0, cacheSavings = 0, cost = 0, count = 0
     const byModel = new Map<string, ModelDetail>()
 
     for (const e of group) {
@@ -204,25 +204,28 @@ function groupBy(entries: Entry[], keyFn: (e: Entry) => string): TableRow[] {
       output += e.output
       cacheCreate += e.cacheCreate
       cacheRead += e.cacheRead
+      cacheSavings += e.cacheSavings
       cost += e.cost
+      count += 1
 
       const m = byModel.get(e.model)
       if (m) {
         m.input += e.input; m.output += e.output
         m.cacheCreate += e.cacheCreate; m.cacheRead += e.cacheRead
-        m.cost += e.cost
+        m.cacheSavings += e.cacheSavings; m.cost += e.cost; m.count += 1
       } else {
         byModel.set(e.model, {
           name: e.model, input: e.input, output: e.output,
-          cacheCreate: e.cacheCreate, cacheRead: e.cacheRead, cost: e.cost,
+          cacheCreate: e.cacheCreate, cacheRead: e.cacheRead,
+          cacheSavings: e.cacheSavings, cost: e.cost, count: 1,
         })
       }
     }
 
     rows.push({
       label, models: [...byModel.keys()].sort(),
-      input, output, cacheCreate, cacheRead,
-      total: input + output + cacheCreate + cacheRead, cost,
+      input, output, cacheCreate, cacheRead, cacheSavings,
+      total: input + output + cacheCreate + cacheRead, cost, count,
       breakdown: [...byModel.values()].sort((a, b) => b.cost - a.cost),
     })
   }
@@ -248,13 +251,15 @@ function mergeRows(groups: TableRow[][]): TableRow[] {
         continue
       }
       ex.input += r.input; ex.output += r.output; ex.cacheCreate += r.cacheCreate
-      ex.cacheRead += r.cacheRead; ex.total += r.total; ex.cost += r.cost
+      ex.cacheRead += r.cacheRead; ex.cacheSavings += r.cacheSavings
+      ex.total += r.total; ex.cost += r.cost; ex.count += r.count
       const bd = new Map(ex.breakdown.map(m => [m.name, m]))
       for (const m of r.breakdown) {
         const e = bd.get(m.name)
         if (e) {
           e.input += m.input; e.output += m.output
-          e.cacheCreate += m.cacheCreate; e.cacheRead += m.cacheRead; e.cost += m.cost
+          e.cacheCreate += m.cacheCreate; e.cacheRead += m.cacheRead
+          e.cacheSavings += m.cacheSavings; e.cost += m.cost; e.count += m.count
         } else {
           bd.set(m.name, { ...m })
         }
