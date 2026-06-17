@@ -9,7 +9,6 @@ export interface Filters {
   models: string[]
   account: string
   period: PeriodKey
-  gran: Granularity
 }
 
 export const DEFAULT_FILTERS: Filters = {
@@ -17,7 +16,6 @@ export const DEFAULT_FILTERS: Filters = {
   models: [],
   account: 'all',
   period: '30d',
-  gran: 'daily',
 }
 
 export const PERIODS: { key: PeriodKey; label: string }[] = [
@@ -87,16 +85,15 @@ export interface Derived {
   month: Totals
   burnRate: number
   timeline: TimelinePoint[]
-  // All-time daily series (account/model filters apply, but NOT the period window).
-  // Powers the hero trend so it spans the full history regardless of the period filter.
+  // All-time daily totals (account/model filters apply, period window does NOT) —
+  // the calendar is a history view by design and always spans the full history.
   fullTimeline: TimelinePoint[]
-  fullCacheSeries: { date: string; value: number }[]
-  // All-time provider aggregates (names/colors) so the hero's split view can draw
-  // every provider with history, not just those active in the period window.
-  fullByProvider: ProviderAgg[]
   cumulative: { date: string; total: number }[]
   cacheSavingsSeries: { date: string; value: number }[]
   calendar: CalendarDay[]
+  // Accounts shown as provider cards: usage accounts plus billing-only accounts that
+  // carry live quota/plan metrics (period/usage filters don't strip the latter).
+  cardAccounts: WebAccount[]
   byProvider: ProviderAgg[]
   byModel: ModelAgg[]
   tokenComposition: { input: number; output: number; cacheCreate: number; cacheRead: number }
@@ -107,11 +104,35 @@ export interface Derived {
 
 const emptyTotals = (): Totals => ({ cost: 0, tokens: 0, cacheSavings: 0, calls: 0 })
 
+// A provider filter that resolves to no usage accounts (e.g. a stale ?p=cursor link
+// to a billing-only provider) is treated as a no-op rather than blanking the dashboard.
+function activeProviderFilter(snap: WebSnapshot, f: Filters): Set<string> | null {
+  if (!f.providers.length) return null
+  const usable = new Set<string>(snap.accounts.filter(a => a.hasUsage).map(a => a.providerId))
+  const eff = f.providers.filter(p => usable.has(p))
+  return eff.length ? new Set(eff) : null
+}
+
 function selectAccounts(snap: WebSnapshot, f: Filters): WebAccount[] {
+  const provFilter = activeProviderFilter(snap, f)
   return snap.accounts.filter(a => {
     if (!a.hasUsage) return false
     if (f.account !== 'all' && a.id !== f.account) return false
-    if (f.providers.length && !f.providers.includes(a.providerId)) return false
+    if (provFilter && !provFilter.has(a.providerId)) return false
+    return true
+  })
+}
+
+// Card surface: usage accounts + billing-only accounts that have live quota metrics,
+// honoring the account filter (and the effective provider filter where it applies).
+function selectCardAccounts(snap: WebSnapshot, f: Filters): WebAccount[] {
+  const provFilter = activeProviderFilter(snap, f)
+  return snap.accounts.filter(a => {
+    if (!a.hasUsage && !(a.hasBilling && (a.billing?.metrics?.length || a.billing?.plan))) return false
+    if (f.account !== 'all' && a.id !== f.account) return false
+    // Only constrain by provider when that provider filter is meaningful (has usage);
+    // billing-only providers aren't filterable chips, so don't strip them here.
+    if (provFilter && a.hasUsage && !provFilter.has(a.providerId)) return false
     return true
   })
 }
@@ -284,7 +305,7 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
 
   const timeline = buildTimeline(acc)
 
-  // Second pass over every row (no date window) for the full-history hero trend.
+  // Second pass over every row (no date window) feeds the all-time calendar.
   const accAll = makeAccState()
   for (const a of accounts) {
     const pid = a.providerId
@@ -294,12 +315,6 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
     }
   }
   const fullTimeline = buildTimeline(accAll)
-  const fullCacheSeries = fullTimeline.map(p => ({ date: p.date, value: accAll.cacheByDay.get(p.date) ?? 0 }))
-  for (const pa of accAll.provAgg.values()) {
-    const name = providerName.get(pa.id)
-    if (name) pa.name = name
-  }
-  const fullByProvider = [...accAll.provAgg.values()].sort((x, y) => y.cost - x.cost)
 
   let running = 0
   const cumulative = timeline.map(p => { running += p.total; return { date: p.date, total: running } })
@@ -341,27 +356,28 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
     filteredAccounts: accounts,
     totals: acc.totals, today: acc.today, week: acc.week, month: acc.month,
     burnRate: acc.burnRate,
-    timeline, fullTimeline, fullCacheSeries, fullByProvider, cumulative, cacheSavingsSeries, calendar,
+    timeline, fullTimeline, cumulative, cacheSavingsSeries, calendar,
+    cardAccounts: snap ? selectCardAccounts(snap, f) : [],
     byProvider, byModel, tokenComposition: acc.tokenComposition,
     modelOptions: [...acc.modelOptionSet].sort(),
     latestDay, rangeStart,
   }
 }
 
-export function exploreRows(snap: WebSnapshot | null, f: Filters): TableRow[] {
+export function exploreRows(snap: WebSnapshot | null, f: Filters, gran: Granularity): TableRow[] {
   if (!snap) return []
   const accounts = selectAccounts(snap, f)
   const latest = latestDayOf(accounts)
   const dailyCut = rangeStartOf(f.period, latest)
   const cutoff = !dailyCut ? null
-    : f.gran === 'monthly' ? dailyCut.slice(0, 7)
-      : f.gran === 'weekly' ? weekStartStr(dailyCut)
+    : gran === 'monthly' ? dailyCut.slice(0, 7)
+      : gran === 'weekly' ? weekStartStr(dailyCut)
         : dailyCut
   const modelSet = f.models.length ? new Set(f.models) : null
 
   const byLabel = new Map<string, TableRow>()
   for (const a of accounts) {
-    for (const row of a.table?.[f.gran] ?? []) {
+    for (const row of a.table?.[gran] ?? []) {
       if (cutoff && row.label < cutoff) continue
       const bd = modelSet ? row.breakdown.filter(m => modelSet.has(m.name)) : row.breakdown
       if (modelSet && bd.length === 0) continue

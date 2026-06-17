@@ -79,7 +79,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26 }: { derived: Derived; 
 
   return (
     <>
-    <Panel title="daily spend" captureName="calendar">
+    <Panel title="daily spend" titleTag="all-time" captureName="calendar">
       {!grid || !stats ? <div className="py-6 text-center text-xs text-fg-faint">no spend yet</div> : (
         <div className="grid gap-x-8 gap-y-5 pt-1 lg:grid-cols-[minmax(0,1fr)_210px] lg:items-center">
           {/* Heatmap stretches to fill the row — no more dead space on the right. */}

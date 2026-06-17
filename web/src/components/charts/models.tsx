@@ -15,14 +15,18 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 // One template drives both the header and the rows so they can never drift.
 const COLS = '1.75rem minmax(6rem,12rem) minmax(3.5rem,1fr) 3rem 5.5rem 5rem 5rem 5rem 4rem'
 
-export function ModelLeaderboard({ derived, limit }: { derived: Derived; limit?: number }) {
+export function ModelLeaderboard({ derived, limit, periodLabel }: { derived: Derived; limit?: number; periodLabel?: string }) {
   const [sort, setSort] = useState<SortKey>('cost')
   const sorted = [...derived.byModel].sort((a, b) => b[sort] - a[sort])
   const rows = limit ? sorted.slice(0, limit) : sorted
+  // Never let the active sort key hide behind a responsive breakpoint.
+  const tokCls = sort === 'tokens' ? 'block' : 'hidden md:block'
+  const callCls = sort === 'calls' ? 'block' : 'hidden lg:block'
 
   return (
     <Panel
       title="model leaderboard"
+      titleTag={periodLabel}
       captureName="models"
       right={
         <Segmented
@@ -30,12 +34,13 @@ export function ModelLeaderboard({ derived, limit }: { derived: Derived; limit?:
           value={sort}
           onChange={setSort}
           size="xs"
+          ariaLabel="sort models by"
           containerClassName="flex items-center gap-0.5"
           btnClassName="rounded px-1.5 py-0.5 text-[11px] transition"
         />
       }
     >
-      {rows.length === 0 ? <EmptyHint>no models in range</EmptyHint> : (
+      {rows.length === 0 ? <EmptyHint>no models in period</EmptyHint> : (
         <div className="mt-6 flex flex-col">
           <div
             className="grid items-center gap-x-3 border-b border-line px-2 pb-1.5 font-display text-[10px] uppercase tracking-wide text-fg-faint"
@@ -48,8 +53,8 @@ export function ModelLeaderboard({ derived, limit }: { derived: Derived; limit?:
             <span className="text-right text-cost/70">cost</span>
             <span className="text-right">trend</span>
             <span className="hidden text-right lg:block">$/call</span>
-            <span className="hidden text-right md:block">tokens</span>
-            <span className="hidden text-right lg:block">calls</span>
+            <span className={`text-right ${tokCls}`}>tokens</span>
+            <span className={`text-right ${callCls}`}>calls</span>
           </div>
           {rows.map((m, i) => (
             <div
@@ -69,8 +74,8 @@ export function ModelLeaderboard({ derived, limit }: { derived: Derived; limit?:
               <span className="tnum text-right text-xs text-cost">{fmtCost(m.cost)}</span>
               <span className="overflow-hidden text-right"><Sparkline data={m.trend.slice(-30)} color={m.color} className="text-sm" /></span>
               <span className="tnum hidden text-right text-xs text-fg-dim lg:block">{fmtCost(m.calls ? m.cost / m.calls : 0)}</span>
-              <span className="tnum hidden text-right text-xs text-fg-dim md:block">{fmtTokens(m.tokens)}</span>
-              <span className="tnum hidden text-right text-xs text-fg-faint lg:block">{fmtNum(m.calls)}</span>
+              <span className={`tnum text-right text-xs text-fg-dim ${tokCls}`}>{fmtTokens(m.tokens)}</span>
+              <span className={`tnum text-right text-xs text-fg-faint ${callCls}`}>{fmtNum(m.calls)}</span>
             </div>
           ))}
         </div>

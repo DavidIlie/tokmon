@@ -2,11 +2,10 @@ import { useState } from 'react'
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Derived } from '../../lib/derive'
 import { fmtCost, fmtCostAxis, fmtDayLabel } from '../../lib/format'
-import { AXIS, ChartShell, CURSOR, GRID, makeTooltip } from '../chart'
+import { AXIS, ChartShell, CURSOR, GRID, makeTooltip, useEnterOnce } from '../chart'
 import { EmptyHint, Panel, Segmented } from '../ui'
 
 type Scale = 'linear' | 'log'
-type Range = 'all' | 'period'
 type Mode = 'combined' | 'byProvider'
 
 const SCALE_OPTIONS: { value: Scale; label: string }[] = [
@@ -36,28 +35,21 @@ export function CostTimeline({ derived, title = 'cost over time', height = 260, 
   periodLabel?: string
   heightClass?: string
 }) {
-  // Split lines must match the active range: all-time uses every provider with
-  // history (fullByProvider), period uses only those active in the window.
-  const multiProvider = derived.fullByProvider.length > 1
+  // Follows the ONE global period like every other period-scoped panel — the all/period
+  // toggle was removed; the ALL period chip gives the full-history view.
+  const enter = useEnterOnce()
+  const provs = derived.byProvider
+  const multiProvider = provs.length > 1
   const [scale, setScale] = useState<Scale>('linear')
-  // The hero spans the full history by default — decoupled from the global period filter,
-  // which only scopes the KPIs and cards. Flip to "period" to match the rest of the page.
-  const [range, setRange] = useState<Range>('all')
   const [mode, setMode] = useState<Mode>(multiProvider ? 'byProvider' : 'combined')
 
-  const source = range === 'all' ? derived.fullTimeline : derived.timeline
-  const provs = range === 'all' ? derived.fullByProvider : derived.byProvider
-  const data = source.map(p => {
+  const data = derived.timeline.map(p => {
     const row: Record<string, number | string | null> = { date: p.date, total: p.total, ...p.byProvider }
     // Log scale can't plot 0 — null lets connectNulls bridge the gap cleanly.
     if (scale === 'log') for (const k of Object.keys(row)) if (k !== 'date' && row[k] === 0) row[k] = null
     return row
   })
 
-  const rangeOptions: { value: Range; label: string }[] = [
-    { value: 'all', label: 'all' },
-    { value: 'period', label: periodLabel ?? 'period' },
-  ]
   const yAxis = (
     <YAxis
       {...AXIS} width={52} tickFormatter={fmtCostAxis}
@@ -69,16 +61,16 @@ export function CostTimeline({ derived, title = 'cost over time', height = 260, 
   return (
     <Panel
       title={title}
+      titleTag={periodLabel}
       captureName="cost-over-time"
       right={
         <div className="flex items-center gap-1.5">
-          {multiProvider && <Segmented options={MODE_OPTIONS} value={mode} onChange={setMode} size="xs" containerClassName={segBox} />}
-          <Segmented options={rangeOptions} value={range} onChange={setRange} size="xs" containerClassName={segBox} />
-          <Segmented options={SCALE_OPTIONS} value={scale} onChange={setScale} size="xs" containerClassName={segBox} />
+          {multiProvider && <Segmented options={MODE_OPTIONS} value={mode} onChange={setMode} size="xs" containerClassName={segBox} ariaLabel="combine providers" />}
+          <Segmented options={SCALE_OPTIONS} value={scale} onChange={setScale} size="xs" containerClassName={segBox} ariaLabel="value scale" />
         </div>
       }
     >
-      {data.length === 0 ? <EmptyHint>no spend recorded</EmptyHint> : (
+      {data.length === 0 ? <EmptyHint>no spend in period</EmptyHint> : (
         <ChartShell height={height} heightClass={heightClass}>
           <ResponsiveContainer>
             {mode === 'combined' ? (
@@ -93,7 +85,7 @@ export function CostTimeline({ derived, title = 'cost over time', height = 260, 
                 <XAxis dataKey="date" {...AXIS} tickFormatter={fmtDayLabel} minTickGap={28} />
                 {yAxis}
                 <Tooltip content={totalTip} cursor={CURSOR} />
-                <Area type="monotone" dataKey="total" stroke="var(--color-cost)" strokeWidth={1.8} fill="url(#g-cost)" connectNulls isAnimationActive animationDuration={350} />
+                <Area type="monotone" dataKey="total" stroke="var(--color-cost)" strokeWidth={1.8} fill="url(#g-cost)" connectNulls isAnimationActive={enter} animationDuration={350} />
               </AreaChart>
             ) : (
               <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -105,7 +97,7 @@ export function CostTimeline({ derived, title = 'cost over time', height = 260, 
                   <Line
                     key={p.id} type="monotone" dataKey={p.id} name={p.name}
                     stroke={p.color} strokeWidth={1.6} dot={false} connectNulls
-                    isAnimationActive animationDuration={350}
+                    isAnimationActive={enter} animationDuration={350}
                   />
                 ))}
               </LineChart>
@@ -119,11 +111,12 @@ export function CostTimeline({ derived, title = 'cost over time', height = 260, 
 
 const cumTip = makeTooltip(p => [{ label: 'cumulative', value: fmtCost(p[0]?.value ?? 0), color: 'var(--color-cost)' }])
 
-export function CumulativeSpend({ derived, height = 220 }: { derived: Derived; height?: number }) {
+export function CumulativeSpend({ derived, height = 220, periodLabel }: { derived: Derived; height?: number; periodLabel?: string }) {
+  const enter = useEnterOnce()
   const data = derived.cumulative
   return (
-    <Panel title="cumulative spend" captureName="cumulative">
-      {data.length === 0 ? <EmptyHint>no spend in range</EmptyHint> : (
+    <Panel title="cumulative spend" titleTag={periodLabel} captureName="cumulative">
+      {data.length === 0 ? <EmptyHint>no spend in period</EmptyHint> : (
         <ChartShell height={height}>
           <ResponsiveContainer>
             <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -131,7 +124,7 @@ export function CumulativeSpend({ derived, height = 220 }: { derived: Derived; h
               <XAxis dataKey="date" {...AXIS} tickFormatter={fmtDayLabel} minTickGap={28} />
               <YAxis {...AXIS} width={52} tickFormatter={fmtCostAxis} />
               <Tooltip content={cumTip} cursor={CURSOR} />
-              <Line type="monotone" dataKey="total" stroke="var(--color-cost)" strokeWidth={1.8} dot={false} isAnimationActive animationDuration={350} />
+              <Line type="monotone" dataKey="total" stroke="var(--color-cost)" strokeWidth={1.8} dot={false} isAnimationActive={enter} animationDuration={350} />
             </LineChart>
           </ResponsiveContainer>
         </ChartShell>
@@ -142,12 +135,13 @@ export function CumulativeSpend({ derived, height = 220 }: { derived: Derived; h
 
 const saveTip = makeTooltip(p => [{ label: 'cache saved', value: fmtCost(p[0]?.value ?? 0), color: 'var(--color-positive)' }])
 
-export function CacheSavings({ derived, height = 220 }: { derived: Derived; height?: number }) {
+export function CacheSavings({ derived, height = 220, periodLabel }: { derived: Derived; height?: number; periodLabel?: string }) {
+  const enter = useEnterOnce()
   const data = derived.cacheSavingsSeries
   const total = derived.totals.cacheSavings
   return (
-    <Panel title="cache savings" captureName="cache-savings" right={<span className="tnum text-xs text-positive">{fmtCost(total)}</span>}>
-      {data.length === 0 ? <EmptyHint>no cache reads in range</EmptyHint> : (
+    <Panel title="cache savings" titleTag={periodLabel} captureName="cache-savings" right={<span className="tnum text-xs text-positive">{fmtCost(total)}</span>}>
+      {data.length === 0 ? <EmptyHint>no cache reads in period</EmptyHint> : (
         <ChartShell height={height}>
           <ResponsiveContainer>
             <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -161,7 +155,7 @@ export function CacheSavings({ derived, height = 220 }: { derived: Derived; heig
               <XAxis dataKey="date" {...AXIS} tickFormatter={fmtDayLabel} minTickGap={28} />
               <YAxis {...AXIS} width={52} tickFormatter={fmtCostAxis} />
               <Tooltip content={saveTip} cursor={CURSOR} />
-              <Area type="monotone" dataKey="value" stroke="var(--color-positive)" strokeWidth={1.6} fill="url(#g-save)" isAnimationActive animationDuration={350} />
+              <Area type="monotone" dataKey="value" stroke="var(--color-positive)" strokeWidth={1.6} fill="url(#g-save)" isAnimationActive={enter} animationDuration={350} />
             </AreaChart>
           </ResponsiveContainer>
         </ChartShell>

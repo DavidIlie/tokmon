@@ -156,3 +156,10 @@ html.light {
     border-radius: 3px;
   }
 }
+
+/* Accessibility: honor reduced-motion — drop entrance/flash/ping motion. */
+@media (prefers-reduced-motion: reduce) {
+  .rise, .flash, .cursor-blink, .animate-ping {
+    animation: none !important;
+  }
+}

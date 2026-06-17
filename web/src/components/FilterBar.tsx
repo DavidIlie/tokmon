@@ -11,8 +11,20 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
   setFilters: (next: Filters | ((p: Filters) => Filters)) => void
 }) {
   const providers = snapshot?.providers ?? []
-  const accounts = snapshot?.accounts.filter(a => a.hasUsage) ?? []
-  const activeProv = (id: string) => filters.providers.length === 0 || filters.providers.includes(id)
+  const accounts = snapshot?.accounts ?? []
+  const usageAccounts = accounts.filter(a => a.hasUsage)
+  const usageProviderIds = new Set(usageAccounts.map(a => a.providerId))
+
+  // Only usage providers are filter chips — a billing-only chip would blank every chart.
+  const chipProviders = providers.filter(p => usageProviderIds.has(p.id))
+  // Billing-only providers are shown read-only (they render as cards, not period filters).
+  const billingProviders = providers.filter(p =>
+    !usageProviderIds.has(p.id) && accounts.some(a => a.providerId === p.id && a.hasBilling))
+
+  const provName = (id: string) => providers.find(p => p.id === id)?.name ?? id
+  const acctLabel = (a: { providerId: string; name: string }) =>
+    a.name && a.name !== provName(a.providerId) ? `${provName(a.providerId)} · ${a.name}` : provName(a.providerId)
+  const selectedAccount = usageAccounts.find(a => a.id === filters.account)
 
   const handleToggleProvider = (id: string) => setFilters(f => {
     const has = f.providers.includes(id)
@@ -27,49 +39,65 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
         <span className="text-xs text-fg-faint">filter:</span>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {providers.map(p => {
+          {chipProviders.map(p => {
             const on = filters.providers.includes(p.id)
             const dim = filters.providers.length > 0 && !on
             return (
               <button
                 key={p.id}
+                type="button"
+                aria-pressed={on}
                 onClick={() => handleToggleProvider(p.id)}
-                className={`flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs transition ${
-                  on ? 'bg-bg-2' : 'bg-transparent hover:border-line-2'
-                }`}
+                className="flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                 style={{
                   borderColor: on ? p.color : 'var(--color-line)',
                   color: dim ? 'var(--color-fg-faint)' : on ? p.color : 'var(--color-fg-dim)',
+                  background: on ? 'var(--color-bg-2)' : 'transparent',
                 }}
-                title={activeProv(p.id) ? `hide ${p.name}` : `show only ${p.name}`}
+                title={on ? `hide ${p.name}` : filters.providers.length ? `add ${p.name}` : `show only ${p.name}`}
               >
-                <span style={{ color: p.color, opacity: dim ? 0.4 : 1 }}>●</span>
+                <span style={{ color: p.color, opacity: dim ? 0.4 : 1 }} aria-hidden>{on ? '●' : '○'}</span>
                 {p.name}
               </button>
             )
           })}
+          {billingProviders.map(p => (
+            <span
+              key={p.id}
+              className="flex cursor-default items-center gap-1.5 rounded border border-dashed border-line px-2 py-0.5 text-xs text-fg-faint"
+              title={`${p.name} is billing-only — shown as a card, no usage timeline to filter`}
+            >
+              <span style={{ color: p.color, opacity: 0.6 }} aria-hidden>●</span>
+              {p.name}
+              <span className="text-[9px] uppercase tracking-wide text-fg-faint/70">billing</span>
+            </span>
+          ))}
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {accounts.length > 1 && (
-            <Dropdown
-              label="account"
-              value={filters.account === 'all' ? 'All' : (accounts.find(a => a.id === filters.account)?.name ?? 'All')}
-            >
+          {usageAccounts.length > 1 ? (
+            <Dropdown label="account" value={filters.account === 'all' ? 'all' : (selectedAccount ? acctLabel(selectedAccount) : 'all')}>
               {close => (
                 <Menu>
                   <MenuItem active={filters.account === 'all'} onClick={() => { setFilters(f => ({ ...f, account: 'all' })); close() }}>
                     All accounts
                   </MenuItem>
-                  {accounts.map(a => (
-                    <MenuItem key={a.id} active={filters.account === a.id} onClick={() => { setFilters(f => ({ ...f, account: a.id })); close() }}>
-                      <span style={{ color: a.color }}>●</span> {a.name}
-                    </MenuItem>
-                  ))}
+                  <div className="my-1 h-px bg-line" />
+                  <div className="max-h-64 overflow-y-auto">
+                    {usageAccounts.map(a => (
+                      <MenuItem key={a.id} active={filters.account === a.id} onClick={() => { setFilters(f => ({ ...f, account: a.id })); close() }}>
+                        <span style={{ color: a.color }} aria-hidden>●</span> {acctLabel(a)}
+                      </MenuItem>
+                    ))}
+                  </div>
                 </Menu>
               )}
             </Dropdown>
-          )}
+          ) : usageAccounts.length === 1 ? (
+            <span className="rounded border border-line bg-bg-1 px-2 py-1 text-xs text-fg-dim">
+              account: <span className="text-fg">{acctLabel(usageAccounts[0])}</span>
+            </span>
+          ) : null}
 
           <Dropdown
             label="model"
@@ -91,7 +119,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
                       <MenuItem key={m} active={on} onClick={() => setFilters(f => ({
                         ...f, models: on ? f.models.filter(x => x !== m) : [...f.models, m],
                       }))}>
-                        <span className={on ? 'text-accent' : 'text-fg-faint'}>{on ? '◉' : '○'}</span> {shortModel(m)}
+                        <span className={on ? 'text-accent' : 'text-fg-faint'} aria-hidden>{on ? '◉' : '○'}</span> {shortModel(m)}
                       </MenuItem>
                     )
                   })}
@@ -100,20 +128,26 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
             )}
           </Dropdown>
 
-          <Segmented
-            options={PERIODS.map(p => ({ value: p.key, label: p.key === 'mtd' ? 'MTD' : p.key === 'all' ? 'ALL' : p.key }))}
-            value={filters.period}
-            onChange={period => setFilters(f => ({ ...f, period }))}
-            size="sm"
-          />
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-fg-faint">range:</span>
+            <Segmented
+              options={PERIODS.map(p => ({ value: p.key, label: p.key === 'mtd' ? 'MTD' : p.key === 'all' ? 'ALL' : p.key }))}
+              value={filters.period}
+              onChange={period => setFilters(f => ({ ...f, period }))}
+              size="sm"
+              ariaLabel="time range"
+            />
+          </div>
 
           {anyFilter && (
             <button
+              type="button"
               onClick={() => setFilters(f => ({ ...f, providers: [], models: [], account: 'all' }))}
-              className="flex items-center gap-1 rounded border border-line px-2 py-1 text-xs text-fg-faint transition hover:border-warning/60 hover:text-warning"
-              title="Clear filters"
+              className="flex items-center gap-1 rounded border border-line bg-bg-1 px-2 py-1 text-xs text-fg-faint transition hover:border-warning/60 hover:text-warning focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              title="Clear provider, model & account filters"
+              aria-label="Clear provider, model and account filters"
             >
-              <X className="size-3" /> clear
+              <X className="size-3" aria-hidden /> clear
             </button>
           )}
         </div>

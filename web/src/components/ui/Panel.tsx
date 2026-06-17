@@ -3,10 +3,10 @@ import { Camera, Check } from '../icons'
 import { downloadNode, shareFilename } from '../../lib/share'
 
 export function Panel({
-  title, accent, right, captureName, children, className = '', bodyClassName = '',
+  title, titleTag, right, captureName, children, className = '', bodyClassName = '',
 }: {
   title?: string
-  accent?: string
+  titleTag?: ReactNode
   right?: ReactNode
   captureName?: string
   children: ReactNode
@@ -18,19 +18,22 @@ export function Panel({
     <section
       ref={ref}
       className={`group relative rounded-md border border-line bg-bg-1/80 transition-colors hover:border-line-2 ${className}`}
-      style={accent ? { boxShadow: `inset 0 2px 0 0 ${accent}` } : undefined}
     >
       {title && (
         // Box-drawing notched title: absolutely positioned above the top border.
         <div className="pointer-events-none absolute -top-[7px] left-3 flex items-center gap-2 bg-bg-1 px-1.5">
           <span className="font-display text-[11px] uppercase tracking-wider text-fg-dim">{title}</span>
+          {titleTag != null && <span className="text-[10px] normal-case tracking-normal text-fg-faint">{titleTag}</span>}
         </div>
       )}
-      {/* z-20 keeps controls clickable above Recharts' relatively-positioned surface. */}
-      <div className="absolute right-2 top-2 z-20 flex items-center gap-1.5">
-        {right}
-        {captureName && <CaptureButton getNode={() => ref.current} name={captureName} />}
-      </div>
+      {(right || captureName) && (
+        // z-20 keeps controls above Recharts' surface; solid bg-bg-1 stops gridlines
+        // bleeding through the inactive toggles (the line-under-toggles bug).
+        <div className="absolute right-2 top-2 z-20 flex items-center gap-1.5 rounded bg-bg-1 px-0.5">
+          {right}
+          {captureName && <CaptureButton getNode={() => ref.current} name={captureName} />}
+        </div>
+      )}
       <div className={`p-4 ${bodyClassName}`}>{children}</div>
     </section>
   )

@@ -1,5 +1,16 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { fmtDayLabel } from '../lib/format'
+
+// True only on the first frame after mount, so Recharts plays its enter animation
+// once instead of re-sweeping on every SSE snapshot push.
+export function useEnterOnce(): boolean {
+  const [enter, setEnter] = useState(true)
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setEnter(false))
+    return () => cancelAnimationFrame(id)
+  }, [])
+  return enter
+}
 
 export const AXIS = {
   tick: { fill: 'var(--color-fg-dim)', fontSize: 10, fontFamily: 'var(--font-mono)' },

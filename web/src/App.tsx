@@ -7,7 +7,7 @@ import { AnalyticsTab, ExploreTab, ModelsTab, OverviewTab, TABS, type TabKey } f
 import { deriveAll, PERIODS } from './lib/derive'
 import { fmtAgo } from './lib/format'
 import { useFilters } from './lib/useFilters'
-import { useSnapshot } from './lib/useSnapshot'
+import { useSnapshot, type ConnState } from './lib/useSnapshot'
 
 function useTab(): [TabKey, (t: TabKey) => void] {
   const read = (): TabKey => {
@@ -20,7 +20,7 @@ function useTab(): [TabKey, (t: TabKey) => void] {
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
-  return [tab, (t: TabKey) => { window.history.replaceState(null, '', `#${t}`); setTab(t) }]
+  return [tab, (t: TabKey) => { window.history.replaceState(null, '', `${location.pathname}${location.search}#${t}`); setTab(t) }]
 }
 
 function useNow(intervalMs = 1000): number {
@@ -62,15 +62,20 @@ function ThemeToggle({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: (
   )
 }
 
-function ConnDot({ conn, receivedAt, now }: { conn: string; receivedAt: number | null; now: number }) {
+function ConnDot({ conn, freshAt, now }: { conn: ConnState; freshAt: number | null; now: number }) {
   const color = conn === 'live' ? 'var(--color-positive)' : conn === 'error' ? 'var(--color-warning)' : 'var(--color-cost)'
+  const age = freshAt ? fmtAgo(freshAt, now) : null
+  const label = conn === 'live' ? (age ?? 'live')
+    : conn === 'connecting' ? 'connecting…'
+    : conn === 'reconnecting' ? (age ? `reconnecting · ${age}` : 'reconnecting…')
+    : (age ? `offline · ${age}` : 'offline')
   return (
-    <span className="flex items-center gap-1.5 text-xs">
+    <span className="flex items-center gap-1.5 text-xs" role="status" aria-label={conn === 'live' ? 'live' : conn}>
       <span className="relative flex size-2">
         {conn === 'live' && <span className="absolute inline-flex size-full animate-ping rounded-full opacity-60" style={{ background: color }} />}
         <span className="relative inline-flex size-2 rounded-full" style={{ background: color }} />
       </span>
-      <span className="text-fg-dim">{conn === 'live' && receivedAt ? fmtAgo(receivedAt, now) : conn}</span>
+      <span className="text-fg-dim" aria-hidden>{label}</span>
     </span>
   )
 }
@@ -85,7 +90,7 @@ function Connecting({ label }: { label: string }) {
 }
 
 export function App() {
-  const { snapshot, conn, receivedAt } = useSnapshot()
+  const { snapshot, conn } = useSnapshot()
   const [filters, setFilters] = useFilters()
   const [tab, setTab] = useTab()
   const [theme, toggleTheme] = useTheme()
@@ -93,18 +98,31 @@ export function App() {
 
   const derived = useMemo(() => deriveAll(snapshot, filters), [snapshot, filters])
   const periodLabel = PERIODS.find(p => p.key === filters.period)?.label ?? filters.period
+  const scopeLabel = filters.period === 'all' ? undefined : periodLabel
+
+  // Drop stale provider/account ids (e.g. from a shared URL) once the snapshot reveals them.
+  useEffect(() => {
+    if (!snapshot) return
+    const provIds = new Set<string>(snapshot.providers.map(p => p.id))
+    const acctIds = new Set<string>(snapshot.accounts.map(a => a.id))
+    const cleanProv = filters.providers.filter(p => provIds.has(p))
+    const cleanAcct = filters.account === 'all' || acctIds.has(filters.account) ? filters.account : 'all'
+    if (cleanProv.length !== filters.providers.length || cleanAcct !== filters.account) {
+      setFilters(f => ({ ...f, providers: cleanProv, account: cleanAcct }))
+    }
+  }, [snapshot, filters, setFilters])
 
   const usageAccts = snapshot?.accounts.filter(a => a.hasUsage) ?? []
   const hasUsage = usageAccts.length > 0
-  // "ready" = every usage account's table has been fetched (non-null),
-  // so charts don't flash empty on first paint.
+  const hasBilling = (snapshot?.accounts ?? []).some(a => a.hasBilling && (a.billing?.metrics?.length || a.billing?.plan))
+  // "ready" = every usage account's table fetched, so charts don't flash empty.
+  // Billing-only setups have no tables to wait on, so they're ready immediately.
   const tablesReady = hasUsage && usageAccts.every(a => a.table != null)
   const everReady = useRef(false)
   useEffect(() => { if (tablesReady) everReady.current = true }, [tablesReady])
-  // Safety net: never hang the loader if a provider errors and its table stays null.
   const [graceOver, setGraceOver] = useState(false)
   useEffect(() => { const id = setTimeout(() => setGraceOver(true), 12_000); return () => clearTimeout(id) }, [])
-  const ready = tablesReady || everReady.current || graceOver
+  const ready = !hasUsage || tablesReady || everReady.current || graceOver
 
   return (
     <div className="min-h-screen">
@@ -118,7 +136,7 @@ export function App() {
               <span className="cursor-blink text-accent">▋</span>
             </span>
             <div className="ml-auto flex items-center gap-3">
-              <ConnDot conn={conn} receivedAt={receivedAt} now={now} />
+              <ConnDot conn={conn} freshAt={snapshot?.generatedAt ?? null} now={now} />
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
               <ShareControl derived={derived} periodLabel={periodLabel} tz={snapshot?.tz ?? ''} version={snapshot?.version ?? ''} />
             </div>
@@ -144,18 +162,18 @@ export function App() {
       <main className="mx-auto max-w-[1600px] px-5 py-5">
         {!snapshot ? (
           <Connecting label={conn === 'error' ? 'connection lost — retrying…' : 'reading usage…'} />
-        ) : !hasUsage ? (
+        ) : !hasUsage && !hasBilling ? (
           <div className="rounded-md border border-line bg-bg-1 p-8 text-center text-sm text-fg-dim">
-            No usage-tracking providers detected. Open tokmon and enable a provider, then refresh.
+            No providers detected. Open tokmon, enable a provider, then refresh.
           </div>
         ) : !ready ? (
-          <Connecting label="reading usage history…" />
+          <Connecting label={conn === 'error' ? 'connection lost — retrying…' : 'reading usage history…'} />
         ) : (
           <div key={tab} className="rise">
-            {tab === 'overview' && <OverviewTab derived={derived} periodLabel={periodLabel} />}
-            {tab === 'analytics' && <AnalyticsTab derived={derived} />}
-            {tab === 'models' && <ModelsTab derived={derived} />}
-            {tab === 'explore' && <ExploreTab snapshot={snapshot} filters={filters} setFilters={setFilters} />}
+            {tab === 'overview' && <OverviewTab derived={derived} periodLabel={periodLabel} scopeLabel={scopeLabel} providers={snapshot.providers} />}
+            {tab === 'analytics' && <AnalyticsTab derived={derived} scopeLabel={scopeLabel} />}
+            {tab === 'models' && <ModelsTab derived={derived} scopeLabel={scopeLabel} />}
+            {tab === 'explore' && <ExploreTab snapshot={snapshot} filters={filters} />}
           </div>
         )}
       </main>

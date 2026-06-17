@@ -17,6 +17,8 @@ export function useSnapshot(): SnapshotState {
 
   useEffect(() => {
     let cancelled = false
+    let retry: ReturnType<typeof setTimeout> | undefined
+
     fetch('/api/data')
       .then(r => r.json())
       .then((d: WebSnapshot | { pending: boolean }) => {
@@ -26,24 +28,34 @@ export function useSnapshot(): SnapshotState {
       })
       .catch(() => {})
 
-    const es = new EventSource('/api/stream')
-    esRef.current = es
-
-    es.onopen = () => { if (!cancelled) setConn('live') }
-    es.addEventListener('snapshot', (ev: MessageEvent) => {
-      if (cancelled) return
-      try {
-        setSnapshot(JSON.parse(ev.data) as WebSnapshot)
-        setReceivedAt(Date.now())
-        setConn('live')
-      } catch {}
-    })
-    es.onerror = () => {
-      if (cancelled) return
-      setConn(es.readyState === EventSource.CLOSED ? 'error' : 'reconnecting')
+    // Native EventSource retries transient drops; if it hard-CLOSES we rebuild it
+    // ourselves after a short backoff, keeping the last snapshot visible meanwhile.
+    const connect = () => {
+      const es = new EventSource('/api/stream')
+      esRef.current = es
+      es.onopen = () => { if (!cancelled) setConn('live') }
+      es.addEventListener('snapshot', (ev: MessageEvent) => {
+        if (cancelled) return
+        try {
+          setSnapshot(JSON.parse(ev.data) as WebSnapshot)
+          setReceivedAt(Date.now())
+          setConn('live')
+        } catch {}
+      })
+      es.onerror = () => {
+        if (cancelled) return
+        if (es.readyState === EventSource.CLOSED) {
+          setConn('error')
+          es.close()
+          retry = setTimeout(() => { if (!cancelled) { setConn('reconnecting'); connect() } }, 3000)
+        } else {
+          setConn('reconnecting')
+        }
+      }
     }
+    connect()
 
-    return () => { cancelled = true; es.close(); esRef.current = null }
+    return () => { cancelled = true; clearTimeout(retry); esRef.current?.close(); esRef.current = null }
   }, [])
 
   return { snapshot, conn, receivedAt }

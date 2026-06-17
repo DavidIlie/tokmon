@@ -3,7 +3,7 @@ import { Bar, BarChart, Cell, LabelList, Pie, PieChart, ResponsiveContainer, Too
 import type { Derived } from '../../lib/derive'
 import { fmtCost, fmtCostAxis, fmtPct, fmtTokens } from '../../lib/format'
 import { shortModel, TOKEN_BUCKET } from '../../lib/colors'
-import { AXIS, ChartShell, GRID, makeTooltip } from '../chart'
+import { AXIS, ChartShell, GRID, makeTooltip, useEnterOnce } from '../chart'
 import { EmptyHint, Panel } from '../ui'
 
 const BAR_FILL = { fill: 'var(--color-bg-2)' }
@@ -22,19 +22,21 @@ const cacheTip = makeTooltip(
   { title: l => shortModel(l) },
 )
 
-export function CostByModel({ derived, height = 280, limit = 10, metric = 'cost' }: {
+export function CostByModel({ derived, height = 280, limit = 10, metric = 'cost', periodLabel }: {
   derived: Derived
   height?: number
   limit?: number
   metric?: 'cost' | 'tokens'
+  periodLabel?: string
 }) {
+  const enter = useEnterOnce()
   const isTokens = metric === 'tokens'
   const top = [...derived.byModel]
     .sort((a, b) => (isTokens ? b.tokens - a.tokens : b.cost - a.cost))
     .slice(0, limit)
   return (
-    <Panel title={isTokens ? 'tokens by model' : 'cost by model'} captureName={isTokens ? 'tokens-by-model' : 'cost-by-model'}>
-      {top.length === 0 ? <EmptyHint>no models in range</EmptyHint> : (
+    <Panel title={isTokens ? 'tokens by model' : 'cost by model'} titleTag={periodLabel} captureName={isTokens ? 'tokens-by-model' : 'cost-by-model'}>
+      {top.length === 0 ? <EmptyHint>no models in period</EmptyHint> : (
         <ChartShell height={height}>
           <ResponsiveContainer>
             <BarChart data={top} layout="vertical" margin={{ top: 4, right: 60, left: 4, bottom: 0 }}>
@@ -42,7 +44,7 @@ export function CostByModel({ derived, height = 280, limit = 10, metric = 'cost'
               <XAxis type="number" {...AXIS} tickFormatter={isTokens ? fmtTokens : fmtCostAxis} />
               <YAxis type="category" dataKey="model" {...AXIS} width={124} tickFormatter={shortModel} />
               <Tooltip content={isTokens ? tokensTip : modelTip} cursor={BAR_FILL} />
-              <Bar dataKey={isTokens ? 'tokens' : 'cost'} radius={[0, 3, 3, 0]} isAnimationActive animationDuration={350}>
+              <Bar dataKey={isTokens ? 'tokens' : 'cost'} radius={[0, 3, 3, 0]} isAnimationActive={enter} animationDuration={350}>
                 {top.map(m => <Cell key={m.model} fill={m.color} />)}
                 <LabelList dataKey={isTokens ? 'tokens' : 'cost'} position="right" offset={6} {...BAR_LABEL}
                   formatter={(v: number) => (isTokens ? fmtTokens(v) : fmtCost(v))} />
@@ -55,18 +57,20 @@ export function CostByModel({ derived, height = 280, limit = 10, metric = 'cost'
   )
 }
 
-export function CacheByModel({ derived, height = 240, limit = 12 }: {
+export function CacheByModel({ derived, height = 240, limit = 12, periodLabel }: {
   derived: Derived
   height?: number
   limit?: number
+  periodLabel?: string
 }) {
+  const enter = useEnterOnce()
   const top = [...derived.byModel]
     .filter(m => m.cacheSavings > 0)
     .sort((a, b) => b.cacheSavings - a.cacheSavings)
     .slice(0, limit)
   return (
-    <Panel title="cache savings by model" captureName="cache-savings-by-model">
-      {top.length === 0 ? <EmptyHint>no cache savings in range</EmptyHint> : (
+    <Panel title="cache savings by model" titleTag={periodLabel} captureName="cache-savings-by-model">
+      {top.length === 0 ? <EmptyHint>no cache savings in period</EmptyHint> : (
         <ChartShell height={height}>
           <ResponsiveContainer>
             <BarChart data={top} layout="vertical" margin={{ top: 4, right: 60, left: 4, bottom: 0 }}>
@@ -74,7 +78,7 @@ export function CacheByModel({ derived, height = 240, limit = 12 }: {
               <XAxis type="number" {...AXIS} tickFormatter={fmtCostAxis} />
               <YAxis type="category" dataKey="model" {...AXIS} width={124} tickFormatter={shortModel} />
               <Tooltip content={cacheTip} cursor={BAR_FILL} />
-              <Bar dataKey="cacheSavings" radius={[0, 3, 3, 0]} fill="var(--color-positive)" isAnimationActive animationDuration={350}>
+              <Bar dataKey="cacheSavings" radius={[0, 3, 3, 0]} fill="var(--color-positive)" isAnimationActive={enter} animationDuration={350}>
                 <LabelList dataKey="cacheSavings" position="right" offset={6} {...BAR_LABEL} formatter={(v: number) => fmtCost(v)} />
               </Bar>
             </BarChart>
@@ -85,14 +89,16 @@ export function CacheByModel({ derived, height = 240, limit = 12 }: {
   )
 }
 
-export function ProviderDonut({ derived, height = 280 }: { derived: Derived; height?: number }) {
+export function ProviderDonut({ derived, height = 280, periodLabel }: { derived: Derived; height?: number; periodLabel?: string }) {
+  const enter = useEnterOnce()
   const data = derived.byProvider
   const total = derived.totals.cost
   const [active, setActive] = useState<number | null>(null)
   const focus = active != null ? data[active] : null
+  const focusShare = focus && total > 0 ? focus.cost / total : 0
   return (
-    <Panel title="provider split" captureName="provider-split">
-      {data.length === 0 ? <EmptyHint>no spend in range</EmptyHint> : (
+    <Panel title="provider split" titleTag={periodLabel} captureName="provider-split">
+      {data.length === 0 ? <EmptyHint>no spend in period</EmptyHint> : (
         <div className="relative" onMouseLeave={() => setActive(null)}>
           <ChartShell height={height}>
             <ResponsiveContainer>
@@ -100,12 +106,13 @@ export function ProviderDonut({ derived, height = 280 }: { derived: Derived; hei
                 <Pie
                   data={data} dataKey="cost" nameKey="name" innerRadius="60%" outerRadius="88%"
                   paddingAngle={data.length > 1 ? 2 : 0} stroke="var(--color-bg-1)" strokeWidth={2}
-                  isAnimationActive animationDuration={350}
+                  isAnimationActive={enter} animationDuration={350}
                   onMouseEnter={(_, i) => setActive(i)}
                 >
                   {data.map((p, i) => (
                     <Cell
                       key={p.id} fill={p.color}
+                      aria-label={`${p.name}: ${fmtCost(p.cost)}`}
                       fillOpacity={active == null || active === i ? 1 : 0.32}
                       style={{ transition: 'fill-opacity 150ms ease' }}
                     />
@@ -119,7 +126,7 @@ export function ProviderDonut({ derived, height = 280 }: { derived: Derived; hei
               {fmtCost(focus ? focus.cost : total)}
             </div>
             <div className="font-display text-[10px] uppercase tracking-wide text-fg-faint">
-              {focus ? `${focus.name} · ${fmtPct(total > 0 ? focus.cost / total : 0)}` : 'total'}
+              {focus ? `${focus.name} · ${fmtPct(focusShare, focusShare > 0 && focusShare < 0.01 ? 1 : 0)}` : 'total'}
             </div>
           </div>
         </div>
@@ -128,7 +135,7 @@ export function ProviderDonut({ derived, height = 280 }: { derived: Derived; hei
   )
 }
 
-export function TokenComposition({ derived }: { derived: Derived }) {
+export function TokenComposition({ derived, periodLabel }: { derived: Derived; periodLabel?: string }) {
   const c = derived.tokenComposition
   const total = c.input + c.output + c.cacheCreate + c.cacheRead
   const rows = [
@@ -138,8 +145,8 @@ export function TokenComposition({ derived }: { derived: Derived }) {
     { key: 'cacheCreate', label: 'cache write', value: c.cacheCreate, color: TOKEN_BUCKET.cacheCreate },
   ]
   return (
-    <Panel title="token composition" captureName="token-composition" right={<span className="tnum text-xs text-fg-dim">{fmtTokens(total)}</span>}>
-      {total === 0 ? <EmptyHint>no tokens in range</EmptyHint> : (
+    <Panel title="token composition" titleTag={periodLabel} captureName="token-composition" right={<span className="tnum text-xs text-fg-dim">{fmtTokens(total)}</span>}>
+      {total === 0 ? <EmptyHint>no tokens in period</EmptyHint> : (
         <div className="flex flex-col gap-4 pt-1">
           <div className="flex h-3 w-full overflow-hidden rounded-full bg-bg-3">
             {rows.map(r => r.value > 0 && (

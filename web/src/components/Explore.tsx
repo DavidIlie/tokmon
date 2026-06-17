@@ -38,8 +38,9 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase()
+    // Match against humanized + raw forms so typing "jun" or "opus" works.
     const base = s
-      ? rows.filter(r => r.label.toLowerCase().includes(s) || r.models.some(m => m.toLowerCase().includes(s)))
+      ? rows.filter(r => `${fmtDayLabel(r.label)} ${r.label} ${r.models.map(shortModel).join(' ')} ${r.models.join(' ')}`.toLowerCase().includes(s))
       : rows
     return [...base].sort((a, b) => {
       const av = sort === 'label' ? a.label : a[sort]
@@ -98,7 +99,7 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={6} className="py-8 text-center text-fg-faint">no rows match</td></tr>
+              <tr><td colSpan={6} className="py-8 text-center text-fg-faint">{q.trim() ? `no rows match “${q.trim()}”` : 'no usage in this range'}</td></tr>
             )}
             {filtered.map(r => (
               <FragmentRow key={r.label} row={r} isOpen={open.has(r.label)} onToggle={() => handleToggleOpen(r.label)} />
@@ -125,15 +126,19 @@ function FragmentRow({ row, isOpen, onToggle }: { row: TableRow; isOpen: boolean
   return (
     <>
       <tr
-        className="cursor-pointer border-b border-line-faint transition hover:bg-bg-2/60 focus-visible:bg-bg-2/60 focus-visible:outline-none"
+        className="cursor-pointer border-b border-line-faint transition hover:bg-bg-2/60"
         onClick={onToggle}
-        tabIndex={0}
-        aria-expanded={isOpen}
-        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } }}
       >
         <td className="whitespace-nowrap py-2 pr-3">
-          <span className={isOpen ? 'text-accent' : 'text-fg-faint'}>{isOpen ? '▾' : '▸'}</span>{' '}
-          <span className="text-fg">{fmtDayLabel(row.label)}</span>
+          <button
+            type="button"
+            aria-expanded={isOpen}
+            onClick={e => { e.stopPropagation(); onToggle() }}
+            className="flex items-center gap-1 rounded text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            <span aria-hidden className={isOpen ? 'text-accent' : 'text-fg-faint'}>{isOpen ? '▾' : '▸'}</span>
+            <span className="text-fg">{fmtDayLabel(row.label)}</span>
+          </button>
         </td>
         <td className="py-2 pr-3 text-fg-dim">
           <span className="line-clamp-1">{row.models.map(shortModel).join(', ')}</span>
