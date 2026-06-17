@@ -1,16 +1,23 @@
 import { toBlob, toPng } from 'html-to-image'
 
-const BG = '#0a0d0e'
+const BG = '#0a0a0a'
 
 interface CaptureOpts {
   pixelRatio?: number
+  backgroundColor?: string
+}
+
+// Ensure the pixel display face is loaded so it embeds in the PNG (no JetBrains fallback).
+async function settle(): Promise<void> {
+  try { await document.fonts.ready } catch { /* older browsers */ }
+  await new Promise(r => requestAnimationFrame(() => r(null)))
 }
 
 async function render(node: HTMLElement, opts: CaptureOpts = {}): Promise<string> {
-  await new Promise(r => requestAnimationFrame(() => r(null)))
+  await settle()
   return toPng(node, {
     pixelRatio: opts.pixelRatio ?? 2,
-    backgroundColor: BG,
+    backgroundColor: opts.backgroundColor ?? BG,
     cacheBust: true,
     skipFonts: false,
   })
@@ -31,10 +38,10 @@ export async function downloadNode(node: HTMLElement, filename: string, opts?: C
 
 export async function copyNode(node: HTMLElement, opts?: CaptureOpts): Promise<boolean> {
   try {
-    await new Promise(r => requestAnimationFrame(() => r(null)))
+    await settle()
     const blob = await toBlob(node, {
       pixelRatio: opts?.pixelRatio ?? 2,
-      backgroundColor: BG,
+      backgroundColor: opts?.backgroundColor ?? BG,
       cacheBust: true,
     })
     if (!blob || !navigator.clipboard || typeof ClipboardItem === 'undefined') return false

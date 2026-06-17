@@ -50,7 +50,7 @@ export function ProviderCards({ accounts, nameOf }: { accounts: WebAccount[]; na
     )
   }
   return (
-    <div className="grid grid-cols-1 justify-center gap-4 sm:grid-cols-[repeat(auto-fit,minmax(340px,460px))]">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fit,minmax(min(340px,100%),1fr))]">
       {accounts.map((a, i) => <ProviderCard key={a.id} account={a} index={i} providerName={nameOf(a.providerId)} />)}
     </div>
   )

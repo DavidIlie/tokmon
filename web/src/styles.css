@@ -52,7 +52,7 @@
    Kept UNLAYERED (outside @layer base) so it beats Tailwind's unlayered @theme
    :root vars by specificity (html.light > :root). Surfaces/text flip; provider
    hues stay (mid-tone, legible on both); semantic colors darken for contrast. */
-html.light {
+html.light, .light {
   color-scheme: light;
   --color-bg-0: #f4f5f5;
   --color-bg-1: #ffffff;
@@ -70,6 +70,28 @@ html.light {
   --color-warning: #b0403a;
   --color-prompt: #2f8f57;
   --color-accent: #2f8f57;
+}
+
+/* Pin the dark palette on any element (e.g. a share-export wrapper) even when the
+   app is in light mode — mirrors the @theme defaults so a captured PNG can choose. */
+.dark {
+  color-scheme: dark;
+  --color-bg-0: #0a0a0a;
+  --color-bg-1: #101011;
+  --color-bg-2: #161617;
+  --color-bg-3: #1d1d1e;
+  --color-line: #262627;
+  --color-line-2: #343435;
+  --color-line-faint: #1a1a1b;
+  --color-fg: #d4d6d6;
+  --color-fg-dim: #8d9090;
+  --color-fg-faint: #585b5b;
+  --color-fg-bright: #f3f5f5;
+  --color-cost: #d9c074;
+  --color-positive: #6caa71;
+  --color-warning: #b45648;
+  --color-prompt: #79be7e;
+  --color-accent: #79be7e;
 }
 
 @layer base {
@@ -163,4 +185,13 @@ html.light {
   .rise, .flash, .cursor-blink, .animate-ping {
     animation: none !important;
   }
+  .dialog-pop { animation: none !important; }
 }
+
+@keyframes tok-pop {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+.dialog-pop { animation: tok-pop 0.18s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+@keyframes tok-fade { from { opacity: 0; } to { opacity: 1; } }
+.dialog-fade { animation: tok-fade 0.18s ease-out both; }

@@ -1,6 +1,6 @@
-import { useRef, useState, type ReactNode } from 'react'
-import { Camera, Check } from '../icons'
-import { downloadNode, shareFilename } from '../../lib/share'
+import { useRef, type ReactNode } from 'react'
+import { Camera } from '../icons'
+import { useShare } from '../ShareProvider'
 
 export function Panel({
   title, titleTag, right, captureName, children, className = '', bodyClassName = '',
@@ -29,7 +29,7 @@ export function Panel({
       {(right || captureName) && (
         // z-20 keeps controls above Recharts' surface; solid bg-bg-1 stops gridlines
         // bleeding through the inactive toggles (the line-under-toggles bug).
-        <div className="absolute right-2 top-2 z-20 flex items-center gap-1.5 rounded bg-bg-1 px-0.5">
+        <div data-chrome className="absolute right-2 top-2 z-20 flex items-center gap-1.5 rounded bg-bg-1 px-0.5">
           {right}
           {captureName && <CaptureButton getNode={() => ref.current} name={captureName} />}
         </div>
@@ -40,21 +40,15 @@ export function Panel({
 }
 
 export function CaptureButton({ getNode, name }: { getNode: () => HTMLElement | null; name: string }) {
-  const [done, setDone] = useState(false)
+  const openShare = useShare()
   return (
     <button
-      title="Save panel as PNG"
-      aria-label="Save panel as PNG"
-      onClick={async () => {
-        const node = getNode()
-        if (!node) return
-        await downloadNode(node, shareFilename(name))
-        setDone(true)
-        setTimeout(() => setDone(false), 1200)
-      }}
+      title="Share this panel"
+      aria-label="Share this panel as an image"
+      onClick={() => { const node = getNode(); if (node) openShare({ kind: 'panel', node, captureName: name }) }}
       className="rounded border border-transparent p-1 text-fg-faint opacity-0 transition hover:border-line hover:text-accent group-hover:opacity-100 focus-visible:opacity-100"
     >
-      {done ? <Check className="size-3.5 text-positive" /> : <Camera className="size-3.5" />}
+      <Camera className="size-3.5" />
     </button>
   )
 }

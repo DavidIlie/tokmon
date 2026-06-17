@@ -134,7 +134,7 @@ export function App() {
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3.5">
             <span className="font-display text-2xl text-fg-bright">TOKMON</span>
             <span className="hidden text-sm text-fg-faint sm:inline">
-              tokmon ~/usage <span className="text-prompt">$</span>{' '}
+              ~/usage <span className="text-prompt">$</span>{' '}
               <span className="text-fg-dim">{tab}</span>
               <span className="cursor-blink text-accent">▋</span>
             </span>

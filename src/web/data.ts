@@ -17,7 +17,10 @@ export interface ResolvedAccount {
 /** Detect installed providers and build the active account list from config. */
 export async function resolveAccounts(config: Config): Promise<ResolvedAccount[]> {
   const detected = await detectProviders()
-  const accounts = buildAccounts(config, detected)
+  // The web dashboard surfaces EVERY installed provider's data, regardless of which
+  // are toggled off for the TUI — so opencode/pi/gemini/etc. show here even when the
+  // terminal view hides them. (The TUI still honors config.disabledProviders.)
+  const accounts = buildAccounts({ ...config, disabledProviders: [] }, detected)
   return accounts.map(a => {
     const p = PROVIDERS[a.providerId]
     return {
