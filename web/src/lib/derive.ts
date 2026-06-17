@@ -127,7 +127,6 @@ const addInto = (t: Totals, c: number, tok: number, sav: number, calls: number) 
   t.cost += c; t.tokens += tok; t.cacheSavings += sav; t.calls += calls
 }
 
-// Accumulation state passed through the single data pass.
 interface AccState {
   totals: Totals
   today: Totals

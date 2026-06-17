@@ -2,14 +2,14 @@ import type { ProviderId } from '@shared'
 
 // Keep in sync with TUI palette (Ink color name → terminal hex) and each provider's `.color`.
 export const PROVIDER_HEX: Record<string, string> = {
-  claude: '#6caa71', // green
-  codex: '#7ccbcd', // cyan
-  cursor: '#bd7bcd', // magenta
-  copilot: '#dee5eb', // white
-  pi: '#6d96b4', // blue
-  opencode: '#c4ac62', // yellow
-  antigravity: '#b45648', // red
-  gemini: '#79be7e', // greenBright
+  claude: '#6caa71',
+  codex: '#7ccbcd',
+  cursor: '#bd7bcd',
+  copilot: '#dee5eb',
+  pi: '#6d96b4',
+  opencode: '#c4ac62',
+  antigravity: '#b45648',
+  gemini: '#79be7e',
 }
 
 export function providerHex(id: ProviderId | string): string {
@@ -34,10 +34,10 @@ export function modelColor(name: string): string {
 }
 
 export const TOKEN_BUCKET = {
-  input: '#6d96b4', // blue
-  output: '#6caa71', // green
-  cacheCreate: '#c4ac62', // yellow
-  cacheRead: '#7ccbcd', // cyan
+  input: '#6d96b4',
+  output: '#6caa71',
+  cacheCreate: '#c4ac62',
+  cacheRead: '#7ccbcd',
 } as const
 
 export function shortModel(name: string): string {

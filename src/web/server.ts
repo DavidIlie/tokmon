@@ -54,7 +54,6 @@ function createRouter(
       return
     }
 
-    // Dev: hand everything non-API to Vite (transforms, HMR client, SPA fallback).
     if (vite) {
       vite.middlewares(req, res, () => { send(res, 404, 'text/plain', 'not found') })
       return
@@ -110,7 +109,6 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
     stop: () => new Promise<void>(resolve => {
       engine.stop()
       const closeHttp = () => { server.close(() => resolve()); server.closeAllConnections?.() }
-      // Close Vite first (stops HMR ws + file watchers), then the http server.
       if (vite) vite.close().then(closeHttp, closeHttp)
       else closeHttp()
     }),

@@ -80,6 +80,26 @@ For **Claude / Codex** — Daily, Weekly, and Monthly breakdowns (6 months of hi
 
 For **Cursor** — a per-model spend table (cost, request count, share of total, all-time), sourced from Cursor's local conversation data.
 
+## Web Dashboard
+
+Prefer a browser? tokmon ships a local web dashboard with the same data — charts, filtering, and shareable images — in a terminal-styled UI.
+
+```bash
+tokmon serve            # opens http://127.0.0.1:4317 in your browser
+tokmon serve --port 8080
+tokmon serve --no-open  # don't auto-open the browser
+```
+
+Or press `w` (or `W`) inside the TUI to toggle it without leaving the terminal — the header shows `● web :4317` while it's running.
+
+- **Local & private** — binds to `127.0.0.1` only; same read-only data as the TUI, nothing leaves your machine.
+- **Four tabs** — **Overview** (KPIs, live cost-over-time, provider cards), **Analytics** (cost-by-model, provider split, token composition, cache savings, a GitHub-style daily-spend calendar), **Models** (leaderboard by cost/tokens/calls), and **Explore** (the filterable, sortable, drill-down table).
+- **Global filters** — by provider, model, account, and period; the URL updates so a filtered view is shareable.
+- **Dark / light** theme toggle, and a **Share** button that exports a PNG summary card (or any panel) to download or clipboard.
+- **Fast** — renders instantly from a cached snapshot, then refreshes live over SSE; idle when no tab is open.
+
+The dashboard is a prebuilt static bundle shipped in the package — no build step, fully offline.
+
 ## Keybindings
 
 ### Global
@@ -91,6 +111,7 @@ For **Cursor** — a per-model spend table (cost, request count, share of total,
 | scroll / `↑` `↓` / `[` `]` | (Dashboard) move between pages when paginated |
 | `a` `A` | Cycle account focus forward / back |
 | `0`–`9` | Jump to an account focus slot |
+| `w` `W` | Toggle the web dashboard (opens in your browser) |
 | `s` | Open settings |
 | `q` | Quit |
 
@@ -142,10 +163,18 @@ Press `s` to open.
 ## Options
 
 ```
+tokmon [options]            Launch the terminal dashboard
+tokmon serve [options]      Launch the web dashboard (http://127.0.0.1:4317)
+
+Options:
 -i, --interval <seconds>  Refresh interval in seconds (default: from config, or 2)
     --ascii               Force ASCII glyphs (also: TOKMON_ASCII=1)
     --no-ascii            Force Unicode glyphs
 -h, --help                Show help
+
+serve options:
+-p, --port <n>            Port to listen on (default: 4317, auto-falls back if taken)
+    --no-open             Don't open the browser automatically
 ```
 
 tokmon auto-detects whether your terminal can render Unicode (block sparklines, box borders) and falls back to ASCII on terminals/fonts that can't (e.g. legacy Windows console). Override with `--ascii` / `--no-ascii`, the `TOKMON_ASCII` env var, or the **ASCII glyphs** setting.

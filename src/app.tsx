@@ -373,7 +373,6 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
       if (tab === 1) {
         setCursor(c => up ? Math.max(0, c - 3) : c + 3)
       } else if (tab === 0 && dashPageCountRef.current > 1) {
-        // Scroll is the primary way to move between dashboard pages.
         setDashPage(p => up ? Math.max(0, p - 1) : Math.min(dashPageCountRef.current - 1, p + 1))
       }
     }

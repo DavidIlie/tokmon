@@ -15,18 +15,15 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-display: "Departure Mono", "JetBrains Mono", ui-monospace, monospace;
 
-  /* surfaces — flat neutral near-black, like a real terminal (no blue cast) */
   --color-bg-0: #0a0a0a;
   --color-bg-1: #101011;
   --color-bg-2: #161617;
   --color-bg-3: #1d1d1e;
 
-  /* lines / borders */
   --color-line: #262627;
   --color-line-2: #343435;
   --color-line-faint: #1a1a1b;
 
-  /* text — neutral grays */
   --color-fg: #d4d6d6;
   --color-fg-dim: #8d9090;
   --color-fg-faint: #585b5b;
@@ -89,7 +86,6 @@ html.light {
   body {
     margin: 0;
     background-color: var(--color-bg-0);
-    /* flat near-black like a real terminal, with a barely-there dot grid */
     background-image: radial-gradient(var(--color-line-faint) 0.5px, transparent 0.5px);
     background-size: 24px 24px;
     background-attachment: fixed;
@@ -111,7 +107,6 @@ html.light {
     color: var(--color-fg-bright);
   }
 
-  /* terminal-flavored scrollbars */
   * {
     scrollbar-width: thin;
     scrollbar-color: var(--color-line-2) transparent;
@@ -135,7 +130,6 @@ html.light {
     letter-spacing: 0.04em;
   }
 
-  /* blinking block cursor */
   @keyframes tok-blink {
     0%, 49% { opacity: 1; }
     50%, 100% { opacity: 0; }
@@ -144,7 +138,6 @@ html.light {
     animation: tok-blink 1.1s steps(1) infinite;
   }
 
-  /* staggered card reveal */
   @keyframes tok-rise {
     from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: translateY(0); }

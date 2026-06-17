@@ -75,7 +75,6 @@ export function serveStatic(webRoot: string, urlPath: string, res: ServerRespons
       throw new Error('not a file')
     }
   }).catch(() => {
-    // Extensionless paths → SPA fallback.
     if (extname(path)) { send(res, 404, 'text/plain', 'not found'); return }
     const indexPath = join(webRoot, 'index.html')
     if (!existsSync(indexPath)) { send(res, 404, 'text/plain', 'not found'); return }

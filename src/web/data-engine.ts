@@ -192,7 +192,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     },
 
     stop() {
-      stopped = true // halt in-flight refreshes between accounts / before rebuild
+      stopped = true
       clearInterval(summaryTimer)
       clearInterval(tableTimer)
       clearInterval(billingTimer)

@@ -58,7 +58,6 @@ export async function createViteDevServer(httpServer: Server, log: (m: string) =
   }
 }
 
-// Shown when neither a prod build nor a Vite dev server is available.
 export const MISSING_BUILD_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>tokmon web</title>
 <style>body{background:#0a0d0e;color:#cdd6d8;font:14px ui-monospace,Menlo,monospace;padding:3rem;line-height:1.7}
 code{color:#e6b450}</style></head><body>
