@@ -107,6 +107,7 @@ function isDevMode(): boolean {
 // in dev we resolve it from web/node_modules at runtime, so it's typed loosely).
 interface ViteDevServerLike {
   middlewares: (req: IncomingMessage, res: ServerResponse, next: (err?: unknown) => void) => void
+  warmupRequest?: (url: string) => Promise<void>
   close: () => Promise<void>
 }
 
@@ -331,6 +332,14 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
   const serverUrl = `http://${HOST}:${port}`
   if (!vite && !webRoot) log('  ⚠ no dashboard available — see the page for build/dev instructions')
 
+  // DEV: warm Vite's module graph + dep optimizer BEFORE the CPU-heavy first data
+  // fetch. That fetch can block this shared event loop for seconds on large
+  // histories; warming first means the SPA is already transformed/cached, so the
+  // browser loads straight into the loading state instead of freezing on blank.
+  if (vite?.warmupRequest) {
+    try { await Promise.race([vite.warmupRequest('/src/main.tsx'), delay(5000)]) } catch { /* best-effort */ }
+  }
+
   void refreshSummary(true)
   void refreshTable(true)
   void refreshBilling(true)
@@ -358,6 +367,10 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
       else closeHttp()
     }),
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => { const t = setTimeout(resolve, ms); t.unref?.() })
 }
 
 function listenWithFallback(server: Server, startPort: number): Promise<number> {
