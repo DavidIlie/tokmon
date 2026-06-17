@@ -76,16 +76,19 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
   }, [derived, maxWeeks])
 
   const cols = grid ? `repeat(${grid.weeks.length}, minmax(0,1fr))` : undefined
+  // Cells fill the row but are capped at ~22px so a short range (few week columns)
+  // can't balloon into giant squares.
+  const maxW = grid ? grid.weeks.length * 25 : undefined
 
   return (
     <>
     <Panel title="daily spend" titleTag={periodLabel} captureName="calendar">
       {!grid || !stats ? <div className="py-6 text-center text-xs text-fg-faint">no spend yet</div> : (
         <div className="grid gap-x-8 gap-y-5 pt-1 md:grid-cols-[minmax(0,1fr)_210px] md:items-center">
-          {/* Heatmap stretches to fill the row — no more dead space on the right. */}
+          {/* Heatmap fills the row up to a max cell size — never balloons on short ranges. */}
           <div className="flex min-w-0 flex-col gap-1.5">
             <div className="pl-6">
-              <div className="grid gap-[3px] text-[9px] text-fg-faint" style={{ gridTemplateColumns: cols }}>
+              <div className="grid gap-[3px] text-[9px] text-fg-faint" style={{ gridTemplateColumns: cols, maxWidth: maxW }}>
                 {grid.weeks.map((_, i) => {
                   const m = grid.monthLabels.find(l => l.col === i)
                   return <div key={i} className="truncate">{m?.text ?? ''}</div>
@@ -96,7 +99,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
               <div className="flex w-5 shrink-0 flex-col gap-[3px] text-[9px] text-fg-faint">
                 {['M', '', 'W', '', 'F', '', ''].map((d, i) => <div key={i} className="flex flex-1 items-center">{d}</div>)}
               </div>
-              <div className="grid min-w-0 flex-1 gap-[3px]" style={{ gridTemplateColumns: cols }}>
+              <div className="grid min-w-0 flex-1 gap-[3px]" style={{ gridTemplateColumns: cols, maxWidth: maxW }}>
                 {grid.weeks.map((week, wi) => (
                   <div key={wi} className="flex flex-col gap-[3px]">
                     {week.map((cell, di) => cell === null
