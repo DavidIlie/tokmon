@@ -19,6 +19,7 @@ const IDLE_PAUSE_MS = 60_000
 // loads in the background. Throttle writes; only cache once tables are present.
 const SNAPSHOT_CACHE_THROTTLE_MS = 20_000
 const snapshotCacheFile = () => join(cacheDir(), 'web-snapshot.json')
+const sseFrame = (s: WebSnapshot): string => `event: snapshot\ndata: ${JSON.stringify(s)}\n\n`
 
 interface DataEngineOptions {
   version: string
@@ -46,6 +47,9 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   const usage = new Map<string, { dashboard: DashboardData | null; table: TableData | null }>()
   const billing = new Map<string, BillingResult | null>()
   let current: WebSnapshot | null = null
+  // Serialized SSE frame for `current`, rebuilt once per snapshot and reused for every
+  // client write + new-connection replay (avoids re-stringifying per connection).
+  let currentFrame: string | null = null
   const sseClients = new Map<ServerResponse, ReturnType<typeof setInterval>>()
   let lastActivity = Date.now()
   let stopped = false
@@ -74,6 +78,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
         if (a.billing) billing.set(a.id, a.billing)
       }
       current = assembleSnapshot({ version, tz, intervalMs: summaryIntervalMs, resolved, usage, billing })
+      currentFrame = sseFrame(current)
     } catch { /* no/invalid cache — first run loads live */ }
   }
 
@@ -93,11 +98,11 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   const rebuild = () => {
     if (stopped) return
     current = assembleSnapshot({ version, tz, intervalMs: summaryIntervalMs, resolved, usage, billing })
+    currentFrame = sseFrame(current)
     persist()
     if (sseClients.size === 0) return
-    const payload = `event: snapshot\ndata: ${JSON.stringify(current)}\n\n`
     for (const res of sseClients.keys()) {
-      try { res.write(payload) } catch {}
+      try { res.write(currentFrame) } catch {}
     }
   }
 
@@ -178,7 +183,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
         Connection: 'keep-alive',
       })
       res.write('retry: 3000\n\n')
-      if (current) res.write(`event: snapshot\ndata: ${JSON.stringify(current)}\n\n`)
+      if (currentFrame) res.write(currentFrame)
       const beat = setInterval(() => { try { res.write(': ping\n\n') } catch {} }, SSE_HEARTBEAT_MS)
       beat.unref?.()
       sseClients.set(res, beat)

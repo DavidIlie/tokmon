@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { WebProviderInfo, WebSnapshot } from '@shared'
 import { exploreRows, type Derived, type Filters, type Granularity } from '../lib/derive'
 import { Segmented } from './ui'
@@ -74,7 +74,8 @@ export function ExploreTab({ snapshot, filters }: {
 }) {
   const [q, setQ] = useState('')
   const [gran, setGran] = useState<Granularity>('daily')
-  const rows = exploreRows(snapshot, filters, gran)
+  // q filters downstream in ExploreTable's own memo — keep it out of these deps.
+  const rows = useMemo(() => exploreRows(snapshot, filters, gran), [snapshot, filters, gran])
   return (
     <div className="flex min-h-[calc(100vh-200px)] flex-col gap-3">
       <div className="flex flex-wrap items-center gap-3">

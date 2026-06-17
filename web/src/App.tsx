@@ -4,7 +4,7 @@ import { FilterBar } from './components/FilterBar'
 import { ShareControl } from './components/ShareCard'
 import { Moon, Sun } from './components/icons'
 import { AnalyticsTab, ExploreTab, ModelsTab, OverviewTab, TABS, type TabKey } from './components/tabs'
-import { deriveAll, PERIODS } from './lib/derive'
+import { deriveAll, hasBillingSignal, PERIODS } from './lib/derive'
 import { fmtAgo } from './lib/format'
 import { useFilters } from './lib/useFilters'
 import { useSnapshot, type ConnState } from './lib/useSnapshot'
@@ -114,10 +114,10 @@ export function App() {
 
   const usageAccts = snapshot?.accounts.filter(a => a.hasUsage) ?? []
   const hasUsage = usageAccts.length > 0
-  const hasBilling = (snapshot?.accounts ?? []).some(a => a.hasBilling && (
-    a.billing?.metrics?.length || a.billing?.plan || a.billing?.error ||
-    a.billing?.activity?.series?.length || a.billing?.modelSpend?.length
-  ))
+  const hasBilling = (snapshot?.accounts ?? []).some(hasBillingSignal)
+  // A billing-capable account whose first poll hasn't landed yet — don't flash
+  // "no providers" while its quota/plan is still loading.
+  const billingPending = (snapshot?.accounts ?? []).some(a => a.hasBilling && !hasBillingSignal(a))
   // "ready" = every usage account's table fetched, so charts don't flash empty.
   // Billing-only setups have no tables to wait on, so they're ready immediately.
   const tablesReady = hasUsage && usageAccts.every(a => a.table != null)
@@ -166,9 +166,13 @@ export function App() {
         {!snapshot ? (
           <Connecting label={conn === 'error' ? 'connection lost — retrying…' : 'reading usage…'} />
         ) : !hasUsage && !hasBilling ? (
-          <div className="rounded-md border border-line bg-bg-1 p-8 text-center text-sm text-fg-dim">
-            No providers detected. Open tokmon, enable a provider, then refresh.
-          </div>
+          billingPending && !graceOver && conn !== 'error'
+            ? <Connecting label="reading billing…" />
+            : (
+              <div className="rounded-md border border-line bg-bg-1 p-8 text-center text-sm text-fg-dim">
+                No providers detected. Open tokmon, enable a provider, then refresh.
+              </div>
+            )
         ) : !ready ? (
           <Connecting label={conn === 'error' ? 'connection lost — retrying…' : 'reading usage history…'} />
         ) : (

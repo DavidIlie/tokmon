@@ -6,13 +6,11 @@ export type ConnState = 'connecting' | 'live' | 'reconnecting' | 'error'
 export interface SnapshotState {
   snapshot: WebSnapshot | null
   conn: ConnState
-  receivedAt: number | null
 }
 
 export function useSnapshot(): SnapshotState {
   const [snapshot, setSnapshot] = useState<WebSnapshot | null>(null)
   const [conn, setConn] = useState<ConnState>('connecting')
-  const [receivedAt, setReceivedAt] = useState<number | null>(null)
   const esRef = useRef<EventSource | null>(null)
 
   useEffect(() => {
@@ -24,7 +22,6 @@ export function useSnapshot(): SnapshotState {
       .then((d: WebSnapshot | { pending: boolean }) => {
         if (cancelled || !d || 'pending' in d) return
         setSnapshot(d as WebSnapshot)
-        setReceivedAt(Date.now())
       })
       .catch(() => {})
 
@@ -38,7 +35,6 @@ export function useSnapshot(): SnapshotState {
         if (cancelled) return
         try {
           setSnapshot(JSON.parse(ev.data) as WebSnapshot)
-          setReceivedAt(Date.now())
           setConn('live')
         } catch {}
       })
@@ -58,5 +54,5 @@ export function useSnapshot(): SnapshotState {
     return () => { cancelled = true; clearTimeout(retry); esRef.current?.close(); esRef.current = null }
   }, [])
 
-  return { snapshot, conn, receivedAt }
+  return { snapshot, conn }
 }

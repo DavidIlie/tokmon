@@ -85,9 +85,6 @@ export interface Derived {
   month: Totals
   burnRate: number
   timeline: TimelinePoint[]
-  // All-time daily totals (account/model filters apply, period window does NOT) —
-  // the calendar is a history view by design and always spans the full history.
-  fullTimeline: TimelinePoint[]
   cumulative: { date: string; total: number }[]
   cacheSavingsSeries: { date: string; value: number }[]
   calendar: CalendarDay[]
@@ -123,14 +120,19 @@ function selectAccounts(snap: WebSnapshot, f: Filters): WebAccount[] {
   })
 }
 
-// Card surface: usage accounts + billing-only accounts that have live quota metrics,
+// A billing account worth showing as a card: it has a plan, live metrics, a
+// per-model spend table, activity, or an actionable error to surface.
+export function hasBillingSignal(a: WebAccount): boolean {
+  return !!(a.hasBilling && (
+    a.billing?.metrics?.length || a.billing?.plan || a.billing?.error ||
+    a.billing?.activity?.series?.length || a.billing?.modelSpend?.length
+  ))
+}
+
+// Card surface: usage accounts + billing-only accounts that carry a billing signal,
 // honoring the account filter (and the effective provider filter where it applies).
 function selectCardAccounts(snap: WebSnapshot, f: Filters): WebAccount[] {
   const provFilter = activeProviderFilter(snap, f)
-  const hasBillingSignal = (a: WebAccount) => a.hasBilling && (
-    a.billing?.metrics?.length || a.billing?.plan || a.billing?.error ||
-    a.billing?.activity?.series?.length || a.billing?.modelSpend?.length
-  )
   return snap.accounts.filter(a => {
     if (!a.hasUsage && !hasBillingSignal(a)) return false
     if (f.account !== 'all' && a.id !== f.account) return false
@@ -309,16 +311,21 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
 
   const timeline = buildTimeline(acc)
 
-  // Second pass over every row (no date window) feeds the all-time calendar.
-  const accAll = makeAccState()
-  for (const a of accounts) {
-    const pid = a.providerId
-    const color = providerColor.get(pid) ?? a.color
-    for (const row of a.table?.daily ?? []) {
-      accumulateDayRow(accAll, row, pid, color, modelSet)
+  // The calendar is always all-time. When a period window clips `acc`, do a second
+  // unwindowed pass for it; when period='all' the windowed pass already IS all-time,
+  // so reuse `timeline` and skip the redundant ~full re-accumulation.
+  let fullTimeline = timeline
+  if (rangeStart) {
+    const accAll = makeAccState()
+    for (const a of accounts) {
+      const pid = a.providerId
+      const color = providerColor.get(pid) ?? a.color
+      for (const row of a.table?.daily ?? []) {
+        accumulateDayRow(accAll, row, pid, color, modelSet)
+      }
     }
+    fullTimeline = buildTimeline(accAll)
   }
-  const fullTimeline = buildTimeline(accAll)
 
   let running = 0
   const cumulative = timeline.map(p => { running += p.total; return { date: p.date, total: running } })
@@ -360,7 +367,7 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
     filteredAccounts: accounts,
     totals: acc.totals, today: acc.today, week: acc.week, month: acc.month,
     burnRate: acc.burnRate,
-    timeline, fullTimeline, cumulative, cacheSavingsSeries, calendar,
+    timeline, cumulative, cacheSavingsSeries, calendar,
     cardAccounts: snap ? selectCardAccounts(snap, f) : [],
     byProvider, byModel, tokenComposition: acc.tokenComposition,
     modelOptions: [...acc.modelOptionSet].sort(),
