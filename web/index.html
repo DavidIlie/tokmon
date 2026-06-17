@@ -1,12 +1,16 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="dark light" />
     <title>tokmon — usage</title>
     <meta name="description" content="Live LLM usage & cost dashboard" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230f1416'/%3E%3Ctext x='3' y='12' font-family='monospace' font-size='10' fill='%2300d787'%3E%24_%3C/text%3E%3C/svg%3E" />
+    <script>
+      // Apply saved theme before first paint to avoid a flash. Default: dark.
+      try { if (localStorage.getItem('tokmon-theme') === 'light') document.documentElement.classList.add('light') } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

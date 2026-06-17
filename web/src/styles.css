@@ -51,6 +51,30 @@
   --color-p-gemini: #af87ff;
 }
 
+/* Light theme — overrides the dark @theme defaults when <html class="light">.
+   Kept UNLAYERED (outside @layer base) so it beats Tailwind's unlayered @theme
+   :root vars by specificity (html.light > :root). Surfaces/text flip; provider
+   hues stay (mid-tone, legible on both); semantic colors darken for contrast. */
+html.light {
+  color-scheme: light;
+  --color-bg-0: #f4f5f5;
+  --color-bg-1: #ffffff;
+  --color-bg-2: #eceeee;
+  --color-bg-3: #e1e4e4;
+  --color-line: #d4d9d9;
+  --color-line-2: #bcc2c2;
+  --color-line-faint: #e7eaea;
+  --color-fg: #2b2e2e;
+  --color-fg-dim: #5a6060;
+  --color-fg-faint: #979d9d;
+  --color-fg-bright: #0d1010;
+  --color-cost: #9a7b1c;
+  --color-positive: #2f8f57;
+  --color-warning: #b0403a;
+  --color-prompt: #2f8f57;
+  --color-accent: #2f8f57;
+}
+
 @layer base {
   :root {
     color-scheme: dark;

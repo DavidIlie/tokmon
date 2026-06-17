@@ -275,7 +275,12 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
       beat.unref?.()
       sseClients.set(res, beat)
       lastActivity = Date.now()
-      if (!current || Date.now() - current.generatedAt > summaryIntervalMs) void refreshSummary(true)
+      // A viewer arrived — make sure data is fresh. Force both the summary and
+      // the (heavier) table so charts have data on first paint / after idle.
+      if (!current || Date.now() - current.generatedAt > summaryIntervalMs) {
+        void refreshSummary(true)
+        void refreshTable(true)
+      }
       req.on('close', () => { clearInterval(beat); sseClients.delete(res) })
       return
     }
