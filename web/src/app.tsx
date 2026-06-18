@@ -14,7 +14,7 @@ import { fmtAgo } from './lib/format'
 import { useFilters } from './lib/useFilters'
 import { useSnapshot, type ConnState } from './lib/useSnapshot'
 
-const pathOf = (k: TabKey) => (k === 'overview' ? '/' : `/${k}`)
+const pathOf = (k: TabKey) => `/${k}`
 
 interface DashCtx {
   snapshot: WebSnapshot
@@ -224,6 +224,8 @@ const rootRoute = createRootRoute({ component: RootLayout })
 const tabRoute = (key: TabKey, component: () => JSX.Element) =>
   createRoute({ getParentRoute: () => rootRoute, path: pathOf(key), component })
 const routeTree = rootRoute.addChildren([
+  // Bare load ("#/") and "#/overview" both render the overview.
+  createRoute({ getParentRoute: () => rootRoute, path: '/', component: OverviewRoute }),
   tabRoute('overview', OverviewRoute),
   tabRoute('analytics', AnalyticsRoute),
   tabRoute('models', ModelsRoute),
