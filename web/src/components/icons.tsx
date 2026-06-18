@@ -35,12 +35,6 @@ export const Search = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
 export const X = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
   <Icon {...p}><path d="M18 6 6 18" /><path d="m6 6 12 12" /></Icon>
 )
-export const ArrowUpDown = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
-  <Icon {...p}><path d="m21 16-4 4-4-4" /><path d="M17 20V4" /><path d="m3 8 4-4 4 4" /><path d="M7 4v16" /></Icon>
-)
-export const Activity = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
-  <Icon {...p}><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></Icon>
-)
 export const Sun = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
   <Icon {...p}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></Icon>
 )

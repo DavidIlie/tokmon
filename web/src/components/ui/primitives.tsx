@@ -1,16 +1,5 @@
 import type { ReactNode } from 'react'
 
-export function PromptHeader({ label, crumb }: { label: string; crumb?: string }) {
-  return (
-    <div className="flex items-baseline gap-2 text-sm">
-      <span className="text-prompt">$</span>
-      {crumb && <span className="text-fg-faint">{crumb}</span>}
-      <span className="text-fg-bright">{label}</span>
-      <span className="cursor-blink text-accent">▋</span>
-    </div>
-  )
-}
-
 const SPARK = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
 
 export function Sparkline({ data, color = 'var(--color-accent)', className = '' }: {
@@ -29,17 +18,6 @@ export function Sparkline({ data, color = 'var(--color-accent)', className = '' 
         : flat
           ? SPARK[Math.floor(TOP / 2)].repeat(data.length)
           : data.map(v => SPARK[max <= 0 ? 0 : Math.max(0, Math.min(TOP, Math.floor((v / max) * (TOP + 0.999))))]).join('')}
-    </span>
-  )
-}
-
-export function Delta({ value, positiveIsGood = false }: { value: number; positiveIsGood?: boolean }) {
-  if (!Number.isFinite(value) || Math.abs(value) < 0.001) return <span className="text-fg-faint text-xs">—</span>
-  const up = value > 0
-  const good = positiveIsGood ? up : !up
-  return (
-    <span className={`text-xs tnum ${good ? 'text-positive' : 'text-warning'}`}>
-      {up ? '▲' : '▼'} {Math.abs(value * 100).toFixed(0)}%
     </span>
   )
 }

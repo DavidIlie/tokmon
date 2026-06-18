@@ -1,14 +1,32 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react'
 import type { WebProviderInfo, WebSnapshot } from '@shared'
 import { exploreRows, type Derived, type Filters, type Granularity } from '../lib/derive'
 import { Segmented } from './ui'
 import { Search, X } from './icons'
 import { KpiStrip, ProviderCards } from './charts/cards'
-import { CacheSavings, CostTimeline, CumulativeSpend } from './charts/timeline'
-import { CacheByModel, CostByModel, ProviderDonut, TokenComposition } from './charts/breakdown'
 import { CalendarHeatmap } from './charts/calendar'
 import { ModelLeaderboard } from './charts/models'
 import { ExploreTable } from './explore'
+
+// Recharts is heavy and only used by timeline.tsx + breakdown.tsx — split it into its
+// own chunk. The chunks are preloaded immediately (below), so by the time a chart
+// renders they're already in cache — the Suspense fallback is empty space, never a
+// spinner, so it's smooth with no loader flash.
+const timelineMod = () => import('./charts/timeline')
+const breakdownMod = () => import('./charts/breakdown')
+void timelineMod(); void breakdownMod()
+
+const CostTimeline = lazy(() => timelineMod().then(m => ({ default: m.CostTimeline })))
+const CumulativeSpend = lazy(() => timelineMod().then(m => ({ default: m.CumulativeSpend })))
+const CacheSavings = lazy(() => timelineMod().then(m => ({ default: m.CacheSavings })))
+const CostByModel = lazy(() => breakdownMod().then(m => ({ default: m.CostByModel })))
+const ProviderDonut = lazy(() => breakdownMod().then(m => ({ default: m.ProviderDonut })))
+const TokenComposition = lazy(() => breakdownMod().then(m => ({ default: m.TokenComposition })))
+const CacheByModel = lazy(() => breakdownMod().then(m => ({ default: m.CacheByModel })))
+
+// Reserves the chart's height (no animation) so a not-yet-loaded chunk can't shift layout.
+const Spacer = ({ className }: { className?: string }) => <div className={className} aria-hidden />
+const Charts = ({ children }: { children: ReactNode }) => <Suspense fallback={null}>{children}</Suspense>
 
 export type TabKey = 'overview' | 'analytics' | 'models' | 'explore'
 export const TABS: { key: TabKey; label: string }[] = [
@@ -34,7 +52,9 @@ export function OverviewTab({ derived, periodLabel, scopeLabel, providers }: {
   return (
     <div className="flex flex-col gap-4">
       <KpiStrip derived={derived} periodLabel={periodLabel} />
-      <CostTimeline derived={derived} periodLabel={scopeLabel} heightClass="h-[clamp(320px,42vh,560px)]" />
+      <Suspense fallback={<Spacer className="h-[clamp(320px,42vh,560px)]" />}>
+        <CostTimeline derived={derived} periodLabel={scopeLabel} heightClass="h-[clamp(320px,42vh,560px)]" />
+      </Suspense>
       <ProviderCards accounts={derived.cardAccounts} nameOf={nameOf} />
     </div>
   )
@@ -45,11 +65,11 @@ export function AnalyticsTab({ derived, scopeLabel }: { derived: Derived; scopeL
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
       <div className="md:col-span-2"><CalendarHeatmap derived={derived} periodLabel={scopeLabel} /></div>
-      <CostByModel derived={derived} periodLabel={scopeLabel} />
-      {multiProvider ? <ProviderDonut derived={derived} periodLabel={scopeLabel} /> : <TokenComposition derived={derived} periodLabel={scopeLabel} />}
-      {multiProvider && <TokenComposition derived={derived} periodLabel={scopeLabel} />}
-      <div className={multiProvider ? undefined : 'md:col-span-2'}><CacheSavings derived={derived} periodLabel={scopeLabel} /></div>
-      <div className="md:col-span-2"><CumulativeSpend derived={derived} height={300} periodLabel={scopeLabel} /></div>
+      <Charts><CostByModel derived={derived} periodLabel={scopeLabel} /></Charts>
+      <Charts>{multiProvider ? <ProviderDonut derived={derived} periodLabel={scopeLabel} /> : <TokenComposition derived={derived} periodLabel={scopeLabel} />}</Charts>
+      {multiProvider && <Charts><TokenComposition derived={derived} periodLabel={scopeLabel} /></Charts>}
+      <div className={multiProvider ? undefined : 'md:col-span-2'}><Charts><CacheSavings derived={derived} periodLabel={scopeLabel} /></Charts></div>
+      <div className="md:col-span-2"><Charts><CumulativeSpend derived={derived} height={300} periodLabel={scopeLabel} /></Charts></div>
     </div>
   )
 }
@@ -60,10 +80,10 @@ export function ModelsTab({ derived, scopeLabel }: { derived: Derived; scopeLabe
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
       <div className="md:col-span-2"><ModelLeaderboard derived={derived} periodLabel={scopeLabel} /></div>
       <div className={multiProvider ? undefined : 'md:col-span-2'}>
-        <CostByModel derived={derived} metric="tokens" limit={12} periodLabel={scopeLabel} />
+        <Charts><CostByModel derived={derived} metric="tokens" limit={12} periodLabel={scopeLabel} /></Charts>
       </div>
-      {multiProvider && <ProviderDonut derived={derived} periodLabel={scopeLabel} />}
-      <div className="md:col-span-2"><CacheByModel derived={derived} periodLabel={scopeLabel} /></div>
+      {multiProvider && <Charts><ProviderDonut derived={derived} periodLabel={scopeLabel} /></Charts>}
+      <div className="md:col-span-2"><Charts><CacheByModel derived={derived} periodLabel={scopeLabel} /></Charts></div>
     </div>
   )
 }
