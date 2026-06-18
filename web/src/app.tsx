@@ -205,19 +205,19 @@ function RootLayout() {
 
 function OverviewRoute() {
   const { derived, periodLabel, scopeLabel, snapshot } = useDashboard()
-  return <div className="rise"><OverviewTab derived={derived} periodLabel={periodLabel} scopeLabel={scopeLabel} providers={snapshot.providers} /></div>
+  return <div><OverviewTab derived={derived} periodLabel={periodLabel} scopeLabel={scopeLabel} providers={snapshot.providers} /></div>
 }
 function AnalyticsRoute() {
   const { derived, scopeLabel } = useDashboard()
-  return <div className="rise"><AnalyticsTab derived={derived} scopeLabel={scopeLabel} /></div>
+  return <div><AnalyticsTab derived={derived} scopeLabel={scopeLabel} /></div>
 }
 function ModelsRoute() {
   const { derived, scopeLabel } = useDashboard()
-  return <div className="rise"><ModelsTab derived={derived} scopeLabel={scopeLabel} /></div>
+  return <div><ModelsTab derived={derived} scopeLabel={scopeLabel} /></div>
 }
 function ExploreRoute() {
   const { snapshot, filters, periodLabel } = useDashboard()
-  return <div className="rise"><ExploreTab snapshot={snapshot} filters={filters} periodLabel={periodLabel} /></div>
+  return <div><ExploreTab snapshot={snapshot} filters={filters} periodLabel={periodLabel} /></div>
 }
 
 const rootRoute = createRootRoute({ component: RootLayout })
@@ -231,7 +231,7 @@ const routeTree = rootRoute.addChildren([
   tabRoute('models', ModelsRoute),
   tabRoute('explore', ExploreRoute),
 ])
-const router = createRouter({ routeTree, history: createHashHistory() })
+const router = createRouter({ routeTree, history: createHashHistory(), defaultViewTransition: true })
 
 declare module '@tanstack/react-router' {
   interface Register { router: typeof router }

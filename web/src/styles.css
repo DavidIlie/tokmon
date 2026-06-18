@@ -195,3 +195,12 @@ html.light, .light {
 .dialog-pop { animation: tok-pop 0.18s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 @keyframes tok-fade { from { opacity: 0; } to { opacity: 1; } }
 .dialog-fade { animation: tok-fade 0.18s ease-out both; }
+
+::view-transition-old(root) { animation: tok-vt-out 0.16s ease-out both; }
+::view-transition-new(root) { animation: tok-vt-in 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+@keyframes tok-vt-out { to { opacity: 0; } }
+@keyframes tok-vt-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root), ::view-transition-new(root) { animation: none !important; }
+}

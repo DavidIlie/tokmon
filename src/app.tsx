@@ -139,6 +139,7 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
 
   const webRef = useRef<WebServerController | null>(null)
   const webBusyRef = useRef(false)
+  const webCooldownRef = useRef(0)
   const [webUrl, setWebUrl] = useState<string | null>(null)
   const [webStatus, setWebStatus] = useState<'off' | 'starting' | 'on' | 'stopping'>('off')
   useEffect(() => () => { void webRef.current?.stop() }, [])
@@ -522,7 +523,7 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
   const totalSettingsRows = ACCOUNT_ROWS_START + cfg.accounts.length + 1
 
   async function toggleWeb(): Promise<void> {
-    if (webBusyRef.current) return
+    if (webBusyRef.current || Date.now() < webCooldownRef.current) return
     webBusyRef.current = true
     try {
       if (webRef.current) {
@@ -545,6 +546,7 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
       setWebStatus(webRef.current ? 'on' : 'off')
     } finally {
       webBusyRef.current = false
+      webCooldownRef.current = Date.now() + 600
     }
   }
 
