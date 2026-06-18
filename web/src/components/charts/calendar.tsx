@@ -133,7 +133,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
 
 function DayDetail({ day: d }: { day: CalendarDay }) {
   return (
-    <div className="font-mono text-[11px] pr-7">
+    <div className="font-mono text-[11px]">
       <div className="flex items-baseline justify-between gap-3 border-b border-line-faint pb-2">
         <span className="text-fg-dim">{WEEKDAYS[dowMonday(parseDate(d.date))]} · {fmtDayLabel(d.date)}</span>
         <span className="tnum text-cost">{d.cost > 0 ? fmtCost(d.cost) : '—'}</span>
