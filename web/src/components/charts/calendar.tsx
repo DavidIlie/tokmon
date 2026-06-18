@@ -82,7 +82,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
     <>
     <Panel title="daily spend" titleTag={periodLabel} captureName="calendar">
       {!grid || !stats ? <div className="py-6 text-center text-xs text-fg-faint">no spend yet</div> : (
-        <div className="grid gap-x-8 gap-y-5 pt-1 md:grid-cols-[minmax(0,1fr)_210px] md:items-center">
+        <div className="grid gap-x-8 gap-y-5 pt-1 md:grid-cols-[minmax(0,1fr)_210px] md:items-start">
           {/* Heatmap fills the row up to a max cell size — never balloons on short ranges. */}
           <div className="flex min-w-0 flex-col gap-1.5">
             <div className="pl-6">
@@ -122,19 +122,18 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
             </div>
           </div>
 
-          {/* Right column: hovered-day detail when hovering a cell, else period stats.
-              Lives in its own column so it never overlaps the heatmap. */}
-          <div className="min-h-[150px] border-line-faint md:border-l md:pl-6">
-            {hover
-              ? <DayDetail day={hover} />
-              : (
-                <div className="grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-1">
-                  <StatBlock label="busiest day" value={fmtCost(stats.top.cost)} sub={fmtDayLabel(stats.top.date)} valueClass="text-cost" />
-                  <StatBlock label="daily average" value={fmtCost(stats.avg)} sub={`across ${stats.active} active days`} />
-                  <StatBlock label="top weekday" value={WEEKDAYS[stats.busiest]} valueClass="text-fg-bright" />
-                  <StatBlock label="current streak" value={`${stats.streak}d`} sub={stats.streak > 0 ? 'in a row' : 'idle today'} valueClass="text-positive" />
-                </div>
-              )}
+          {/* Right column: period stats, overlaid by the hovered-day detail. The stats
+              stay in flow (just invisible while hovering) so they define a constant
+              height — the detail is absolutely positioned over them, so hovering never
+              shifts the panel height or the heatmap. */}
+          <div className="relative border-line-faint md:border-l md:pl-6">
+            <div className={`grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-1 ${hover ? 'invisible' : ''}`}>
+              <StatBlock label="busiest day" value={fmtCost(stats.top.cost)} sub={fmtDayLabel(stats.top.date)} valueClass="text-cost" />
+              <StatBlock label="daily average" value={fmtCost(stats.avg)} sub={`across ${stats.active} active days`} />
+              <StatBlock label="top weekday" value={WEEKDAYS[stats.busiest]} valueClass="text-fg-bright" />
+              <StatBlock label="current streak" value={`${stats.streak}d`} sub={stats.streak > 0 ? 'in a row' : 'idle today'} valueClass="text-positive" />
+            </div>
+            {hover && <div className="absolute inset-0 md:pl-6"><DayDetail day={hover} /></div>}
           </div>
         </div>
       )}
