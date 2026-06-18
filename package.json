@@ -1,7 +1,7 @@
 {
   "name": "tokmon",
-  "version": "0.16.1",
-  "description": "Terminal dashboard for Claude Code, Codex, and Cursor usage, limits, and costs",
+  "version": "0.17.0",
+  "description": "Terminal + web dashboard for Claude Code, Codex, Cursor, opencode, pi, Copilot, Gemini & more — usage, limits, and costs",
   "type": "module",
   "bin": {
     "tokmon": "dist/cli.js"
