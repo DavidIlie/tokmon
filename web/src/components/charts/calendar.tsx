@@ -16,6 +16,8 @@ interface Cell { date: string; cost: number; level: number }
 
 export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { derived: Derived; maxWeeks?: number; periodLabel?: string }) {
   const [hover, setHover] = useState<CalendarDay | null>(null)
+  const [pinned, setPinned] = useState<CalendarDay | null>(null)
+  const shown = hover ?? pinned
   const detail = useMemo(() => new Map(derived.calendar.map(c => [c.date, c])), [derived.calendar])
   const costed = useMemo(() => derived.calendar.some(c => c.cost > 0), [derived.calendar])
   const weightOf = (c: CalendarDay) => (costed ? c.cost : c.tokens)
@@ -96,11 +98,16 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
                     {week.map((cell, di) => cell === null
                       ? <div key={di} className="aspect-square" />
                       : (
-                        <div
+                        <button
                           key={di}
-                          className="aspect-square cursor-default rounded-[3px] transition duration-150 hover:scale-[1.18] hover:ring-1 hover:ring-accent"
+                          type="button"
+                          aria-label={`${fmtDayLabel(cell.date)} — click to pin`}
+                          aria-pressed={pinned?.date === cell.date}
+                          className={`aspect-square block rounded-[3px] p-0 transition duration-150 hover:scale-[1.18] hover:ring-1 hover:ring-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${pinned?.date === cell.date ? 'ring-1 ring-fg-bright' : ''}`}
                           style={{ background: heatFill(cell.level) }}
                           onMouseEnter={() => setHover(detail.get(cell.date) ?? null)}
+                          onFocus={() => setHover(detail.get(cell.date) ?? null)}
+                          onClick={() => setPinned(p => p?.date === cell.date ? null : (detail.get(cell.date) ?? null))}
                         />
                       ))}
                   </div>
@@ -115,13 +122,13 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
           </div>
 
           <div className="relative border-line-faint md:border-l md:pl-6">
-            <div className={`grid grid-cols-2 gap-x-6 gap-y-4 transition-opacity duration-200 md:grid-cols-1 ${hover ? 'opacity-0' : 'opacity-100'}`}>
+            <div className={`grid grid-cols-2 gap-x-6 gap-y-4 transition-opacity duration-200 md:grid-cols-1 ${shown ? 'opacity-0' : 'opacity-100'}`}>
               <StatBlock label="busiest day" value={stats.costed ? fmtCost(stats.top.cost) : fmtTokens(stats.top.tokens)} sub={fmtDayLabel(stats.top.date)} valueClass="text-cost" />
               <StatBlock label="daily average" value={stats.costed ? fmtCost(stats.avg) : fmtTokens(stats.avg)} sub={`across ${stats.active} active days`} />
               <StatBlock label="top weekday" value={WEEKDAYS[stats.busiest]} valueClass="text-fg-bright" />
               <StatBlock label="current streak" value={`${stats.streak}d`} sub={stats.streak > 0 ? 'in a row' : 'idle today'} valueClass="text-positive" />
             </div>
-            {hover && <div className="dialog-fade absolute inset-0 md:pl-6"><DayDetail day={hover} /></div>}
+            {shown && <div className="dialog-fade absolute inset-0 md:pl-6"><DayDetail day={shown} pinned={!hover && shown === pinned} /></div>}
           </div>
         </div>
       )}
@@ -130,11 +137,14 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
   )
 }
 
-function DayDetail({ day: d }: { day: CalendarDay }) {
+function DayDetail({ day: d, pinned = false }: { day: CalendarDay; pinned?: boolean }) {
   return (
     <div className="font-mono text-[11px]">
       <div className="flex items-baseline justify-between gap-3 border-b border-line-faint pb-2">
-        <span className="text-fg-dim">{WEEKDAYS[dowMonday(parseDate(d.date))]} · {fmtDayLabel(d.date)}</span>
+        <span className="text-fg-dim">
+          {WEEKDAYS[dowMonday(parseDate(d.date))]} · {fmtDayLabel(d.date)}
+          {pinned && <span className="ml-1.5 text-[9px] uppercase tracking-wide text-accent">pinned</span>}
+        </span>
         <span className="tnum text-cost">{d.cost > 0 ? fmtCost(d.cost) : '—'}</span>
       </div>
       {d.cost > 0 ? (

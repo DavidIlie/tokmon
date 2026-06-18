@@ -100,7 +100,10 @@ export function ProviderDonut({ derived, height = 280, periodLabel }: { derived:
   const data = derived.byProvider
   const total = derived.totals.cost
   const [active, setActive] = useState<number | null>(null)
-  const focus = active != null ? data[active] : null
+  const [pinned, setPinned] = useState<string | null>(null)
+  const pinnedIdx = pinned ? data.findIndex(p => p.id === pinned) : -1
+  const focusIdx = active != null ? active : (pinnedIdx >= 0 ? pinnedIdx : null)
+  const focus = focusIdx != null ? data[focusIdx] : null
   const focusShare = focus && total > 0 ? focus.cost / total : 0
   return (
     <Panel title="provider split" titleTag={periodLabel} captureName="provider-split">
@@ -113,13 +116,15 @@ export function ProviderDonut({ derived, height = 280, periodLabel }: { derived:
                   data={data} dataKey="cost" nameKey="name" innerRadius="60%" outerRadius="88%"
                   paddingAngle={data.length > 1 ? 2 : 0} stroke="var(--color-bg-1)" strokeWidth={2}
                   isAnimationActive={enter} animationDuration={350}
+                  style={{ cursor: 'pointer' }}
                   onMouseEnter={(_, i) => setActive(i)}
+                  onClick={(_, i) => setPinned(p => (p === data[i]?.id ? null : data[i]?.id ?? null))}
                 >
                   {data.map((p, i) => (
                     <Cell
                       key={p.id} fill={p.color}
                       aria-label={`${p.name}: ${fmtCost(p.cost)}`}
-                      fillOpacity={active == null || active === i ? 1 : 0.32}
+                      fillOpacity={focusIdx == null || focusIdx === i ? 1 : 0.32}
                       style={{ transition: 'fill-opacity 150ms ease' }}
                     />
                   ))}
@@ -133,6 +138,7 @@ export function ProviderDonut({ derived, height = 280, periodLabel }: { derived:
             </div>
             <div className="font-display text-[10px] uppercase tracking-wide text-fg-faint">
               {focus ? `${focus.name} · ${fmtPct(focusShare, focusShare > 0 && focusShare < 0.01 ? 1 : 0)}` : 'total'}
+              {focus && active == null && pinnedIdx >= 0 && <span className="text-accent"> · pinned</span>}
             </div>
           </div>
         </div>
