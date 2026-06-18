@@ -62,7 +62,10 @@ function ThemeToggle({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: (
   )
 }
 
-function ConnDot({ conn, freshAt, now }: { conn: ConnState; freshAt: number | null; now: number }) {
+// Owns its own 1s tick so the "Xs ago" label updates without re-rendering all of App
+// (and the charts) every second.
+function ConnDot({ conn, freshAt }: { conn: ConnState; freshAt: number | null }) {
+  const now = useNow()
   const color = conn === 'live' ? 'var(--color-positive)' : conn === 'error' ? 'var(--color-warning)' : 'var(--color-cost)'
   const age = freshAt ? fmtAgo(freshAt, now) : null
   const label = conn === 'live' ? (age ?? 'live')
@@ -94,7 +97,6 @@ export function App() {
   const [filters, setFilters] = useFilters()
   const [tab, setTab] = useTab()
   const [theme, toggleTheme] = useTheme()
-  const now = useNow()
 
   const derived = useMemo(() => deriveAll(snapshot, filters), [snapshot, filters])
   const periodLabel = PERIODS.find(p => p.key === filters.period)?.label ?? filters.period
@@ -145,7 +147,7 @@ export function App() {
               <span className="cursor-blink text-accent">▋</span>
             </span>
             <div className="ml-auto flex min-w-0 items-center gap-3">
-              <ConnDot conn={conn} freshAt={snapshot?.generatedAt ?? null} now={now} />
+              <ConnDot conn={conn} freshAt={snapshot?.generatedAt ?? null} />
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
               {ready && (hasUsage || hasBilling) && (
                 <ShareControl derived={derived} periodLabel={periodLabel} tz={snapshot?.tz ?? ''} version={snapshot?.version ?? ''} />
