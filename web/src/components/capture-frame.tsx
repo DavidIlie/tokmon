@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useRef } from 'react'
-import { Watermark } from './Watermark'
+import { Watermark } from './watermark'
 
 // Wraps a snapshot of a live panel: clones its already-rendered DOM (charts are
 // static SVG, so no Recharts re-measure), strips the hover chrome ([data-chrome]),

@@ -8,7 +8,7 @@ import { CacheSavings, CostTimeline, CumulativeSpend } from './charts/timeline'
 import { CacheByModel, CostByModel, ProviderDonut, TokenComposition } from './charts/breakdown'
 import { CalendarHeatmap } from './charts/calendar'
 import { ModelLeaderboard } from './charts/models'
-import { ExploreTable } from './Explore'
+import { ExploreTable } from './explore'
 
 export type TabKey = 'overview' | 'analytics' | 'models' | 'explore'
 export const TABS: { key: TabKey; label: string }[] = [

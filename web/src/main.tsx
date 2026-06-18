@@ -4,8 +4,8 @@ import '@fontsource/jetbrains-mono/400.css'
 import '@fontsource/jetbrains-mono/500.css'
 import '@fontsource/jetbrains-mono/700.css'
 import './styles.css'
-import { App } from './App'
-import { ShareProvider } from './components/ShareProvider'
+import { App } from './app'
+import { ShareProvider } from './components/share-provider'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

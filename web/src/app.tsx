@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { FilterBar } from './components/FilterBar'
-import { ShareControl } from './components/ShareCard'
+import { FilterBar } from './components/filter-bar'
+import { ShareControl } from './components/share-card'
 import { Moon, Sun } from './components/icons'
 import { AnalyticsTab, ExploreTab, ModelsTab, OverviewTab, TABS, type TabKey } from './components/tabs'
 import { deriveAll, hasBillingSignal, PERIODS } from './lib/derive'

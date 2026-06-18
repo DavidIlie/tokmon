@@ -1,6 +1,6 @@
 import type { Derived } from '../lib/derive'
 import { Share } from './icons'
-import { useShare } from './ShareProvider'
+import { useShare } from './share-provider'
 
 // Header Share button — opens the shared ShareSheet with the curated summary card.
 export function ShareControl({ derived, periodLabel, tz, version }: {

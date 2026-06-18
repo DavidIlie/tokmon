@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import type { Derived } from '../lib/derive'
-import { ShareSheet } from './ShareSheet'
+import { ShareSheet } from './share-sheet'
 
 export type ShareSource =
   | { kind: 'summary'; derived: Derived; periodLabel: string; tz: string; version: string }

@@ -1,6 +1,6 @@
 import { useRef, type ReactNode } from 'react'
 import { Camera } from '../icons'
-import { useShare } from '../ShareProvider'
+import { useShare } from '../share-provider'
 
 export function Panel({
   title, titleTag, right, captureName, children, className = '', bodyClassName = '',

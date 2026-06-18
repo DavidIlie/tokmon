@@ -3,7 +3,7 @@ import type { Derived } from '../lib/derive'
 import { fmtCost, fmtNum, fmtPct, fmtTokens } from '../lib/format'
 import { shortModel } from '../lib/colors'
 import { Sparkline } from './ui'
-import { Watermark } from './Watermark'
+import { Watermark } from './watermark'
 
 const scopeLabel = (p: string) => (p === 'all time' ? 'all time' : `last ${p}`)
 
