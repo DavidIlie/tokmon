@@ -90,7 +90,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
               <div className="flex w-5 shrink-0 flex-col gap-[3px] text-[9px] text-fg-faint">
                 {['M', '', 'W', '', 'F', '', ''].map((d, i) => <div key={i} className="flex flex-1 items-center">{d}</div>)}
               </div>
-              <div className="grid min-w-0 flex-1 gap-[3px]" style={{ gridTemplateColumns: cols, maxWidth: maxW }}>
+              <div className="grid min-w-0 flex-1 gap-[3px]" style={{ gridTemplateColumns: cols, maxWidth: maxW }} onMouseLeave={() => setHover(null)}>
                 {grid.weeks.map((week, wi) => (
                   <div key={wi} className="flex flex-col gap-[3px]">
                     {week.map((cell, di) => cell === null
@@ -101,7 +101,6 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
                           className="aspect-square cursor-default rounded-[3px] transition duration-150 hover:scale-[1.18] hover:ring-1 hover:ring-accent"
                           style={{ background: heatFill(cell.level) }}
                           onMouseEnter={() => setHover(detail.get(cell.date) ?? null)}
-                          onMouseLeave={() => setHover(null)}
                         />
                       ))}
                   </div>
@@ -116,13 +115,13 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
           </div>
 
           <div className="relative border-line-faint md:border-l md:pl-6">
-            <div className={`grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-1 ${hover ? 'invisible' : ''}`}>
+            <div className={`grid grid-cols-2 gap-x-6 gap-y-4 transition-opacity duration-200 md:grid-cols-1 ${hover ? 'opacity-0' : 'opacity-100'}`}>
               <StatBlock label="busiest day" value={stats.costed ? fmtCost(stats.top.cost) : fmtTokens(stats.top.tokens)} sub={fmtDayLabel(stats.top.date)} valueClass="text-cost" />
               <StatBlock label="daily average" value={stats.costed ? fmtCost(stats.avg) : fmtTokens(stats.avg)} sub={`across ${stats.active} active days`} />
               <StatBlock label="top weekday" value={WEEKDAYS[stats.busiest]} valueClass="text-fg-bright" />
               <StatBlock label="current streak" value={`${stats.streak}d`} sub={stats.streak > 0 ? 'in a row' : 'idle today'} valueClass="text-positive" />
             </div>
-            {hover && <div className="absolute inset-0 md:pl-6"><DayDetail day={hover} /></div>}
+            {hover && <div className="dialog-fade absolute inset-0 md:pl-6"><DayDetail day={hover} /></div>}
           </div>
         </div>
       )}
