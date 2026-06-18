@@ -20,8 +20,6 @@ export const SummaryCard = forwardRef<HTMLDivElement, {
   opts: SummaryOpts
 }>(function SummaryCard({ derived, periodLabel, tz, version, opts }, ref) {
   const models = derived.byModel.slice(0, 5)
-  // Subscription-routed selections (opencode/pi) bill $0 but move real tokens — lead
-  // with tokens so the card isn't a wall of $0 / 0%.
   const costLed = derived.totals.cost > 0
   const shareOf = (m: typeof models[number]) => (costLed ? m.share : m.tokenShare)
   return (

@@ -8,10 +8,6 @@ import { CalendarHeatmap } from './charts/calendar'
 import { ModelLeaderboard } from './charts/models'
 import { ExploreTable } from './explore'
 
-// Recharts is heavy and only used by timeline.tsx + breakdown.tsx — split it into its
-// own chunk. The chunks are preloaded immediately (below), so by the time a chart
-// renders they're already in cache — the Suspense fallback is empty space, never a
-// spinner, so it's smooth with no loader flash.
 const timelineMod = () => import('./charts/timeline')
 const breakdownMod = () => import('./charts/breakdown')
 void timelineMod(); void breakdownMod()
@@ -24,7 +20,6 @@ const ProviderDonut = lazy(() => breakdownMod().then(m => ({ default: m.Provider
 const TokenComposition = lazy(() => breakdownMod().then(m => ({ default: m.TokenComposition })))
 const CacheByModel = lazy(() => breakdownMod().then(m => ({ default: m.CacheByModel })))
 
-// Reserves the chart's height (no animation) so a not-yet-loaded chunk can't shift layout.
 const Spacer = ({ className }: { className?: string }) => <div className={className} aria-hidden />
 const Charts = ({ children }: { children: ReactNode }) => <Suspense fallback={null}>{children}</Suspense>
 
@@ -95,7 +90,6 @@ export function ExploreTab({ snapshot, filters, periodLabel }: {
 }) {
   const [q, setQ] = useState('')
   const [gran, setGran] = useState<Granularity>('daily')
-  // q filters downstream in ExploreTable's own memo — keep it out of these deps.
   const rows = useMemo(() => exploreRows(snapshot, filters, gran), [snapshot, filters, gran])
   const windowNote = gran !== 'daily'
     ? `showing up to ${gran === 'monthly' ? '12 months' : '12 weeks'}`

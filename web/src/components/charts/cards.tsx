@@ -138,8 +138,6 @@ function ProviderCard({ account, index, providerName }: { account: WebAccount; i
 }
 
 function Mini({ label, cost, tokens }: { label: string; cost: number; tokens: number }) {
-  // Subscription-routed providers (opencode/pi) bill $0 but move real tokens — lead
-  // with the token count so the card doesn't read as empty.
   const costLed = cost > 0 || tokens === 0
   return (
     <div>

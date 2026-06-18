@@ -91,7 +91,7 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
   const serverUrl = `http://${HOST}:${port}`
 
   if (vite?.warmupRequest) {
-    try { await Promise.race([vite.warmupRequest('/src/main.tsx'), delay(5000)]) } catch { /* best-effort */ }
+    try { await Promise.race([vite.warmupRequest('/src/main.tsx'), delay(5000)]) } catch {}
   }
 
   engine.start()

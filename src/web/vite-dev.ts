@@ -24,7 +24,7 @@ export function findWebSource(): string | null {
       if (existsSync(join(dir, 'vite.config.ts')) && existsSync(join(dir, 'index.html'))) {
         return dir.replace(/[\\/]+$/, '')
       }
-    } catch { /* try next */ }
+    } catch {}
   }
   return null
 }

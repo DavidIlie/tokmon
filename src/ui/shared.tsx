@@ -20,7 +20,6 @@ export function ClickableBox(
 }
 
 
-// Match an SGR mouse report ending in `M` (press): ESC [ < <btn> ; <col> ; <row> M.
 const SGR_PRESS = /\x1b\[<(\d+);(\d+);(\d+)M/g
 
 type LinkHit = (mx: number, my: number) => boolean

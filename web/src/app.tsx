@@ -39,8 +39,6 @@ function useNow(intervalMs = 1000): number {
   return now
 }
 
-// Persists only on toggle so a mount effect can't clobber the saved value; initial
-// class is set pre-paint in index.html to avoid flash.
 function useTheme(): ['dark' | 'light', () => void] {
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     document.documentElement.classList.contains('light') ? 'light' : 'dark')
@@ -49,7 +47,7 @@ function useTheme(): ['dark' | 'light', () => void] {
   }, [theme])
   const toggle = () => {
     const next = theme === 'dark' ? 'light' : 'dark'
-    try { localStorage.setItem('tokmon-theme', next) } catch { /* private browsing */ }
+    try { localStorage.setItem('tokmon-theme', next) } catch { }
     setTheme(next)
   }
   return [theme, toggle]
@@ -69,7 +67,6 @@ function ThemeToggle({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: (
   )
 }
 
-// Owns its own 1s tick so the "Xs ago" label updates without re-rendering all of App.
 function ConnDot({ conn, freshAt }: { conn: ConnState; freshAt: number | null }) {
   const now = useNow()
   const color = conn === 'live' ? 'var(--color-positive)' : conn === 'error' ? 'var(--color-warning)' : 'var(--color-cost)'
@@ -118,7 +115,6 @@ function RootLayout() {
     const acctIds = new Set<string>(snapshot.accounts.map(a => a.id))
     const cleanProv = filters.providers.filter(p => provIds.has(p))
     const cleanAcct = filters.account === 'all' || acctIds.has(filters.account) ? filters.account : 'all'
-    // All-time model universe (from the smaller monthly rows), not the period-scoped one.
     const allModels = new Set<string>()
     for (const a of snapshot.accounts) for (const r of a.table?.monthly ?? []) for (const m of r.breakdown) allModels.add(m.name)
     const cleanModels = allModels.size > 0 ? filters.models.filter(m => allModels.has(m)) : filters.models

@@ -30,7 +30,7 @@ export function findWebRoot(): string | null {
     try {
       const dir = fileURLToPath(new URL(rel, import.meta.url))
       if (existsSync(join(dir, 'index.html'))) return dir.replace(/[\\/]+$/, '')
-    } catch { /* try next */ }
+    } catch {}
   }
   return null
 }
@@ -85,7 +85,7 @@ export function appVersion(): string {
       const p = fileURLToPath(new URL(rel, import.meta.url))
       const pkg = JSON.parse(readFileSync(p, 'utf-8'))
       if (typeof pkg.version === 'string') return pkg.version
-    } catch { /* try next candidate */ }
+    } catch {}
   }
   return ''
 }

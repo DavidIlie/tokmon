@@ -4,9 +4,6 @@ import { DEFAULT_FILTERS, type Filters, type PeriodKey } from './derive'
 
 const PERIODS: PeriodKey[] = ['7d', '30d', '90d', 'mtd', 'all']
 
-// URL filter state via nuqs. Short keys (p/m/a/period) keep shareable URLs compact;
-// defaults are stripped from the URL and only the search string is touched, so the
-// hash-based tab is preserved.
 export function useFilters(): [Filters, (next: Filters | ((p: Filters) => Filters)) => void] {
   const [s, setS] = useQueryStates(
     {

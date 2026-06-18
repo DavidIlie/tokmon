@@ -8,7 +8,7 @@ interface CaptureOpts {
 }
 
 async function settle(): Promise<void> {
-  try { await document.fonts.ready } catch { /* older browsers */ }
+  try { await document.fonts.ready } catch {}
   await new Promise(r => requestAnimationFrame(() => r(null)))
 }
 

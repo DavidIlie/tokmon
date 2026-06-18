@@ -67,19 +67,18 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       }
       current = assembleSnapshot({ version, tz, intervalMs: summaryIntervalMs, resolved, usage, billing })
       currentFrame = sseFrame(current)
-    } catch { /* best-effort */ }
+    } catch {}
   }
 
   const persist = () => {
     if (!current) return
-    // Only cache snapshots that carry table data; never overwrite a good cache with a summary-only one captured mid-warmup.
     if (!current.accounts.some(a => a.hasUsage && a.table != null)) return
     if (Date.now() - lastPersist < SNAPSHOT_CACHE_THROTTLE_MS) return
     lastPersist = Date.now()
     try {
       mkdirSync(cacheDir(), { recursive: true })
       writeFileSync(snapshotCacheFile(), JSON.stringify(current))
-    } catch { /* best-effort */ }
+    } catch {}
   }
 
   const rebuild = () => {

@@ -34,7 +34,6 @@ export async function cursorModelSpend(homeDir?: string): Promise<CursorSpend | 
   return { total, models }
 }
 
-// NOTE: Cursor moved usage accounting server-side in early 2026, so local history is frozen around then — data limitation, not a bug.
 const USAGE_SQL =
   "SELECT json_extract(c.value,'$.createdAt') AS createdAt, mk.key AS model, " +
   "sum(json_extract(mk.value,'$.costInCents')) AS cents, " +
