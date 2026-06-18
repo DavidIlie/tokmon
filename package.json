@@ -1,6 +1,6 @@
 {
   "name": "tokmon",
-  "version": "0.19.2",
+  "version": "0.19.3",
   "description": "Terminal + web dashboard for Claude Code, Codex, Cursor, opencode, pi, Copilot, Gemini & more — usage, limits, and costs",
   "type": "module",
   "bin": {
