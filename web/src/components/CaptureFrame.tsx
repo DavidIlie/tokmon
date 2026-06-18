@@ -36,11 +36,9 @@ export const CaptureFrame = forwardRef<HTMLDivElement, {
       }}
     >
       {framed && (
-        <div className="mb-3 flex items-center gap-2">
-          <span className="size-2.5 rounded-full bg-warning" />
-          <span className="size-2.5 rounded-full bg-cost" />
-          <span className="size-2.5 rounded-full bg-positive" />
-          <span className="ml-2 font-display text-xs uppercase tracking-wider text-fg-dim">{title}</span>
+        <div className="mb-3 flex items-baseline gap-2">
+          <span className="font-display text-xs tracking-wide text-accent">tokmon</span>
+          <span className="font-display text-xs uppercase tracking-wider text-fg-dim">/ {title}</span>
         </div>
       )}
       <div ref={host} />

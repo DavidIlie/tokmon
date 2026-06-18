@@ -36,11 +36,9 @@ export const SummaryCard = forwardRef<HTMLDivElement, {
         fontFamily: 'var(--font-mono)', color: 'var(--color-fg)',
       }}
     >
-      <div className="flex items-center gap-2 border-b border-line px-6 py-3.5">
-        <span className="size-3 rounded-full bg-warning" />
-        <span className="size-3 rounded-full bg-cost" />
-        <span className="size-3 rounded-full bg-positive" />
-        <span className="ml-3 text-sm text-fg-dim">tokmon — usage · {scopeLabel(periodLabel)}</span>
+      <div className="flex items-baseline gap-2 border-b border-line px-6 py-3.5">
+        <span className="font-display text-sm tracking-wide text-accent">tokmon</span>
+        <span className="text-sm text-fg-dim">usage · {scopeLabel(periodLabel)}</span>
         <span className="ml-auto text-xs text-fg-faint">{tz}</span>
       </div>
 
