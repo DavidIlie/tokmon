@@ -76,9 +76,9 @@ export function ModelLeaderboard({ derived, limit, periodLabel }: { derived: Der
                 <span className="truncate text-fg" title={m.model}>{shortModel(m.model)}</span>
               </span>
               <div className="h-1.5 overflow-hidden rounded-full bg-bg-3">
-                <div className="h-full rounded-full" style={{ width: `${Math.min(100, m[shareKey] * 100)}%`, minWidth: '2px', background: m.color }} />
+                <div className="h-full rounded-full" style={{ width: `${Math.min(100, m[shareKey] * 100)}%`, minWidth: m[shareKey] > 0 ? '2px' : 0, background: m.color }} />
               </div>
-              <span className="tnum text-right text-[11px] text-fg-dim">{fmtPct(m[shareKey])}</span>
+              <span className="tnum text-right text-[11px] text-fg-dim">{fmtPct(m[shareKey], m[shareKey] > 0 && m[shareKey] < 0.01 ? 1 : 0)}</span>
               <span className="tnum text-right text-xs text-cost">{fmtCost(m.cost)}</span>
               <span className="overflow-hidden text-right"><Sparkline data={m.trend.slice(-30)} color={m.color} className="text-sm" /></span>
               <span className="tnum hidden text-right text-xs text-fg-dim lg:block">{fmtCost(m.calls ? m.cost / m.calls : 0)}</span>

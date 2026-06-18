@@ -100,15 +100,21 @@ export function App() {
   const periodLabel = PERIODS.find(p => p.key === filters.period)?.label ?? filters.period
   const scopeLabel = filters.period === 'all' ? undefined : periodLabel
 
-  // Drop stale provider/account ids (e.g. from a shared URL) once the snapshot reveals them.
+  // Drop stale provider/account/model ids (e.g. from a shared URL) once the snapshot
+  // reveals them — otherwise a vanished id silently empties every panel.
   useEffect(() => {
     if (!snapshot) return
     const provIds = new Set<string>(snapshot.providers.map(p => p.id))
     const acctIds = new Set<string>(snapshot.accounts.map(a => a.id))
     const cleanProv = filters.providers.filter(p => provIds.has(p))
     const cleanAcct = filters.account === 'all' || acctIds.has(filters.account) ? filters.account : 'all'
-    if (cleanProv.length !== filters.providers.length || cleanAcct !== filters.account) {
-      setFilters(f => ({ ...f, providers: cleanProv, account: cleanAcct }))
+    // All-time model universe (from the smaller monthly rows), NOT the period-scoped
+    // option list — so a model selected outside the current period isn't wrongly dropped.
+    const allModels = new Set<string>()
+    for (const a of snapshot.accounts) for (const r of a.table?.monthly ?? []) for (const m of r.breakdown) allModels.add(m.name)
+    const cleanModels = allModels.size > 0 ? filters.models.filter(m => allModels.has(m)) : filters.models
+    if (cleanProv.length !== filters.providers.length || cleanAcct !== filters.account || cleanModels.length !== filters.models.length) {
+      setFilters(f => ({ ...f, providers: cleanProv, account: cleanAcct, models: cleanModels }))
     }
   }, [snapshot, filters, setFilters])
 
@@ -141,7 +147,9 @@ export function App() {
             <div className="ml-auto flex min-w-0 items-center gap-3">
               <ConnDot conn={conn} freshAt={snapshot?.generatedAt ?? null} now={now} />
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
-              <ShareControl derived={derived} periodLabel={periodLabel} tz={snapshot?.tz ?? ''} version={snapshot?.version ?? ''} />
+              {ready && (hasUsage || hasBilling) && (
+                <ShareControl derived={derived} periodLabel={periodLabel} tz={snapshot?.tz ?? ''} version={snapshot?.version ?? ''} />
+              )}
             </div>
           </div>
 

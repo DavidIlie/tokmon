@@ -148,7 +148,9 @@ function latestDayOf(accounts: WebAccount[]): string | null {
 
 function rangeStartOf(period: PeriodKey, latest: string | null): string | null {
   if (!latest || period === 'all') return null
-  if (period === 'mtd') return latest.slice(0, 7) + '-01'
+  // Month-to-date anchors to the REAL current month, not the latest data month (which
+  // would show last month when there's no usage yet this month).
+  if (period === 'mtd') return new Date().toISOString().slice(0, 7) + '-01'
   const days = period === '7d' ? 7 : period === '90d' ? 90 : 30
   return fmtDay(parseDay(latest) - (days - 1) * DAY)
 }

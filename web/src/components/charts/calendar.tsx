@@ -17,22 +17,29 @@ interface Cell { date: string; cost: number; level: number }
 export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { derived: Derived; maxWeeks?: number; periodLabel?: string }) {
   const [hover, setHover] = useState<CalendarDay | null>(null)
   const detail = useMemo(() => new Map(derived.calendar.map(c => [c.date, c])), [derived.calendar])
+  // Weight by cost when any cost exists, else by tokens — so $0 subscription usage
+  // (opencode/pi, request-priced Cursor) still lights up and produces stats.
+  const costed = useMemo(() => derived.calendar.some(c => c.cost > 0), [derived.calendar])
+  const weightOf = (c: CalendarDay) => (costed ? c.cost : c.tokens)
   const stats = useMemo(() => {
     const cal = derived.calendar
-    const active = cal.filter(c => c.cost > 0)
+    const active = cal.filter(c => weightOf(c) > 0)
     if (active.length === 0) return null
-    const total = cal.reduce((s, c) => s + c.cost, 0)
-    const top = active.reduce((m, c) => (c.cost > m.cost ? c : m))
+    const total = cal.reduce((s, c) => s + weightOf(c), 0)
+    const top = active.reduce((m, c) => (weightOf(c) > weightOf(m) ? c : m))
     const dow = new Array(7).fill(0)
-    for (const c of cal) dow[dowMonday(parseDate(c.date))] += c.cost
+    for (const c of cal) dow[dowMonday(parseDate(c.date))] += weightOf(c)
     const busiest = dow.indexOf(Math.max(...dow))
+    // Streak = consecutive calendar DAYS ending at the latest active day (not array
+    // entries — the calendar omits zero days, so gaps must break the streak).
+    const activeSet = new Set(active.map(c => c.date))
     let streak = 0
-    for (let i = cal.length - 1; i >= 0 && cal[i].cost > 0; i--) streak++
-    return { active: active.length, total, top, avg: total / active.length, busiest, streak }
-  }, [derived])
+    for (let ms = parseDate(active[active.length - 1].date); activeSet.has(fmtDate(ms)); ms -= DAY) streak++
+    return { active: active.length, total, top, avg: total / active.length, busiest, streak, costed }
+  }, [derived, costed])
 
   const grid = useMemo(() => {
-    const map = new Map(derived.calendar.map(c => [c.date, c.cost]))
+    const map = new Map(derived.calendar.map(c => [c.date, weightOf(c)]))
     if (derived.calendar.length === 0) return null
     const last = derived.calendar[derived.calendar.length - 1].date
     const firstData = derived.calendar[0].date
@@ -41,7 +48,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
     if ((endMs - startMs) / (DAY * 7) > maxWeeks) startMs = endMs - maxWeeks * 7 * DAY
     // Align start to Monday so each column is a full ISO week.
     startMs -= dowMonday(startMs) * DAY
-    const max = Math.max(...derived.calendar.map(c => c.cost), 0)
+    const max = Math.max(...derived.calendar.map(weightOf), 0)
     const levelOf = (cost: number) => {
       if (cost <= 0 || max <= 0) return 0
       const r = cost / max
@@ -73,7 +80,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
   return (
     <>
     <Panel title="daily spend" titleTag={periodLabel} captureName="calendar">
-      {!grid || !stats ? <div className="py-6 text-center text-xs text-fg-faint">no spend yet</div> : (
+      {!grid || !stats ? <div className="py-6 text-center text-xs text-fg-faint">no usage yet</div> : (
         <div className="grid gap-x-8 gap-y-5 pt-1 md:grid-cols-[minmax(0,1fr)_210px] md:items-start">
           {/* Heatmap fills the row up to a max cell size — never balloons on short ranges. */}
           <div className="flex min-w-0 flex-col gap-1.5">
@@ -120,8 +127,8 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
               shifts the panel height or the heatmap. */}
           <div className="relative border-line-faint md:border-l md:pl-6">
             <div className={`grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-1 ${hover ? 'invisible' : ''}`}>
-              <StatBlock label="busiest day" value={fmtCost(stats.top.cost)} sub={fmtDayLabel(stats.top.date)} valueClass="text-cost" />
-              <StatBlock label="daily average" value={fmtCost(stats.avg)} sub={`across ${stats.active} active days`} />
+              <StatBlock label="busiest day" value={stats.costed ? fmtCost(stats.top.cost) : fmtTokens(stats.top.tokens)} sub={fmtDayLabel(stats.top.date)} valueClass="text-cost" />
+              <StatBlock label="daily average" value={stats.costed ? fmtCost(stats.avg) : fmtTokens(stats.avg)} sub={`across ${stats.active} active days`} />
               <StatBlock label="top weekday" value={WEEKDAYS[stats.busiest]} valueClass="text-fg-bright" />
               <StatBlock label="current streak" value={`${stats.streak}d`} sub={stats.streak > 0 ? 'in a row' : 'idle today'} valueClass="text-positive" />
             </div>

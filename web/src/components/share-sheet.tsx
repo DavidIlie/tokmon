@@ -16,6 +16,8 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
   const isSummary = source.kind === 'summary'
   const exportRef = useRef<HTMLDivElement>(null)
   const dlRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const doneTimer = useRef<ReturnType<typeof setTimeout>>()
 
   const [theme, setTheme] = useState<Theme>(() => (document.documentElement.classList.contains('light') ? 'light' : 'dark'))
   const [wmPos, setWmPos] = useState<WmPos>(isSummary ? 'footer' : 'corner')
@@ -23,16 +25,33 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
   const [glow, setGlow] = useState(true)
   const [framed, setFramed] = useState(true)
   const [dims, setDims] = useState({ w: isSummary ? 1040 : 700, h: isSummary ? 540 : 360 })
-  const [done, setDone] = useState<'dl' | 'copy' | null>(null)
+  const [done, setDone] = useState<'dl' | 'copy' | 'fail' | null>(null)
 
-  // Escape + autofocus the primary action; restore focus on close.
+  // Escape, Tab focus-trap (keeps focus inside the modal), autofocus the primary
+  // action, and restore focus to the trigger on close.
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null
     dlRef.current?.focus()
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { onClose(); return }
+      if (e.key !== 'Tab' || !panelRef.current) return
+      const f = panelRef.current.querySelectorAll<HTMLElement>('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])')
+      if (f.length === 0) return
+      const first = f[0], last = f[f.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
     document.addEventListener('keydown', onKey)
     return () => { document.removeEventListener('keydown', onKey); prev?.focus?.() }
   }, [onClose])
+
+  // Single done-toast timer, cleared on re-trigger and unmount.
+  useEffect(() => () => { if (doneTimer.current) clearTimeout(doneTimer.current) }, [])
+  const flash = (kind: 'dl' | 'copy' | 'fail') => {
+    setDone(kind)
+    if (doneTimer.current) clearTimeout(doneTimer.current)
+    doneTimer.current = setTimeout(() => setDone(null), 1600)
+  }
 
   // Measure the native export node (offsetWidth ignores the preview scale) to size the stage.
   useEffect(() => {
@@ -54,12 +73,11 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
   const onDownload = async () => {
     if (!exportRef.current) return
     await downloadNode(exportRef.current, filename, opts)
-    setDone('dl'); setTimeout(() => setDone(null), 1400)
+    flash('dl')
   }
   const onCopy = async () => {
     if (!exportRef.current) return
-    const ok = await copyNode(exportRef.current, opts)
-    setDone(ok ? 'copy' : null); setTimeout(() => setDone(null), 1400)
+    flash((await copyNode(exportRef.current, opts)) ? 'copy' : 'fail')
   }
 
   return (
@@ -70,8 +88,8 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
       aria-modal="true"
       aria-label="Share"
     >
-      <div className="dialog-pop relative flex max-h-[88vh] w-full max-w-[720px] flex-col overflow-hidden rounded-md border border-line-2 bg-bg-1">
-        <div className="pointer-events-none absolute -top-[0px] left-3 top-2 font-display text-[11px] uppercase tracking-wider text-fg-dim">share</div>
+      <div ref={panelRef} className="dialog-pop relative flex max-h-[88vh] w-full max-w-[720px] flex-col overflow-hidden rounded-md border border-line-2 bg-bg-1">
+        <div className="pointer-events-none absolute left-3 top-2 font-display text-[11px] uppercase tracking-wider text-fg-dim">share</div>
         <button onClick={onClose} aria-label="Close" className="absolute right-2 top-2 z-10 rounded p-1 text-fg-faint transition hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
           <X className="size-4" />
         </button>
@@ -114,8 +132,8 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
 
         {/* Actions */}
         <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-3">
-          <button onClick={onCopy} className="flex items-center gap-1.5 rounded border border-line bg-bg-1 px-3 py-1.5 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg active:scale-[0.97]">
-            {done === 'copy' ? <Check className="size-3.5 text-positive" /> : <Copy className="size-3.5" />} {done === 'copy' ? 'copied' : 'copy'}
+          <button onClick={onCopy} className="flex items-center gap-1.5 rounded border border-line bg-bg-1 px-3 py-1.5 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
+            {done === 'copy' ? <Check className="size-3.5 text-positive" /> : done === 'fail' ? <X className="size-3.5 text-warning" /> : <Copy className="size-3.5" />} {done === 'copy' ? 'copied' : done === 'fail' ? 'copy failed' : 'copy'}
           </button>
           <button ref={dlRef} onClick={onDownload} className="flex items-center gap-1.5 rounded border border-accent/60 bg-bg-1 px-3 py-1.5 text-xs text-accent transition hover:bg-bg-2 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
             {done === 'dl' ? <Check className="size-3.5 text-positive" /> : <Download className="size-3.5" />} download PNG
