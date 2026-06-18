@@ -1,15 +1,30 @@
 import type { Provider } from '../types'
-import type { TableData } from '../../types'
+import type { TableData, TableRow } from '../../types'
 import { detectCursor, cursorBilling } from './billing'
 import { cursorUsageTable } from './composer'
 import { cursorApiUsage } from './usage'
 
 const EMPTY: TableData = { daily: [], weekly: [], monthly: [] }
 
-// Prefer the dashboard API (authoritative, current, has composer-2.5 + token counts);
-// fall back to the local composerData table when the token is missing/offline.
+// The local composerData supplies full history; the dashboard API supplies the recent
+// window (~90d) with token counts + composer-2.5. Overlay the API onto the local table
+// per label so recent days are the richer API source and older days remain present —
+// no double-counting (overlay replaces a label, never sums).
+const overlay = (lo: TableRow[], hi: TableRow[]): TableRow[] => {
+  const m = new Map(lo.map(r => [r.label, r]))
+  for (const r of hi) m.set(r.label, r)
+  return [...m.values()].sort((a, b) => a.label.localeCompare(b.label))
+}
+
 async function cursorTable(tz: string, homeDir?: string): Promise<TableData> {
-  return (await cursorApiUsage(tz, homeDir)) ?? (await cursorUsageTable(tz, homeDir)) ?? EMPTY
+  const [api, local] = await Promise.all([cursorApiUsage(tz, homeDir), cursorUsageTable(tz, homeDir)])
+  if (!api) return local ?? EMPTY
+  if (!local) return api
+  return {
+    daily: overlay(local.daily, api.daily),
+    weekly: overlay(local.weekly, api.weekly),
+    monthly: overlay(local.monthly, api.monthly),
+  }
 }
 
 export const cursorProvider: Provider = {

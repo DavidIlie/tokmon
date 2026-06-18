@@ -22,6 +22,10 @@ export const SummaryCard = forwardRef<HTMLDivElement, {
   opts: SummaryOpts
 }>(function SummaryCard({ derived, periodLabel, tz, version, opts }, ref) {
   const models = derived.byModel.slice(0, 5)
+  // Subscription-routed selections (opencode/pi) bill $0 but move real tokens — lead
+  // with tokens so the card isn't a wall of $0 / 0%.
+  const costLed = derived.totals.cost > 0
+  const shareOf = (m: typeof models[number]) => (costLed ? m.share : m.tokenShare)
   return (
     <div
       ref={ref}
@@ -44,10 +48,14 @@ export const SummaryCard = forwardRef<HTMLDivElement, {
 
       <div className="flex flex-1 gap-9 px-9 py-7">
         <div className="flex w-[300px] shrink-0 flex-col">
-          <div className="font-display text-xs uppercase tracking-widest text-fg-faint">total spend</div>
-          <div className="tnum mt-1 text-cost" style={{ fontSize: 64, lineHeight: 1 }}>{fmtCost(derived.totals.cost)}</div>
+          <div className="font-display text-xs uppercase tracking-widest text-fg-faint">{costLed ? 'total spend' : 'total tokens'}</div>
+          <div className="tnum mt-1 text-cost" style={{ fontSize: 64, lineHeight: 1 }}>
+            {costLed ? fmtCost(derived.totals.cost) : fmtTokens(derived.totals.tokens)}
+          </div>
           <div className="mt-auto flex flex-col gap-3">
-            <ShareStat label="tokens" value={fmtTokens(derived.totals.tokens)} />
+            {costLed
+              ? <ShareStat label="tokens" value={fmtTokens(derived.totals.tokens)} />
+              : <ShareStat label="spend" value={fmtCost(derived.totals.cost)} />}
             <ShareStat label="cache saved" value={fmtCost(derived.totals.cacheSavings)} className="text-positive" />
             <ShareStat label="calls" value={fmtNum(derived.totals.calls)} />
           </div>
@@ -61,10 +69,10 @@ export const SummaryCard = forwardRef<HTMLDivElement, {
                 <span className="size-2 shrink-0 rounded-[2px]" style={{ background: m.color }} />
                 <span className="w-28 shrink-0 truncate text-sm text-fg">{shortModel(m.model)}</span>
                 <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-3">
-                  <span className="block h-full rounded-full" style={{ width: `${Math.min(100, m.share * 100)}%`, minWidth: 2, background: m.color }} />
+                  <span className="block h-full rounded-full" style={{ width: `${Math.min(100, shareOf(m) * 100)}%`, minWidth: 2, background: m.color }} />
                 </span>
-                <span className="tnum w-10 shrink-0 text-right text-xs text-fg-faint">{fmtPct(m.share)}</span>
-                <span className="tnum w-20 shrink-0 text-right text-sm text-cost">{fmtCost(m.cost)}</span>
+                <span className="tnum w-10 shrink-0 text-right text-xs text-fg-faint">{fmtPct(shareOf(m))}</span>
+                <span className="tnum w-20 shrink-0 text-right text-sm text-cost">{costLed ? fmtCost(m.cost) : fmtTokens(m.tokens)}</span>
               </div>
             ))}
         </div>

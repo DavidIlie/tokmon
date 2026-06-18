@@ -55,7 +55,8 @@ export function fmtAgo(ms: number, now: number): string {
   const m = Math.round(s / 60)
   if (m < 60) return `${m}m ago`
   const h = Math.round(m / 60)
-  return `${h}h ago`
+  if (h < 24) return `${h}h ago`
+  return `${Math.round(h / 24)}d ago`
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -63,6 +64,6 @@ export function fmtDayLabel(label: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(label)
   if (m) return `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}`
   const mm = /^(\d{4})-(\d{2})$/.exec(label)
-  if (mm) return `${MONTHS[Number(mm[2]) - 1]} ${m?.[1] ?? mm[1]}`
+  if (mm) return `${MONTHS[Number(mm[2]) - 1]} ${mm[1]}`
   return label
 }

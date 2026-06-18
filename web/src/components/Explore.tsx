@@ -155,8 +155,8 @@ function FragmentRow({ row, isOpen, onToggle }: { row: TableRow; isOpen: boolean
             {shortModel(m.name)}
           </td>
           <td className="tnum py-1.5 pr-3 text-right text-fg-dim">{(m.input + m.output + m.cacheCreate + m.cacheRead) > 0 ? fmtTokens(m.input + m.output + m.cacheCreate + m.cacheRead) : <span className="text-fg-faint">—</span>}</td>
-          <td className="tnum py-1.5 pr-3 text-right text-positive/80">{fmtCost(m.cacheSavings)}</td>
-          <td className="tnum py-1.5 pr-3 text-right text-fg-faint">{fmtNum(m.count)}</td>
+          <td className="tnum hidden py-1.5 pr-3 text-right text-positive/80 sm:table-cell">{fmtCost(m.cacheSavings)}</td>
+          <td className="tnum hidden py-1.5 pr-3 text-right text-fg-faint sm:table-cell">{fmtNum(m.count)}</td>
           <td className="tnum py-1.5 text-right text-cost/90">{fmtCost(m.cost)}</td>
         </tr>
       ))}

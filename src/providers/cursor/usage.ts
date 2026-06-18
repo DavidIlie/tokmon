@@ -1,5 +1,6 @@
 import { cursorStateDb } from './billing'
 import { runSqlite } from './sqlite'
+import { safeNum } from '../usage-core'
 import { dayKey, monthKey, weekKey } from '../../tz'
 import type { ModelDetail, TableData, TableRow } from '../../types'
 
@@ -55,11 +56,11 @@ export async function cursorApiUsage(tz: string, homeDir?: string): Promise<Tabl
   const endMs = Date.now()
   const startMs = endMs - WINDOW_DAYS * 86_400_000
   const events: UsageEvent[] = []
-  let total = Infinity
-  for (let page = 1; page <= MAX_PAGES && events.length < total; page++) {
+  // Page until a short (final) page or the safety cap — driven by page fill, not the
+  // advisory totalUsageEventsCount (which can be 0/absent and would truncate to 1 page).
+  for (let page = 1; page <= MAX_PAGES; page++) {
     const resp = await fetchPage(token, startMs, endMs, page)
     if (!resp) return page === 1 ? null : finalizeTable(events, tz) // token bad/offline on page 1 → fall back
-    total = resp.totalUsageEventsCount ?? 0
     const batch = resp.usageEventsDisplay ?? []
     events.push(...batch)
     if (batch.length < PAGE_SIZE) break
@@ -92,10 +93,13 @@ function finalizeTable(events: UsageEvent[], tz: string): TableData | null {
     const ts = Number(e.timestamp)
     if (!Number.isFinite(ts) || ts <= 0) continue
     const tu = e.tokenUsage ?? {}
-    const input = Number(tu.inputTokens) || 0
-    const output = Number(tu.outputTokens) || 0
-    const cacheRead = Number(tu.cacheReadTokens) || 0
-    const usd = (Number(e.chargedCents) || 0) / 100
+    // safeNum rejects NaN/Infinity and floors — right for integer token counts.
+    const input = safeNum(tu.inputTokens)
+    const output = safeNum(tu.outputTokens)
+    const cacheRead = safeNum(tu.cacheReadTokens)
+    // Cost keeps sub-cent precision but still guards against NaN/Infinity.
+    const cents = Number(e.chargedCents)
+    const usd = Number.isFinite(cents) && cents > 0 ? cents / 100 : 0
     if (usd <= 0 && input + output + cacheRead === 0) continue
     const model = String(e.model ?? 'unknown')
     put(buckets.daily, dayKey(ts, tz), model, usd, input, output, cacheRead)
