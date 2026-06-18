@@ -1,26 +1,33 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  createHashHistory, createRootRoute, createRoute, createRouter,
+  Link, Outlet, RouterProvider, useRouterState,
+} from '@tanstack/react-router'
+import type { WebSnapshot } from '@shared'
 
 import { FilterBar } from './components/filter-bar'
 import { ShareControl } from './components/share-card'
 import { Moon, Sun } from './components/icons'
 import { AnalyticsTab, ExploreTab, ModelsTab, OverviewTab, TABS, type TabKey } from './components/tabs'
-import { deriveAll, hasBillingSignal, PERIODS } from './lib/derive'
+import { deriveAll, hasBillingSignal, PERIODS, type Derived, type Filters } from './lib/derive'
 import { fmtAgo } from './lib/format'
 import { useFilters } from './lib/useFilters'
 import { useSnapshot, type ConnState } from './lib/useSnapshot'
 
-function useTab(): [TabKey, (t: TabKey) => void] {
-  const read = (): TabKey => {
-    const h = location.hash.replace('#', '') as TabKey
-    return TABS.some(t => t.key === h) ? h : 'overview'
-  }
-  const [tab, setTab] = useState<TabKey>(read)
-  useEffect(() => {
-    const onHash = () => setTab(read())
-    window.addEventListener('hashchange', onHash)
-    return () => window.removeEventListener('hashchange', onHash)
-  }, [])
-  return [tab, (t: TabKey) => { window.history.replaceState(null, '', `${location.pathname}${location.search}#${t}`); setTab(t) }]
+const pathOf = (k: TabKey) => (k === 'overview' ? '/' : `/${k}`)
+
+interface DashCtx {
+  snapshot: WebSnapshot
+  filters: Filters
+  derived: Derived
+  periodLabel: string
+  scopeLabel?: string
+}
+const DashboardContext = createContext<DashCtx | null>(null)
+const useDashboard = (): DashCtx => {
+  const c = useContext(DashboardContext)
+  if (!c) throw new Error('useDashboard outside provider')
+  return c
 }
 
 function useNow(intervalMs = 1000): number {
@@ -32,13 +39,12 @@ function useNow(intervalMs = 1000): number {
   return now
 }
 
-/** Persists only on toggle so a mount effect can never clobber the saved value.
- *  Initial class is set pre-paint in index.html to avoid flash. */
+// Persists only on toggle so a mount effect can't clobber the saved value; initial
+// class is set pre-paint in index.html to avoid flash.
 function useTheme(): ['dark' | 'light', () => void] {
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     document.documentElement.classList.contains('light') ? 'light' : 'dark')
   useEffect(() => {
-    // Keep <html> class in sync (idempotent — safe under StrictMode double-invoke).
     document.documentElement.classList.toggle('light', theme === 'light')
   }, [theme])
   const toggle = () => {
@@ -62,8 +68,7 @@ function ThemeToggle({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: (
   )
 }
 
-// Owns its own 1s tick so the "Xs ago" label updates without re-rendering all of App
-// (and the charts) every second.
+// Owns its own 1s tick so the "Xs ago" label updates without re-rendering all of App.
 function ConnDot({ conn, freshAt }: { conn: ConnState; freshAt: number | null }) {
   const now = useNow()
   const color = conn === 'live' ? 'var(--color-positive)' : conn === 'error' ? 'var(--color-warning)' : 'var(--color-cost)'
@@ -92,15 +97,17 @@ function Connecting({ label }: { label: string }) {
   )
 }
 
-export function App() {
+function RootLayout() {
   const { snapshot, conn } = useSnapshot()
   const [filters, setFilters] = useFilters()
-  const [tab, setTab] = useTab()
   const [theme, toggleTheme] = useTheme()
 
   const derived = useMemo(() => deriveAll(snapshot, filters), [snapshot, filters])
   const periodLabel = PERIODS.find(p => p.key === filters.period)?.label ?? filters.period
   const scopeLabel = filters.period === 'all' ? undefined : periodLabel
+
+  const pathname = useRouterState({ select: s => s.location.pathname })
+  const activeKey: TabKey = (TABS.find(t => pathOf(t.key) === pathname)?.key) ?? 'overview'
 
   // Drop stale provider/account/model ids (e.g. from a shared URL) once the snapshot
   // reveals them — otherwise a vanished id silently empties every panel.
@@ -110,8 +117,7 @@ export function App() {
     const acctIds = new Set<string>(snapshot.accounts.map(a => a.id))
     const cleanProv = filters.providers.filter(p => provIds.has(p))
     const cleanAcct = filters.account === 'all' || acctIds.has(filters.account) ? filters.account : 'all'
-    // All-time model universe (from the smaller monthly rows), NOT the period-scoped
-    // option list — so a model selected outside the current period isn't wrongly dropped.
+    // All-time model universe (from the smaller monthly rows), not the period-scoped one.
     const allModels = new Set<string>()
     for (const a of snapshot.accounts) for (const r of a.table?.monthly ?? []) for (const m of r.breakdown) allModels.add(m.name)
     const cleanModels = allModels.size > 0 ? filters.models.filter(m => allModels.has(m)) : filters.models
@@ -123,17 +129,18 @@ export function App() {
   const usageAccts = snapshot?.accounts.filter(a => a.hasUsage) ?? []
   const hasUsage = usageAccts.length > 0
   const hasBilling = (snapshot?.accounts ?? []).some(hasBillingSignal)
-  // A billing-capable account whose first poll hasn't landed yet — don't flash
-  // "no providers" while its quota/plan is still loading.
   const billingPending = (snapshot?.accounts ?? []).some(a => a.hasBilling && !hasBillingSignal(a))
-  // "ready" = every usage account's table fetched, so charts don't flash empty.
-  // Billing-only setups have no tables to wait on, so they're ready immediately.
   const tablesReady = hasUsage && usageAccts.every(a => a.table != null)
   const everReady = useRef(false)
   useEffect(() => { if (tablesReady) everReady.current = true }, [tablesReady])
   const [graceOver, setGraceOver] = useState(false)
   useEffect(() => { const id = setTimeout(() => setGraceOver(true), 12_000); return () => clearTimeout(id) }, [])
   const ready = !hasUsage || tablesReady || everReady.current || graceOver
+
+  const ctx = useMemo<DashCtx | null>(
+    () => (snapshot ? { snapshot, filters, derived, periodLabel, scopeLabel } : null),
+    [snapshot, filters, derived, periodLabel, scopeLabel],
+  )
 
   return (
     <div className="min-h-screen">
@@ -143,7 +150,7 @@ export function App() {
             <span className="font-display text-2xl text-fg-bright">TOKMON</span>
             <span className="hidden text-sm text-fg-faint sm:inline">
               ~/usage <span className="text-prompt">$</span>{' '}
-              <span className="text-fg-dim">{tab}</span>
+              <span className="text-fg-dim">{activeKey}</span>
               <span className="cursor-blink text-accent">▋</span>
             </span>
             <div className="ml-auto flex min-w-0 items-center gap-3">
@@ -157,15 +164,15 @@ export function App() {
 
           <nav className="-mb-px flex items-center gap-1 overflow-x-auto">
             {TABS.map(t => (
-              <button
+              <Link
                 key={t.key}
-                onClick={() => setTab(t.key)}
+                to={pathOf(t.key)}
                 className={`relative shrink-0 border-b-2 px-3 py-2 font-display text-xs uppercase tracking-wider transition ${
-                  tab === t.key ? 'border-accent text-fg-bright' : 'border-transparent text-fg-faint hover:text-fg-dim'
+                  activeKey === t.key ? 'border-accent text-fg-bright' : 'border-transparent text-fg-faint hover:text-fg-dim'
                 }`}
               >
                 {t.label}
-              </button>
+              </Link>
             ))}
           </nav>
         </div>
@@ -183,15 +190,12 @@ export function App() {
                 No providers detected. Open tokmon, enable a provider, then refresh.
               </div>
             )
-        ) : !ready ? (
+        ) : !ready || !ctx ? (
           <Connecting label={conn === 'error' ? 'connection lost — retrying…' : 'reading usage history…'} />
         ) : (
-          <div key={tab} className="rise">
-            {tab === 'overview' && <OverviewTab derived={derived} periodLabel={periodLabel} scopeLabel={scopeLabel} providers={snapshot.providers} />}
-            {tab === 'analytics' && <AnalyticsTab derived={derived} scopeLabel={scopeLabel} />}
-            {tab === 'models' && <ModelsTab derived={derived} scopeLabel={scopeLabel} />}
-            {tab === 'explore' && <ExploreTab snapshot={snapshot} filters={filters} periodLabel={periodLabel} />}
-          </div>
+          <DashboardContext.Provider value={ctx}>
+            <Outlet />
+          </DashboardContext.Provider>
         )}
       </main>
 
@@ -200,4 +204,40 @@ export function App() {
       </footer>
     </div>
   )
+}
+
+function OverviewRoute() {
+  const { derived, periodLabel, scopeLabel, snapshot } = useDashboard()
+  return <div className="rise"><OverviewTab derived={derived} periodLabel={periodLabel} scopeLabel={scopeLabel} providers={snapshot.providers} /></div>
+}
+function AnalyticsRoute() {
+  const { derived, scopeLabel } = useDashboard()
+  return <div className="rise"><AnalyticsTab derived={derived} scopeLabel={scopeLabel} /></div>
+}
+function ModelsRoute() {
+  const { derived, scopeLabel } = useDashboard()
+  return <div className="rise"><ModelsTab derived={derived} scopeLabel={scopeLabel} /></div>
+}
+function ExploreRoute() {
+  const { snapshot, filters, periodLabel } = useDashboard()
+  return <div className="rise"><ExploreTab snapshot={snapshot} filters={filters} periodLabel={periodLabel} /></div>
+}
+
+const rootRoute = createRootRoute({ component: RootLayout })
+const tabRoute = (key: TabKey, component: () => JSX.Element) =>
+  createRoute({ getParentRoute: () => rootRoute, path: pathOf(key), component })
+const routeTree = rootRoute.addChildren([
+  tabRoute('overview', OverviewRoute),
+  tabRoute('analytics', AnalyticsRoute),
+  tabRoute('models', ModelsRoute),
+  tabRoute('explore', ExploreRoute),
+])
+const router = createRouter({ routeTree, history: createHashHistory() })
+
+declare module '@tanstack/react-router' {
+  interface Register { router: typeof router }
+}
+
+export function App() {
+  return <RouterProvider router={router} />
 }
