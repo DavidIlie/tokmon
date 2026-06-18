@@ -12,11 +12,7 @@ import type { WebSnapshot } from './contract'
 
 const TABLE_INTERVAL_MS = 300_000
 const SSE_HEARTBEAT_MS = 25_000
-// Skip refreshes when no SSE clients and idle — keeps CPU near-zero.
 const IDLE_PAUSE_MS = 60_000
-// Persist the last good snapshot so the next launch renders instantly from cache
-// (the full-history table pass takes seconds on large histories) while fresh data
-// loads in the background. Throttle writes; only cache once tables are present.
 const SNAPSHOT_CACHE_THROTTLE_MS = 20_000
 const snapshotCacheFile = () => join(cacheDir(), 'web-snapshot.json')
 const sseFrame = (s: WebSnapshot): string => `event: snapshot\ndata: ${JSON.stringify(s)}\n\n`
@@ -31,13 +27,9 @@ interface DataEngineOptions {
 
 export interface DataEngine {
   snapshot(): WebSnapshot | null
-  /** Fire the initial forced fetches and start the periodic timers. */
   start(): void
-  /** Register an SSE response; returns a cleanup function. */
   addSseClient(res: ServerResponse): () => void
-  /** Touch the activity timestamp (on /api/data and /api/stream). */
   touch(): void
-  /** Cancel in-flight refreshes, clear timers, drain SSE clients. */
   stop(): void
 }
 
@@ -47,8 +39,6 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   const usage = new Map<string, { dashboard: DashboardData | null; table: TableData | null }>()
   const billing = new Map<string, BillingResult | null>()
   let current: WebSnapshot | null = null
-  // Serialized SSE frame for `current`, rebuilt once per snapshot and reused for every
-  // client write + new-connection replay (avoids re-stringifying per connection).
   let currentFrame: string | null = null
   const sseClients = new Map<ServerResponse, ReturnType<typeof setInterval>>()
   let lastActivity = Date.now()
@@ -67,8 +57,6 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     return u
   }
 
-  // Seed in-memory state from the on-disk cache so the first paint is instant.
-  // Fresh fetches replace these values within seconds.
   const hydrateFromCache = () => {
     try {
       const cached = JSON.parse(readFileSync(snapshotCacheFile(), 'utf-8')) as WebSnapshot
@@ -79,13 +67,12 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       }
       current = assembleSnapshot({ version, tz, intervalMs: summaryIntervalMs, resolved, usage, billing })
       currentFrame = sseFrame(current)
-    } catch { /* no/invalid cache — first run loads live */ }
+    } catch { /* best-effort */ }
   }
 
   const persist = () => {
     if (!current) return
-    // Only cache snapshots that carry table data; never overwrite a good cache
-    // with a summary-only one captured mid-warmup.
+    // Only cache snapshots that carry table data; never overwrite a good cache with a summary-only one captured mid-warmup.
     if (!current.accounts.some(a => a.hasUsage && a.table != null)) return
     if (Date.now() - lastPersist < SNAPSHOT_CACHE_THROTTLE_MS) return
     lastPersist = Date.now()
@@ -114,7 +101,6 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     if (stopped || summaryBusy || (!force && idle())) return
     summaryBusy = true
     try {
-      // Serialized so peak CPU stays ~1 core.
       for (const r of usageAccounts) {
         if (stopped) return
         usageEntry(r.account.id).dashboard = await fetchAccountSummary(r.account, tz)
@@ -155,8 +141,6 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     }
   }
 
-  // Seed `current` from disk now (before the server listens) so the very first
-  // client — even one connecting in the first millisecond — gets real data.
   hydrateFromCache()
 
   return {
@@ -188,7 +172,6 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       beat.unref?.()
       sseClients.set(res, beat)
       lastActivity = Date.now()
-      // A viewer arrived — force-refresh so charts have data on first paint / after idle.
       if (!current || Date.now() - current.generatedAt > summaryIntervalMs) {
         void refreshSummary(true)
         void refreshTable(true)

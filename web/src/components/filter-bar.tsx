@@ -17,7 +17,6 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
 
   // Only usage providers are filter chips — a billing-only chip would blank every chart.
   const chipProviders = providers.filter(p => usageProviderIds.has(p.id))
-  // Billing-only providers are shown read-only (they render as cards, not period filters).
   const billingProviders = providers.filter(p =>
     !usageProviderIds.has(p.id) && accounts.some(a => a.providerId === p.id && a.hasBilling))
 

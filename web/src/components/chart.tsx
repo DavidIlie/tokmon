@@ -1,8 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { fmtDayLabel } from '../lib/format'
 
-// True only on the first frame after mount, so Recharts plays its enter animation
-// once instead of re-sweeping on every SSE snapshot push.
 export function useEnterOnce(): boolean {
   const [enter, setEnter] = useState(true)
   useEffect(() => {
@@ -12,8 +10,6 @@ export function useEnterOnce(): boolean {
   return enter
 }
 
-// Reactive media-query match — for the few places (Recharts numeric props) that
-// can't be driven by CSS breakpoints.
 export function useMediaQuery(query: string): boolean {
   const [m, setM] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches)
   useEffect(() => {

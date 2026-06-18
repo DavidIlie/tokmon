@@ -24,8 +24,8 @@ interface OAuthResponse {
 
 interface ClaudeAuth {
   token: string
-  subscriptionType?: string  // "max" | "pro" | …
-  rateLimitTier?: string      // e.g. "default_claude_max_20x"
+  subscriptionType?: string
+  rateLimitTier?: string
 }
 
 function parseAuth(raw: string): ClaudeAuth | null {
@@ -49,7 +49,7 @@ async function readCredentialsFile(homeDir?: string): Promise<ClaudeAuth | null>
     try {
       const auth = parseAuth(await readFile(join(dir, '.credentials.json'), 'utf-8'))
       if (auth) return auth
-    } catch { /* try next dir */ }
+    } catch {}
   }
   return null
 }
@@ -88,7 +88,6 @@ const pct = (used: number, resets?: string | null, primary?: boolean): Metric =>
 export async function claudeBilling(account: Account): Promise<BillingResult> {
   const auth = await getAuth(account.homeDir)
   if (!auth) return { plan: null, metrics: [], error: 'No OAuth token — run claude and log in' }
-  // Plan comes from local creds, so it shows even when the usage API is down.
   const plan = planLabel(auth)
 
   try {

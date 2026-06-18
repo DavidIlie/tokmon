@@ -1,5 +1,3 @@
-// The tokmon watermark, baked into every export node (never dialog chrome) so it
-// survives capture and can't be cropped. The mark is just "tokmon" — never a name.
 export function Watermark({ variant = 'footer', version }: { variant?: 'footer' | 'corner'; version?: string }) {
   if (variant === 'corner') {
     return (

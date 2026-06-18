@@ -25,8 +25,6 @@ export function useSnapshot(): SnapshotState {
       })
       .catch(() => {})
 
-    // Native EventSource retries transient drops; if it hard-CLOSES we rebuild it
-    // ourselves after a short backoff, keeping the last snapshot visible meanwhile.
     const connect = () => {
       const es = new EventSource('/api/stream')
       esRef.current = es

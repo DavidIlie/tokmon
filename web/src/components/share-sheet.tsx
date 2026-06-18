@@ -27,8 +27,6 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
   const [dims, setDims] = useState({ w: isSummary ? 1040 : 700, h: isSummary ? 540 : 360 })
   const [done, setDone] = useState<'dl' | 'copy' | 'fail' | null>(null)
 
-  // Escape, Tab focus-trap (keeps focus inside the modal), autofocus the primary
-  // action, and restore focus to the trigger on close.
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null
     dlRef.current?.focus()
@@ -45,7 +43,6 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
     return () => { document.removeEventListener('keydown', onKey); prev?.focus?.() }
   }, [onClose])
 
-  // Single done-toast timer, cleared on re-trigger and unmount.
   useEffect(() => () => { if (doneTimer.current) clearTimeout(doneTimer.current) }, [])
   const flash = (kind: 'dl' | 'copy' | 'fail') => {
     setDone(kind)
@@ -53,7 +50,6 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
     doneTimer.current = setTimeout(() => setDone(null), 1600)
   }
 
-  // Measure the native export node (offsetWidth ignores the preview scale) to size the stage.
   useEffect(() => {
     const el = exportRef.current
     if (!el) return
@@ -94,7 +90,6 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
           <X className="size-4" />
         </button>
 
-        {/* Preview stage — the node shown here IS the node captured (scaled for display only). */}
         <div className="flex items-center justify-center bg-bg-0 px-6 pb-5 pt-9" style={{ minHeight: STAGE_H + 24 }}>
           <div className="overflow-hidden rounded" style={{ width: dims.w * k, height: dims.h * k }}>
             <div style={{ width: dims.w, height: dims.h, transform: `scale(${k})`, transformOrigin: 'top left' }}>
@@ -107,7 +102,6 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
           </div>
         </div>
 
-        {/* Control rail */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line px-4 py-3 text-[11px]">
           <Chip label="theme">
             <Segmented<Theme> size="xs" containerClassName={SEG} ariaLabel="export theme" options={[{ value: 'dark', label: 'dark' }, { value: 'light', label: 'light' }]} value={theme} onChange={setTheme} />
@@ -130,7 +124,6 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
           <span className="ml-auto tnum text-fg-faint">{dims.w} × {dims.h} · {scale}x</span>
         </div>
 
-        {/* Actions */}
         <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-3">
           <button onClick={onCopy} className="flex items-center gap-1.5 rounded border border-line bg-bg-1 px-3 py-1.5 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
             {done === 'copy' ? <Check className="size-3.5 text-positive" /> : done === 'fail' ? <X className="size-3.5 text-warning" /> : <Copy className="size-3.5" />} {done === 'copy' ? 'copied' : done === 'fail' ? 'copy failed' : 'copy'}

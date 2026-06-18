@@ -12,22 +12,13 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'calls', label: 'calls' },
 ]
 
-// One template drives both the header and the rows so they can never drift.
-// Model name flexes (1fr) and the share bar is capped (16rem) so it doesn't balloon
-// on ultrawide; the trailing optional columns are `auto` so they collapse to 0 width
-// when hidden at a breakpoint instead of reserving dead space (which caused h-scroll).
 const COLS = '1.75rem minmax(6rem,12rem) minmax(3.5rem,1fr) 3rem 5.5rem 5rem auto auto auto'
 
 export function ModelLeaderboard({ derived, limit, periodLabel }: { derived: Derived; limit?: number; periodLabel?: string }) {
-  // Subscription-routed setups (opencode/pi) have $0 cost but real token usage —
-  // default to a meaningful sort so they aren't all pinned at the bottom.
   const [sort, setSort] = useState<SortKey>(derived.totals.cost > 0 ? 'cost' : 'tokens')
   const sorted = [...derived.byModel].sort((a, b) => b[sort] - a[sort])
   const rows = limit ? sorted.slice(0, limit) : sorted
-  // The share bar + % column track the active sort, so a token/call sort isn't
-  // misrepresented by cost share (which would leave token-only models near-empty).
   const shareKey = sort === 'tokens' ? 'tokenShare' : sort === 'calls' ? 'callShare' : 'share'
-  // Never let the active sort key hide behind a responsive breakpoint.
   const tokCls = sort === 'tokens' ? 'block' : 'hidden md:block'
   const callCls = sort === 'calls' ? 'block' : 'hidden lg:block'
 

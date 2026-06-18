@@ -4,7 +4,6 @@ import type { UsageSummary, TableRow, ModelDetail, DashboardData, TableData } fr
 import { dayKey, monthKey, weekKey, startOfDay, startOfMonth, startOfWeek } from '../tz'
 import { cacheDir } from '../config'
 
-/** Days of daily-cost history kept for the dashboard sparkline. */
 export const SPARK_DAYS = 14
 const DAY_MS = 86_400_000
 
@@ -23,7 +22,7 @@ export interface Entry {
 
 const CACHE_VERSION = 4
 const STABLE_AGE_MS = 5 * 60_000
-const PRUNE_AGE_MS = 200 * DAY_MS   // drop files older than any view needs (table = 6mo)
+const PRUNE_AGE_MS = 200 * DAY_MS
 const memCache = new Map<string, { mtimeMs: number; size: number; entries: Entry[] }>()
 let diskLoaded = false
 let dirty = false
@@ -75,7 +74,7 @@ async function ensureDiskLoaded(): Promise<void> {
         memCache.set(path, { mtimeMs: s.m, size: typeof s.s === 'number' ? s.s : -1, entries: decode(s) })
       }
     }
-  } catch { /* missing or corrupt cache → rebuild from scratch */ }
+  } catch {}
 }
 
 export async function flushDisk(): Promise<void> {
@@ -83,7 +82,6 @@ export async function flushDisk(): Promise<void> {
   const now = Date.now()
   const obj: Record<string, Shard> = {}
   for (const [path, v] of memCache) {
-    // Persist only stable (immutable) files within the window any view needs.
     if (now - v.mtimeMs > STABLE_AGE_MS && now - v.mtimeMs < PRUNE_AGE_MS) {
       obj[path] = encode(v.mtimeMs, v.size, v.entries)
     }
@@ -94,7 +92,7 @@ export async function flushDisk(): Promise<void> {
     await writeFile(tmp, JSON.stringify(obj))
     await rename(tmp, cacheFile())
     dirty = false
-  } catch { /* best-effort; cache is an optimization only */ }
+  } catch {}
 }
 
 function scheduleFlush(): void {
@@ -103,7 +101,6 @@ function scheduleFlush(): void {
   flushTimer.unref?.()
 }
 
-/** Run `fn` over items with at most `limit` in flight (bounds FDs/CPU on cold load). */
 async function mapLimit<T>(items: T[], limit: number, fn: (t: T) => Promise<void>): Promise<void> {
   let i = 0
   const worker = async () => { while (i < items.length) await fn(items[i++]) }
@@ -127,7 +124,7 @@ export async function loadCachedEntries(
         if (Date.now() - f.mtimeMs > STABLE_AGE_MS) dirty = true
       }
       chunks.push(c.entries)
-    } catch { /* file vanished / rotated / locked mid-read — skip, don't fail the load */ }
+    } catch {}
   })
   if (dirty) scheduleFlush()
   return dedupe(chunks.flat().filter(e => e.ts >= since))

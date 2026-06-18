@@ -21,8 +21,6 @@ export function Sparkline({ data, color = 'var(--color-accent)', className = '' 
   const TOP = SPARK.length - 1
   const max = Math.max(...data, 0)
   const min = Math.min(...data, 0)
-  // Flat positive series reads as a mid-height bar (not a maxed one); negatives clamp
-  // to the low end instead of indexing out of bounds (blank glyphs).
   const flat = max > 0 && min === max
   return (
     <span className={`font-mono leading-none ${className}`} style={{ color }} aria-hidden>

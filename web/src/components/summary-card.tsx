@@ -12,8 +12,6 @@ export interface SummaryOpts {
   wmPos: 'footer' | 'corner'
 }
 
-// The curated 1040×540 share card — composed from scratch (no live chrome), all
-// token-driven so it captures correctly in either pinned theme.
 export const SummaryCard = forwardRef<HTMLDivElement, {
   derived: Derived
   periodLabel: string

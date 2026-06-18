@@ -54,7 +54,7 @@ export function detectHyperlinks(env: NodeJS.ProcessEnv, isTTY: boolean): boolea
   if (!isTTY || env.TERM === 'dumb' || env.NO_HYPERLINK) return false
   if (env.WT_SESSION || env.ConEmuANSI === 'ON' || env.KITTY_WINDOW_ID || env.TERM === 'xterm-kitty') return true
   if (env.KONSOLE_VERSION || env.TERMINAL_EMULATOR === 'JetBrains-JediTerm') return true
-  if (env.VTE_VERSION && Number(env.VTE_VERSION) >= 5000) return true   // GNOME Terminal / Tilix
+  if (env.VTE_VERSION && Number(env.VTE_VERSION) >= 5000) return true
   const tp = env.TERM_PROGRAM
   if (tp) {
     const [maj, min] = (env.TERM_PROGRAM_VERSION ?? '').split('.').map(n => Number(n) || 0)
@@ -74,7 +74,7 @@ function openUrl(url: string): void {
     if (process.platform === 'darwin') spawn('open', [url], { stdio: 'ignore', detached: true }).unref()
     else if (process.platform === 'win32') spawn('cmd', ['/c', 'start', '', url], { stdio: 'ignore', detached: true }).unref()
     else spawn('xdg-open', [url], { stdio: 'ignore', detached: true }).unref()
-  } catch { /* no browser opener available */ }
+  } catch {}
 }
 
 function osc8(text: string, url: string): string {
@@ -128,10 +128,10 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
   const [onboardCursor, setOnboardCursor] = useState(0)
   const [dashPage, setDashPage] = useState(0)
   const [debouncePassed, setDebouncePassed] = useState(false)
-  const [graceHold, setGraceHold] = useState(false)   // keep the final ✓ visible briefly
-  const [loaderShownAt, setLoaderShownAt] = useState<number | null>(null)   // when the loader first painted (for the min-visible floor)
-  const loaderDone = useRef(false)   // one-shot latch: loader shows at most once per process
-  const prevShowPicker = useRef(false)   // detect the picker close edge to re-arm the loader
+  const [graceHold, setGraceHold] = useState(false)
+  const [loaderShownAt, setLoaderShownAt] = useState<number | null>(null)
+  const loaderDone = useRef(false)
+  const prevShowPicker = useRef(false)
   const { stdout } = useStdout()
   const { exit } = useApp()
   const rows = stdout?.rows ?? 24
@@ -175,9 +175,9 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
   const allReady = accounts.length > 0 && accounts.every(a => accountReady(stats.get(a.id), a.providerId))
 
   const hasStrip = slots.length > 1
-  const stripChipW = (s: Slot) => 2 /*idx+space*/ + 2 /*dot+space*/ + truncateName(s.name, 16).length + 2 /*marginRight*/
+  const stripChipW = (s: Slot) => 2 + 2 + truncateName(s.name, 16).length + 2
   const stripChars = slots.reduce((sum, s) => sum + stripChipW(s), 0)
-  const stripLines = hasStrip ? Math.max(1, Math.ceil(stripChars / Math.max(1, cols - 4 /*paddingX*/ - 7 /*"focus  "*/))) : 0
+  const stripLines = hasStrip ? Math.max(1, Math.ceil(stripChars / Math.max(1, cols - 4 - 7))) : 0
   const headerRows = cols < 70 ? 2 : 1
   const CHROME = 2 + headerRows + 3 + (hasStrip ? 1 + stripLines : 0) + 2 + 2
   const gridBudget = Math.max(1, rows - CHROME)
@@ -236,7 +236,7 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
     seededRef.current = true
     loadSnapshot().then(snap => {
       setStats(prev => {
-        if (prev.size > 0) return prev   // live data already arrived — don't clobber
+        if (prev.size > 0) return prev
         const next = new Map(prev)
         for (const acc of accountsRef.current) {
           const s = snap[acc.id]
@@ -401,7 +401,6 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
   function toggleProvider(pid: ProviderId): void {
     updateConfig(c => ({
       ...c,
-      // Toggling in settings is also an explicit decision → mark it known.
       knownProviders: c.knownProviders.includes(pid) ? c.knownProviders : [...c.knownProviders, pid],
       disabledProviders: c.disabledProviders.includes(pid)
         ? c.disabledProviders.filter(p => p !== pid)
@@ -543,7 +542,6 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
         openUrl(ctrl.url)
       }
     } catch {
-      // Roll back to a truthful state if start/stop threw.
       setWebStatus(webRef.current ? 'on' : 'off')
     } finally {
       webBusyRef.current = false

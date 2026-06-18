@@ -32,8 +32,6 @@ export async function geminiBilling(account: Account): Promise<BillingResult> {
     const accessToken = typeof creds?.access_token === 'string' ? creds.access_token.trim() : ''
     const refreshToken = typeof creds?.refresh_token === 'string' ? creds.refresh_token.trim() : null
     if (!creds || (!accessToken && !refreshToken)) return { plan: null, metrics: [], error: 'Not signed in — run gemini' }
-    // Don't hard-fail on a past expiry_date — a refresh_token is present, so let
-    // the Cloud Code path refresh (it returns the error itself if refresh fails).
     const quota = await fetchCloudCodeQuota({
       accessToken,
       refreshToken,

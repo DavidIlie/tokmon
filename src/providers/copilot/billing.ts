@@ -42,7 +42,6 @@ interface CopilotUsage {
   }
 }
 
-/** Resolve GH_CONFIG_DIR, honoring platform defaults and env vars. */
 function ghConfigDir(homeDir?: string): string {
   if (!homeDir) {
     const explicit = process.env.GH_CONFIG_DIR
@@ -53,7 +52,6 @@ function ghConfigDir(homeDir?: string): string {
     const xdg = envDir('XDG_CONFIG_HOME')
     return xdg ? join(xdg, 'gh') : join(homedir(), '.config', 'gh')
   }
-  // Account-scoped home: mirror gh's per-OS default under that home.
   return process.platform === 'win32'
     ? join(homeDir, 'AppData', 'Roaming', 'GitHub CLI')
     : join(homeDir, '.config', 'gh')
@@ -67,7 +65,7 @@ export async function detectCopilot(homeDir?: string): Promise<boolean> {
   try {
     await access(ghHostsPath(homeDir))
     return true
-  } catch { /* try gh on PATH */ }
+  } catch {}
 
   try {
     await execFile('gh', ['--version'], { timeout: 3000 })
@@ -177,13 +175,13 @@ async function loadTokenFromVsCode(homeDir?: string): Promise<TokenSource | null
         candidates.push(join(userDir, 'globalStorage', dirent.name, 'auth.json'))
       }
     }
-  } catch { /* best effort */ }
+  } catch {}
 
   for (const path of candidates) {
     try {
       const token = tokenFromText(await readFile(path, 'utf-8'))
       if (token) return { token, source: 'vscode' }
-    } catch { /* try next */ }
+    } catch {}
   }
 
   return null
@@ -207,7 +205,6 @@ function resetDate(value: unknown): string | null {
 
 function percentMetric(label: string, snapshot: QuotaSnapshot | undefined, reset: string | null, primary?: boolean): Metric | null {
   if (!snapshot || typeof snapshot.percent_remaining !== 'number') return null
-  // Skip unlimited/zero-entitlement buckets (percent_remaining:0 is misleading).
   if (snapshot.unlimited === true || snapshot.entitlement === 0) return null
   const used = Math.min(100, Math.max(0, 100 - snapshot.percent_remaining))
   return { label, used, limit: 100, format: { kind: 'percent' }, resetsAt: reset, primary }

@@ -21,9 +21,7 @@ export interface Metric {
   /** null = no defined ceiling (show the used value alone). */
   limit: number | null
   format: MetricFormat
-  /** Pre-formatted countdown such as "3h 12m", or null when not applicable. */
   resetsAt?: string | null
-  /** Marks the headline metric for compact views. */
   primary?: boolean
 }
 
@@ -32,7 +30,6 @@ export interface BillingResult {
   metrics: Metric[]
   error: string | null
   activity?: { series: number[]; summary: string } | null
-  /** Optional per-model spend breakdown (Cursor) — additive; other providers omit it. */
   modelSpend?: { name: string; usd: number; requests: number }[] | null
 }
 

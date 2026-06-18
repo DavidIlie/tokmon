@@ -6,7 +6,6 @@ import { Panel, Sparkline } from '../ui'
 
 export function KpiStrip({ derived, periodLabel }: { derived: Derived; periodLabel: string }) {
   const t = derived.totals
-  // Cap to the last 30 points so a 90d/all window doesn't silently clip the oldest.
   const spend = derived.timeline.map(p => p.total).slice(-30)
   const tokens = derived.timeline.map(p => p.tokens).slice(-30)
   const saved = derived.cacheSavingsSeries.map(p => p.value).slice(-30)
@@ -61,11 +60,7 @@ function ProviderCard({ account, index, providerName }: { account: WebAccount; i
   const metrics = account.billing?.metrics ?? []
   const modelSpend = account.billing?.modelSpend ?? []
   const activity = account.billing?.activity
-  // Colored by provider (Claude=green); the account's custom dot color is only an
-  // identity signal in multi-account views — matches the TUI.
   const providerColor = providerHex(account.providerId)
-  // Provider is the primary identity; the account name is a secondary subtitle,
-  // suppressed when it's just the auto-detected provider name (no "Claude · Claude").
   const showSub = account.name && account.name !== providerName
   return (
     <div

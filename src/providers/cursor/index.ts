@@ -7,19 +7,12 @@ import { cursorApiUsage } from './usage'
 
 const EMPTY: TableData = { daily: [], weekly: [], monthly: [] }
 
-// The local composerData supplies full history; the dashboard API supplies the recent
-// window (~90d) with token counts + composer-2.5. Overlay the API onto the local table
-// per DAY (a day is wholly in one source) so recent days are the richer API source and
-// older days remain — no double-counting (overlay replaces a label, never sums).
 const overlayDaily = (lo: TableRow[], hi: TableRow[]): TableRow[] => {
   const m = new Map(lo.map(r => [r.label, r]))
   for (const r of hi) m.set(r.label, r)
   return [...m.values()].sort((a, b) => a.label.localeCompare(b.label))
 }
 
-// Weekly/monthly are re-derived from the merged daily rather than overlaid: a week or
-// month straddling the API's 90-day cutoff would otherwise be a partial API bucket
-// replacing the full local one (undercount). Re-bucketing from days is exact.
 function reBucket(daily: TableRow[], tz: string, keyOf: (ts: number, tz: string) => string): TableRow[] {
   const out = new Map<string, TableRow>()
   for (const day of daily) {
@@ -55,9 +48,7 @@ export const cursorProvider: Provider = {
   id: 'cursor',
   name: 'Cursor',
   color: 'magenta',
-  // hasUsage stays false: the TUI keys its dedicated Cursor spend-table off this flag.
-  // The web surfaces the usage table via fetchTable (resolveAccounts promotes any
-  // provider with a fetchTable to hasUsage for the dashboard only).
+  // hasUsage: false — TUI keys its dedicated Cursor spend-table off this flag directly.
   hasUsage: false,
   hasBilling: true,
   detect: (homeDir) => detectCursor(homeDir),

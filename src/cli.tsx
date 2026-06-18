@@ -19,8 +19,6 @@ process.emitWarning = ((warning: string | Error, ...rest: unknown[]) => {
 
 const args = process.argv.slice(2)
 
-// Subcommands must be handled before flag parsing / Ink render. `serve` (alias
-// `web`) launches the local web dashboard headlessly and owns the process.
 const subcommand = args[0]?.toLowerCase()
 if (subcommand === 'serve' || subcommand === 'web') {
   const { startWeb } = await import('./web/index')

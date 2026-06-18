@@ -20,15 +20,12 @@ export function Panel({
       className={`group relative rounded-md border border-line bg-bg-1/80 transition-colors hover:border-line-2 ${className}`}
     >
       {title && (
-        // Box-drawing notched title: absolutely positioned above the top border.
         <div className="pointer-events-none absolute -top-[7px] left-3 flex items-center gap-2 bg-bg-1 px-1.5">
           <span className="font-display text-[11px] uppercase tracking-wider text-fg-dim">{title}</span>
           {titleTag != null && <span className="text-[10px] normal-case tracking-normal text-fg-faint">{titleTag}</span>}
         </div>
       )}
       {(right || captureName) && (
-        // z-20 keeps controls above Recharts' surface; solid bg-bg-1 stops gridlines
-        // bleeding through the inactive toggles (the line-under-toggles bug).
         <div data-chrome className="absolute right-2 top-2 z-20 flex items-center gap-1.5 rounded bg-bg-1 px-0.5">
           {right}
           {captureName && <CaptureButton getNode={() => ref.current} name={captureName} />}

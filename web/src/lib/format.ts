@@ -36,7 +36,6 @@ export function fmtNum(n: number): string {
   return Math.round(n).toLocaleString('en-US')
 }
 
-// Compact count (k/M) so high call counts never blow out a narrow column.
 export function fmtCount(n: number): string {
   if (!Number.isFinite(n)) return '0'
   const a = Math.abs(n)

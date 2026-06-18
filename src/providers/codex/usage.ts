@@ -43,7 +43,6 @@ function priceFor(model: string) {
   return FALLBACK
 }
 
-// Model from turn_context events; token_count events don't carry it.
 function extractModel(obj: any): string | null {
   const p = obj?.payload ?? obj
   return p?.model
@@ -72,7 +71,6 @@ function subtractClamped(cur: CodexDelta, prev: CodexDelta | null): CodexDelta {
   }
 }
 
-// Detects re-emitted token_count events (same delta & cumulative total = no new usage).
 function eventSig(last: CodexDelta | undefined, total: CodexDelta | undefined): string {
   const f = (x: CodexDelta | undefined) =>
     x ? `${x.input_tokens ?? 0},${x.cached_input_tokens ?? 0},${x.output_tokens ?? 0},${x.reasoning_output_tokens ?? 0}` : '-'
@@ -88,13 +86,13 @@ async function parseFile(path: string): Promise<Entry[]> {
   for await (const rawLine of rl) {
     if (!rawLine.includes('token_count') && !rawLine.includes('turn_context')) continue
     try {
-      const line = rawLine.charCodeAt(0) === 0xFEFF ? rawLine.slice(1) : rawLine // Strip BOM
+      const line = rawLine.charCodeAt(0) === 0xFEFF ? rawLine.slice(1) : rawLine
       const obj: any = JSON.parse(line)
 
       const payloadType = obj?.payload?.type ?? obj?.type
       if (payloadType === 'turn_context') {
         const m = extractModel(obj)
-        if (typeof m === 'string' && m.trim()) model = m   // ignore non-string/empty models
+        if (typeof m === 'string' && m.trim()) model = m
         continue
       }
       if (payloadType !== 'token_count') continue
@@ -118,9 +116,9 @@ async function parseFile(path: string): Promise<Entry[]> {
       if (!Number.isFinite(ts)) continue
 
       const inputTotal = safeNum(d.input_tokens)
-      const cached = Math.min(safeNum(d.cached_input_tokens), inputTotal) // cached ⊆ input
+      const cached = Math.min(safeNum(d.cached_input_tokens), inputTotal)
       const input = inputTotal - cached
-      const output = safeNum(d.output_tokens) // includes reasoning tokens
+      const output = safeNum(d.output_tokens)
       if (input + output + cached === 0) continue
 
       const p = priceFor(model)
@@ -134,7 +132,7 @@ async function parseFile(path: string): Promise<Entry[]> {
         cacheRead: cached,
         cacheSavings: cached * (p.in - p.cr),
       })
-    } catch { /* skip a single malformed/unexpected line */ }
+    } catch {}
   }
   return entries
 }

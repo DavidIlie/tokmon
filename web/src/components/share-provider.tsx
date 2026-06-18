@@ -9,8 +9,6 @@ export type ShareSource =
 const ShareCtx = createContext<(s: ShareSource) => void>(() => {})
 export const useShare = () => useContext(ShareCtx)
 
-// Mounts exactly ONE ShareSheet at the app root; both the header Share button and
-// every panel capture button call openShare(source) to drive it.
 export function ShareProvider({ children }: { children: ReactNode }) {
   const [source, setSource] = useState<ShareSource | null>(null)
   return (

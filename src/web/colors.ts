@@ -1,6 +1,3 @@
-// Map the TUI's Ink color NAMES to hex so the web matches the terminal exactly.
-// Values are the user's actual Terminal.app "Clear Dark" ANSI palette (decoded
-// from com.apple.Terminal) so the web reads identically to the live TUI.
 export const NAMED_HEX: Record<string, string> = {
   green: '#6caa71',
   greenBright: '#79be7e',
@@ -22,17 +19,12 @@ export const NAMED_HEX: Record<string, string> = {
 
 const FALLBACK = '#8d9090'
 
-/** Resolve an Ink color name (or hex) to a web hex. */
 export function namedHex(name: string | undefined): string {
   if (!name) return FALLBACK
   if (name.startsWith('#')) return name
   return NAMED_HEX[name] ?? FALLBACK
 }
 
-/**
- * Resolve an account's display color: its custom color if set, else the
- * provider's color name. `providerColorName` is the provider's Ink `.color`.
- */
 export function colorHex(accountColor: string | undefined, providerColorName: string): string {
   if (accountColor) {
     if (accountColor.startsWith('#')) return accountColor

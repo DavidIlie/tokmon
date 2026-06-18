@@ -14,9 +14,9 @@ const USAGE_URL = `${BASE}/GetCurrentPeriodUsage`
 const PLAN_URL = `${BASE}/GetPlanInfo`
 
 interface PlanUsage {
-  remaining?: number       // cents
-  limit?: number           // cents
-  totalSpend?: number      // cents (authoritative when present)
+  remaining?: number
+  limit?: number
+  totalSpend?: number
   totalPercentUsed?: number
   autoPercentUsed?: number
   apiPercentUsed?: number
@@ -29,8 +29,8 @@ interface SpendLimitUsage {
   pooledRemaining?: number
 }
 interface UsageResponse {
-  billingCycleStart?: string  // epoch-ms as string
-  billingCycleEnd?: string    // epoch-ms as string
+  billingCycleStart?: string
+  billingCycleEnd?: string
   planUsage?: PlanUsage
   spendLimitUsage?: SpendLimitUsage
   enabled?: boolean
@@ -97,7 +97,6 @@ export async function cursorBilling(account: Account): Promise<BillingResult> {
       summary: lines ? `${lines} · ${spendLabel}` : spendLabel,
     }
   }
-  // Surface the per-model spend table the web previously discarded (top by cost).
   const modelSpend = spend?.models?.length
     ? spend.models.slice(0, 6).map(m => ({ name: m.name, usd: m.usd, requests: m.requests }))
     : null
@@ -136,7 +135,6 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
   const metrics: Metric[] = []
   const rawEnd = usage.billingCycleEnd
   const endMs = typeof rawEnd === 'string' && rawEnd.trim() ? Number(rawEnd) : NaN
-  // Clamp to Date.MAX_VALUE to prevent RangeError in toISOString()
   const resets = Number.isFinite(endMs) && endMs > 0 && endMs <= 8.64e15
     ? resetIn(new Date(endMs).toISOString()) : null
 

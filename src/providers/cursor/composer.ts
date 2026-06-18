@@ -34,13 +34,7 @@ export async function cursorModelSpend(homeDir?: string): Promise<CursorSpend | 
   return { total, models }
 }
 
-// Cursor is request-priced (cost + request count, no token counts). Each composerData
-// session carries `createdAt` (epoch-ms) and per-model `usageData` {costInCents, amount},
-// so we can derive a real daily × model table from the LOCAL db — one SQL-side aggregated
-// pass over state.vscdb (~0.4s on a 3.5GB db, read-only). NOTE: Cursor moved usage
-// accounting server-side in early 2026, so local history is frozen around then; that's a
-// data limitation, not a bug. Composer-2/2.5 sessions carry empty usageData → contribute
-// nothing here (the cost guard drops them) until their turns actually bill.
+// NOTE: Cursor moved usage accounting server-side in early 2026, so local history is frozen around then — data limitation, not a bug.
 const USAGE_SQL =
   "SELECT json_extract(c.value,'$.createdAt') AS createdAt, mk.key AS model, " +
   "sum(json_extract(mk.value,'$.costInCents')) AS cents, " +

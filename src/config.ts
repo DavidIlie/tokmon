@@ -26,7 +26,6 @@ export interface Config {
   disabledProviders: ProviderId[]
   /** Set once the user has chosen their providers; false → show onboarding. */
   onboarded: boolean
-  /** 'grid' = all providers in a responsive grid; 'single' = one provider at a time (cycle). */
   dashboardLayout: 'grid' | 'single'
   defaultFocus: 'all' | 'last'
   ascii: 'auto' | 'on' | 'off'

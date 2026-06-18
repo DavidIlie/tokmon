@@ -17,7 +17,6 @@ const BILLING_INTERVAL_FALLBACK_MIN = 5
 export interface WebServerController {
   url: string
   port: number
-  /** Current snapshot, or null before the first fetch completes. */
   snapshot(): WebSnapshot | null
   stop(): Promise<void>
 }
@@ -78,7 +77,6 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
 
   const resolved = await resolveAccounts(config)
 
-  // Mode is resolved after the http server exists (Vite needs it for HMR).
   const server = createServer()
   let vite: ViteDevServerLike | null = null
   if (isDevMode()) vite = await createViteDevServer(server, log)
@@ -92,10 +90,6 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
   const port = await listenWithFallback(server, opts.port ?? DEFAULT_PORT)
   const serverUrl = `http://${HOST}:${port}`
 
-  // DEV: warm Vite's module graph + dep optimizer BEFORE the CPU-heavy first data
-  // fetch. That fetch can block this shared event loop for seconds on large
-  // histories; warming first means the SPA is already transformed/cached, so the
-  // browser loads straight into the loading state instead of freezing on blank.
   if (vite?.warmupRequest) {
     try { await Promise.race([vite.warmupRequest('/src/main.tsx'), delay(5000)]) } catch { /* best-effort */ }
   }

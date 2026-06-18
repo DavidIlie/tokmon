@@ -35,8 +35,6 @@ export function CostTimeline({ derived, title = 'cost over time', height = 260, 
   periodLabel?: string
   heightClass?: string
 }) {
-  // Follows the ONE global period like every other period-scoped panel — the all/period
-  // toggle was removed; the ALL period chip gives the full-history view.
   const enter = useEnterOnce()
   const provs = derived.byProvider
   const multiProvider = provs.length > 1

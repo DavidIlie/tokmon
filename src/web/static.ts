@@ -24,7 +24,6 @@ const MIME: Record<string, string> = {
   '.webmanifest': 'application/manifest+json',
 }
 
-/** Locate the built SPA bundle (dist/web) — prod mode serves this statically. */
 export function findWebRoot(): string | null {
   const candidates = ['./web/', '../web/', '../dist/web/', '../../dist/web/']
   for (const rel of candidates) {
@@ -36,7 +35,6 @@ export function findWebRoot(): string | null {
   return null
 }
 
-// Sanitizes the URL path to prevent path traversal outside webRoot.
 function resolveStaticPath(webRoot: string, urlPath: string): string | null {
   let clean: string
   try { clean = decodeURIComponent(urlPath.split('?')[0]) } catch { return null }
@@ -55,7 +53,6 @@ export function sendJson(res: ServerResponse, status: number, data: unknown): vo
   send(res, status, 'application/json; charset=utf-8', JSON.stringify(data))
 }
 
-/** Serve a file from the static dist/web bundle, with SPA fallback to index.html. */
 export function serveStatic(webRoot: string, urlPath: string, res: ServerResponse): void {
   const path = urlPath.split('?')[0]
   const filePath = resolveStaticPath(webRoot, path === '/' ? '/index.html' : path)
@@ -64,7 +61,6 @@ export function serveStatic(webRoot: string, urlPath: string, res: ServerRespons
   void stat(filePath).then(st => {
     if (st.isFile()) {
       const type = MIME[extname(filePath).toLowerCase()] || 'application/octet-stream'
-      // Hashed assets under /assets/ are content-addressed and safe to cache forever.
       const immutable = filePath.includes(`${sep}assets${sep}`)
       res.writeHead(200, {
         'Content-Type': type,

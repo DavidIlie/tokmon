@@ -17,8 +17,6 @@ interface Cell { date: string; cost: number; level: number }
 export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { derived: Derived; maxWeeks?: number; periodLabel?: string }) {
   const [hover, setHover] = useState<CalendarDay | null>(null)
   const detail = useMemo(() => new Map(derived.calendar.map(c => [c.date, c])), [derived.calendar])
-  // Weight by cost when any cost exists, else by tokens — so $0 subscription usage
-  // (opencode/pi, request-priced Cursor) still lights up and produces stats.
   const costed = useMemo(() => derived.calendar.some(c => c.cost > 0), [derived.calendar])
   const weightOf = (c: CalendarDay) => (costed ? c.cost : c.tokens)
   const stats = useMemo(() => {
@@ -46,7 +44,6 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
     let endMs = parseDate(last)
     let startMs = parseDate(firstData)
     if ((endMs - startMs) / (DAY * 7) > maxWeeks) startMs = endMs - maxWeeks * 7 * DAY
-    // Align start to Monday so each column is a full ISO week.
     startMs -= dowMonday(startMs) * DAY
     const max = Math.max(...derived.calendar.map(weightOf), 0)
     const levelOf = (cost: number) => {
@@ -73,8 +70,6 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
   }, [derived, maxWeeks])
 
   const cols = grid ? `repeat(${grid.weeks.length}, minmax(0,1fr))` : undefined
-  // Cells fill the row but are capped at ~22px so a short range (few week columns)
-  // can't balloon into giant squares.
   const maxW = grid ? grid.weeks.length * 25 : undefined
 
   return (
@@ -82,7 +77,6 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
     <Panel title="daily spend" titleTag={periodLabel} captureName="calendar">
       {!grid || !stats ? <div className="py-6 text-center text-xs text-fg-faint">no usage yet</div> : (
         <div className="grid gap-x-8 gap-y-5 pt-1 md:grid-cols-[minmax(0,1fr)_210px] md:items-start">
-          {/* Heatmap fills the row up to a max cell size — never balloons on short ranges. */}
           <div className="flex min-w-0 flex-col gap-1.5">
             <div className="pl-6">
               <div className="grid gap-[3px] text-[9px] text-fg-faint" style={{ gridTemplateColumns: cols, maxWidth: maxW }}>
@@ -121,10 +115,6 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
             </div>
           </div>
 
-          {/* Right column: period stats, overlaid by the hovered-day detail. The stats
-              stay in flow (just invisible while hovering) so they define a constant
-              height — the detail is absolutely positioned over them, so hovering never
-              shifts the panel height or the heatmap. */}
           <div className="relative border-line-faint md:border-l md:pl-6">
             <div className={`grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-1 ${hover ? 'invisible' : ''}`}>
               <StatBlock label="busiest day" value={stats.costed ? fmtCost(stats.top.cost) : fmtTokens(stats.top.tokens)} sub={fmtDayLabel(stats.top.date)} valueClass="text-cost" />
@@ -143,7 +133,6 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
 
 function DayDetail({ day: d }: { day: CalendarDay }) {
   return (
-    // pr-7 keeps the header's right-aligned cost clear of the panel's capture button.
     <div className="font-mono text-[11px] pr-7">
       <div className="flex items-baseline justify-between gap-3 border-b border-line-faint pb-2">
         <span className="text-fg-dim">{WEEKDAYS[dowMonday(parseDate(d.date))]} · {fmtDayLabel(d.date)}</span>

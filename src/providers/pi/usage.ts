@@ -56,7 +56,7 @@ async function parseFile(path: string): Promise<Entry[]> {
         cacheRead,
         cacheSavings,
       })
-    } catch { /* skip a single malformed line */ }
+    } catch {}
   }
   return entries
 }

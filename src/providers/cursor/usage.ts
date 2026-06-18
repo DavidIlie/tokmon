@@ -4,18 +4,11 @@ import { safeNum } from '../usage-core'
 import { dayKey, monthKey, weekKey } from '../../tz'
 import type { ModelDetail, TableData, TableRow } from '../../types'
 
-// Cursor's dashboard API exposes authoritative per-event usage — model (incl.
-// composer-2.5-fast), token counts, and notional cost — which the local state.vscdb
-// stopped recording in early 2026. This is the richer, current source; the local
-// composerData table (composer.ts) is the offline fallback.
 const EVENTS_URL = 'https://api2.cursor.sh/aiserver.v1.DashboardService/GetFilteredUsageEvents'
-// 90 days keeps the fetch to a few pages (~5s) while covering recent models like
-// composer-2.5; a heavy user's full year is ~14 pages / ~20s, too slow for the poll.
 const WINDOW_DAYS = 90
 const PAGE_SIZE = 1000
-const MAX_PAGES = 12 // safety bound; one fetch runs at most every 5 min (idle-gated)
+const MAX_PAGES = 12
 
-// Aborted/errored turns carry token counts but no real usage — drop them.
 const SKIP_KINDS = new Set(['USAGE_EVENT_KIND_ABORTED_NOT_CHARGED', 'USAGE_EVENT_KIND_ERRORED_NOT_CHARGED'])
 
 interface TokenUsage { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; totalCents?: number }
@@ -56,11 +49,9 @@ export async function cursorApiUsage(tz: string, homeDir?: string): Promise<Tabl
   const endMs = Date.now()
   const startMs = endMs - WINDOW_DAYS * 86_400_000
   const events: UsageEvent[] = []
-  // Page until a short (final) page or the safety cap — driven by page fill, not the
-  // advisory totalUsageEventsCount (which can be 0/absent and would truncate to 1 page).
   for (let page = 1; page <= MAX_PAGES; page++) {
     const resp = await fetchPage(token, startMs, endMs, page)
-    if (!resp) return page === 1 ? null : finalizeTable(events, tz) // token bad/offline on page 1 → fall back
+    if (!resp) return page === 1 ? null : finalizeTable(events, tz)
     const batch = resp.usageEventsDisplay ?? []
     events.push(...batch)
     if (batch.length < PAGE_SIZE) break
@@ -93,11 +84,9 @@ function finalizeTable(events: UsageEvent[], tz: string): TableData | null {
     const ts = Number(e.timestamp)
     if (!Number.isFinite(ts) || ts <= 0) continue
     const tu = e.tokenUsage ?? {}
-    // safeNum rejects NaN/Infinity and floors — right for integer token counts.
     const input = safeNum(tu.inputTokens)
     const output = safeNum(tu.outputTokens)
     const cacheRead = safeNum(tu.cacheReadTokens)
-    // Cost keeps sub-cent precision but still guards against NaN/Infinity.
     const cents = Number(e.chargedCents)
     const usd = Number.isFinite(cents) && cents > 0 ? cents / 100 : 0
     if (usd <= 0 && input + output + cacheRead === 0) continue

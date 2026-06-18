@@ -18,7 +18,7 @@ const GOOGLE_OAUTH_URL = 'https://oauth2.googleapis.com/token'
 
 const GOOGLE_OAUTH_CLIENT_REGEX =
   /OAUTH_CLIENT_ID\s*=\s*["']([0-9]{6,}-[a-z0-9]+\.apps\.googleusercontent\.com)["']\s*;?\s*(?:var|const|let)?\s*OAUTH_CLIENT_SECRET\s*=\s*["'](GOCSPX-[A-Za-z0-9_-]+)["']/s
-const MAX_BUNDLE_READ = 32 * 1024 * 1024 // chunks are ~14MB; cap generously
+const MAX_BUNDLE_READ = 32 * 1024 * 1024
 
 interface GoogleOAuthClient {
   clientId: string

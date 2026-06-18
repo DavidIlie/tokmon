@@ -38,7 +38,6 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase()
-    // Match against humanized + raw forms so typing "jun" or "opus" works.
     const base = s
       ? rows.filter(r => `${fmtDayLabel(r.label)} ${r.label} ${r.models.map(shortModel).join(' ')} ${r.models.join(' ')}`.toLowerCase().includes(s))
       : rows

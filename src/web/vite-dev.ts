@@ -4,15 +4,12 @@ import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse, Server } from 'node:http'
 
-// Minimal slice of Vite's dev server API we use. Vite isn't a CLI dependency;
-// in dev mode we resolve it from web/node_modules at runtime.
 export interface ViteDevServerLike {
   middlewares: (req: IncomingMessage, res: ServerResponse, next: (err?: unknown) => void) => void
   warmupRequest?: (url: string) => Promise<void>
   close: () => Promise<void>
 }
 
-/** dev = running from source via tsx; prod = bundled in dist. Overridable via TOKMON_WEB_MODE. */
 export function isDevMode(): boolean {
   const forced = process.env.TOKMON_WEB_MODE
   if (forced === 'dev') return true
@@ -20,7 +17,6 @@ export function isDevMode(): boolean {
   return import.meta.url.includes('/src/')
 }
 
-/** Locate the web/ source dir (with vite.config.ts) — dev mode serves this via Vite. */
 export function findWebSource(): string | null {
   for (const rel of ['../../web/', '../web/', './web/']) {
     try {
@@ -33,7 +29,6 @@ export function findWebSource(): string | null {
   return null
 }
 
-/** Start Vite in middleware mode against web/ source, sharing the http server for HMR. */
 export async function createViteDevServer(httpServer: Server, log: (m: string) => void): Promise<ViteDevServerLike | null> {
   const root = findWebSource()
   if (!root) { log('  ⚠ dev mode: web/ source not found'); return null }

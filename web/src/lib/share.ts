@@ -7,7 +7,6 @@ interface CaptureOpts {
   backgroundColor?: string
 }
 
-// Ensure the pixel display face is loaded so it embeds in the PNG (no JetBrains fallback).
 async function settle(): Promise<void> {
   try { await document.fonts.ready } catch { /* older browsers */ }
   await new Promise(r => requestAnimationFrame(() => r(null)))

@@ -1,9 +1,6 @@
 import { forwardRef, useEffect, useRef } from 'react'
 import { Watermark } from './watermark'
 
-// Wraps a snapshot of a live panel: clones its already-rendered DOM (charts are
-// static SVG, so no Recharts re-measure), strips the hover chrome ([data-chrome]),
-// and stamps the watermark. The clone means the live panel is never disturbed.
 export const CaptureFrame = forwardRef<HTMLDivElement, {
   node: HTMLElement
   title: string
