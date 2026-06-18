@@ -67,7 +67,7 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
   return (
     <Panel title={`explore · ${granLabel}`} captureName="explore">
       <div className="max-h-[calc(100vh-240px)] overflow-auto">
-        <table className="w-full max-w-[1100px] border-collapse text-xs">
+        <table className="w-full border-collapse text-xs">
           <colgroup>
             <col />
             <col style={{ width: '34%' }} />
