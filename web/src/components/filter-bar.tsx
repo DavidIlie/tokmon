@@ -17,8 +17,11 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
 
   // Only usage providers are filter chips — a billing-only chip would blank every chart.
   const chipProviders = providers.filter(p => usageProviderIds.has(p.id))
-  const billingProviders = providers.filter(p =>
-    !usageProviderIds.has(p.id) && accounts.some(a => a.providerId === p.id && a.hasBilling))
+  const cardProviderIds = new Set(derived.cardAccounts.map(a => a.providerId))
+  const billingProviders = providers.filter(p => !usageProviderIds.has(p.id) && cardProviderIds.has(p.id))
+  const acctOptions = filters.providers.length
+    ? usageAccounts.filter(a => filters.providers.includes(a.providerId))
+    : usageAccounts
 
   const provName = (id: string) => providers.find(p => p.id === id)?.name ?? id
   const acctLabel = (a: { providerId: string; name: string }) =>
@@ -77,7 +80,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
         </div>
 
         <div className="flex w-full flex-wrap items-center gap-2 md:ml-auto md:w-auto">
-          {usageAccounts.length > 1 ? (
+          {acctOptions.length > 1 ? (
             <Dropdown label="account" value={filters.account === 'all' ? 'all' : (selectedAccount ? acctLabel(selectedAccount) : 'all')}>
               {close => (
                 <Menu>
@@ -86,7 +89,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
                   </MenuItem>
                   <div className="my-1 h-px bg-line" />
                   <div className="max-h-64 overflow-y-auto">
-                    {usageAccounts.map(a => (
+                    {acctOptions.map(a => (
                       <MenuItem key={a.id} active={filters.account === a.id} onClick={() => { setFilters(f => ({ ...f, account: a.id })); close() }}>
                         <span style={{ color: a.color }} aria-hidden>●</span> <span className="truncate">{acctLabel(a)}</span>
                       </MenuItem>
@@ -95,9 +98,9 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
                 </Menu>
               )}
             </Dropdown>
-          ) : usageAccounts.length === 1 ? (
+          ) : acctOptions.length === 1 ? (
             <span className="rounded border border-line bg-bg-1 px-2 py-1 text-xs text-fg-dim">
-              account: <span className="text-fg">{acctLabel(usageAccounts[0])}</span>
+              account: <span className="text-fg">{acctLabel(acctOptions[0])}</span>
             </span>
           ) : null}
 

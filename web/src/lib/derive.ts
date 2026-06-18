@@ -120,7 +120,7 @@ function selectCardAccounts(snap: WebSnapshot, f: Filters): WebAccount[] {
   return snap.accounts.filter(a => {
     if (!a.hasUsage && !hasBillingSignal(a)) return false
     if (f.account !== 'all' && a.id !== f.account) return false
-    if (provFilter && a.hasUsage && !provFilter.has(a.providerId)) return false
+    if (provFilter && !provFilter.has(a.providerId)) return false
     return true
   })
 }
