@@ -1,5 +1,6 @@
 import type { WebSnapshot, WebAccount, TableRow } from '@shared'
 import { modelColor } from './colors'
+import { DAY, fmtDay, parseDay, weekStartStr } from './date'
 
 export type PeriodKey = '7d' | '30d' | '90d' | 'mtd' | 'all'
 export type Granularity = 'daily' | 'weekly' | 'monthly'
@@ -27,17 +28,6 @@ export const PERIODS: { key: PeriodKey; label: string }[] = [
   { key: 'all', label: 'all time' },
 ]
 
-const DAY = 86_400_000
-const parseDay = (label: string): number => {
-  const [y, m, d] = label.split('-').map(Number)
-  return Date.UTC(y, (m || 1) - 1, d || 1)
-}
-const fmtDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10)
-const weekStartStr = (label: string): string => {
-  const ms = parseDay(label)
-  const dow = (new Date(ms).getUTCDay() + 6) % 7
-  return fmtDay(ms - dow * DAY)
-}
 
 export interface Totals {
   cost: number
@@ -377,6 +367,15 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
   }
 }
 
+// Sum a (filtered) per-model breakdown into one totals object.
+function sumBreakdown(rows: TableRow['breakdown']) {
+  return rows.reduce((agg, m) => {
+    agg.input += m.input; agg.output += m.output; agg.cacheCreate += m.cacheCreate
+    agg.cacheRead += m.cacheRead; agg.cacheSavings += m.cacheSavings; agg.cost += m.cost; agg.count += m.count
+    return agg
+  }, { input: 0, output: 0, cacheCreate: 0, cacheRead: 0, cacheSavings: 0, cost: 0, count: 0 })
+}
+
 export function exploreRows(snap: WebSnapshot | null, f: Filters, gran: Granularity): TableRow[] {
   if (!snap) return []
   const accounts = selectAccounts(snap, f)
@@ -395,12 +394,7 @@ export function exploreRows(snap: WebSnapshot | null, f: Filters, gran: Granular
       const bd = modelSet ? row.breakdown.filter(m => modelSet.has(m.name)) : row.breakdown
       if (modelSet && bd.length === 0) continue
       const ex = byLabel.get(row.label)
-      const recompute = (rows: typeof bd) => rows.reduce((agg, m) => {
-        agg.input += m.input; agg.output += m.output; agg.cacheCreate += m.cacheCreate
-        agg.cacheRead += m.cacheRead; agg.cacheSavings += m.cacheSavings; agg.cost += m.cost; agg.count += m.count
-        return agg
-      }, { input: 0, output: 0, cacheCreate: 0, cacheRead: 0, cacheSavings: 0, cost: 0, count: 0 })
-      const sums = recompute(bd)
+      const sums = sumBreakdown(bd)
       if (!ex) {
         byLabel.set(row.label, {
           label: row.label,

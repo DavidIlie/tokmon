@@ -1,3 +1,5 @@
+import { MONTHS } from './date'
+
 export function fmtCost(n: number, opts: { sign?: boolean } = {}): string {
   if (!Number.isFinite(n)) return '$0.00'
   const sign = opts.sign && n > 0 ? '+' : ''
@@ -59,7 +61,6 @@ export function fmtAgo(ms: number, now: number): string {
   return `${Math.round(h / 24)}d ago`
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 export function fmtDayLabel(label: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(label)
   if (m) return `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}`

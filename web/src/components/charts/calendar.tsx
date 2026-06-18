@@ -3,15 +3,7 @@ import type { CalendarDay, Derived } from '../../lib/derive'
 import { fmtCost, fmtDayLabel, fmtNum, fmtTokens } from '../../lib/format'
 import { modelColor, shortModel } from '../../lib/colors'
 import { Panel, StatBlock } from '../ui'
-
-const DAY = 86_400_000
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-// UTC-safe date helpers — avoids local-timezone shifts on parsed date strings.
-const parseDate = (s: string) => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d) }
-const fmtDate = (ms: number) => new Date(ms).toISOString().slice(0, 10)
-// Monday = 0, Sunday = 6 (ISO week order for the grid rows).
-const dowMonday = (ms: number) => (new Date(ms).getUTCDay() + 6) % 7
+import { DAY, MONTHS, dowMonday, fmtDay as fmtDate, parseDay as parseDate } from '../../lib/date'
 
 const HEAT_OPACITY = [0, 0.32, 0.55, 0.78, 1]
 const heatFill = (level: number) => {
