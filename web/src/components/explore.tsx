@@ -1,113 +1,133 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import type { TableRow } from '@shared'
+import {
+  createColumnHelper, flexRender, getCoreRowModel, getExpandedRowModel,
+  getFilteredRowModel, getSortedRowModel, useReactTable,
+  type ColumnDef, type ExpandedState, type SortingState,
+} from '@tanstack/react-table'
 import { fmtCost, fmtCount, fmtDayLabel, fmtNum, fmtTokens } from '../lib/format'
 import { modelColor, shortModel } from '../lib/colors'
 import { Panel } from './ui'
 
-type SortKey = 'label' | 'cost' | 'total' | 'count' | 'cacheSavings'
-type Dir = 'asc' | 'desc'
+type Meta = { align?: 'right'; hiddenSm?: boolean }
+const col = createColumnHelper<TableRow>()
+const dash = <span className="text-fg-faint">—</span>
+const haystack = (r: TableRow) =>
+  `${fmtDayLabel(r.label)} ${r.label} ${r.models.map(shortModel).join(' ')} ${r.models.join(' ')}`.toLowerCase()
 
-function SortHeader({ sortKey, label, align = 'text-right', sort, dir, onSort }: {
-  sortKey: SortKey
-  label: string
-  align?: string
-  sort: SortKey
-  dir: Dir
-  onSort: (key: SortKey) => void
-}) {
-  return (
-    <button
-      onClick={() => onSort(sortKey)}
-      className={`flex w-full items-center gap-1 ${align === 'text-right' ? 'justify-end' : ''} text-fg-faint transition hover:text-fg`}
-    >
-      {label}
-      {sort === sortKey && <span className="text-accent">{dir === 'asc' ? '▲' : '▼'}</span>}
-    </button>
-  )
+function useColumns(dateLabel: string): ColumnDef<TableRow, any>[] {
+  return useMemo(() => [
+    col.accessor('label', {
+      header: dateLabel,
+      cell: info => (
+        <button
+          type="button"
+          aria-expanded={info.row.getIsExpanded()}
+          onClick={e => { e.stopPropagation(); info.row.toggleExpanded() }}
+          className="flex items-center gap-1 rounded text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          <span aria-hidden className={info.row.getIsExpanded() ? 'text-accent' : 'text-fg-faint'}>{info.row.getIsExpanded() ? '▾' : '▸'}</span>
+          <span className="text-fg">{fmtDayLabel(info.getValue() as string)}</span>
+        </button>
+      ),
+    }),
+    col.display({ id: 'models', header: 'models', cell: info => <span className="line-clamp-1 text-fg-dim">{info.row.original.models.map(shortModel).join(', ')}</span> }),
+    col.accessor('total', { header: 'tokens', meta: { align: 'right' } satisfies Meta, cell: info => (info.getValue() as number) > 0 ? <span className="text-fg">{fmtTokens(info.getValue() as number)}</span> : dash }),
+    col.accessor('cacheSavings', { header: 'saved', meta: { align: 'right', hiddenSm: true } satisfies Meta, cell: info => <span className="text-positive">{fmtCost(info.getValue() as number)}</span> }),
+    col.accessor('count', { header: 'calls', meta: { align: 'right', hiddenSm: true } satisfies Meta, cell: info => <span className="text-fg-dim">{fmtCount(info.getValue() as number)}</span> }),
+    col.accessor('cost', { header: 'cost', meta: { align: 'right' } satisfies Meta, cell: info => <span className="text-cost">{fmtCost(info.getValue() as number)}</span> }),
+  ], [dateLabel])
 }
 
+const cellPad = (meta: Meta | undefined) => `py-2 pr-3${meta?.align === 'right' ? ' text-right' : ''}${meta?.hiddenSm ? ' hidden sm:table-cell' : ''}`
+
 export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLabel: string; q: string }) {
-  const [sort, setSort] = useState<SortKey>('label')
-  const [dir, setDir] = useState<Dir>('desc')
-  const [open, setOpen] = useState<Set<string>>(new Set())
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'label', desc: true }])
+  const [expanded, setExpanded] = useState<ExpandedState>({})
+  const dateColLabel = granLabel === 'monthly' ? 'month' : granLabel === 'weekly' ? 'week' : 'date'
+  const columns = useColumns(dateColLabel)
 
-  const handleSort = (key: SortKey) => {
-    if (sort === key) setDir(d => d === 'asc' ? 'desc' : 'asc')
-    else { setSort(key); setDir('desc') }
-  }
-
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase()
-    const base = s
-      ? rows.filter(r => `${fmtDayLabel(r.label)} ${r.label} ${r.models.map(shortModel).join(' ')} ${r.models.join(' ')}`.toLowerCase().includes(s))
-      : rows
-    return [...base].sort((a, b) => {
-      const av = sort === 'label' ? a.label : a[sort]
-      const bv = sort === 'label' ? b.label : b[sort]
-      const cmp = typeof av === 'string' ? av.localeCompare(bv as string) : (av as number) - (bv as number)
-      return dir === 'asc' ? cmp : -cmp
-    })
-  }, [rows, q, sort, dir])
-
-  const totals = useMemo(() => filtered.reduce((t, r) => ({
-    total: t.total + r.total,
-    cost: t.cost + r.cost,
-    cacheSavings: t.cacheSavings + r.cacheSavings,
-    count: t.count + r.count,
-  }), { total: 0, cost: 0, cacheSavings: 0, count: 0 }), [filtered])
-
-  const handleToggleOpen = (label: string) => setOpen(prev => {
-    const next = new Set(prev)
-    next.has(label) ? next.delete(label) : next.add(label)
-    return next
+  const table = useReactTable({
+    data: rows,
+    columns,
+    state: { sorting, expanded, globalFilter: q },
+    onSortingChange: setSorting,
+    onExpandedChange: setExpanded,
+    getRowCanExpand: () => true,
+    globalFilterFn: (row, _id, filter) => !String(filter).trim() || haystack(row.original).includes(String(filter).trim().toLowerCase()),
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
   })
 
-  const dateColLabel = granLabel === 'monthly' ? 'month' : granLabel === 'weekly' ? 'week' : 'date'
+  const visible = table.getRowModel().rows
+  const totals = useMemo(() => visible.reduce((t, r) => ({
+    total: t.total + r.original.total, cost: t.cost + r.original.cost,
+    cacheSavings: t.cacheSavings + r.original.cacheSavings, count: t.count + r.original.count,
+  }), { total: 0, cost: 0, cacheSavings: 0, count: 0 }), [visible])
 
   return (
     <Panel title={`explore · ${granLabel}`} captureName="explore">
       <div className="max-h-[calc(100vh-240px)] overflow-auto">
         <table className="w-full border-collapse text-xs">
           <colgroup>
-            <col />
-            <col style={{ width: '34%' }} />
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '12%' }} />
-            <col style={{ width: '11%' }} />
-            <col style={{ width: '13%' }} />
+            <col /><col style={{ width: '34%' }} /><col style={{ width: '13%' }} />
+            <col style={{ width: '12%' }} /><col style={{ width: '11%' }} /><col style={{ width: '13%' }} />
           </colgroup>
           <thead>
             <tr className="sticky top-0 z-10 bg-bg-1 text-[11px] shadow-[inset_0_-1px_0_var(--color-line)]">
-              <th className="py-2 pr-3 text-left font-normal">
-                <SortHeader sortKey="label" label={dateColLabel} align="text-left" sort={sort} dir={dir} onSort={handleSort} />
-              </th>
-              <th className="py-2 pr-3 text-left font-normal text-fg-faint">models</th>
-              <th className="py-2 pr-3 font-normal">
-                <SortHeader sortKey="total" label="tokens" sort={sort} dir={dir} onSort={handleSort} />
-              </th>
-              <th className="hidden py-2 pr-3 font-normal sm:table-cell">
-                <SortHeader sortKey="cacheSavings" label="saved" sort={sort} dir={dir} onSort={handleSort} />
-              </th>
-              <th className="hidden py-2 pr-3 font-normal sm:table-cell">
-                <SortHeader sortKey="count" label="calls" sort={sort} dir={dir} onSort={handleSort} />
-              </th>
-              <th className="py-2 font-normal">
-                <SortHeader sortKey="cost" label="cost" sort={sort} dir={dir} onSort={handleSort} />
-              </th>
+              {table.getHeaderGroups()[0].headers.map(h => {
+                const meta = h.column.columnDef.meta as Meta | undefined
+                const sorted = h.column.getIsSorted()
+                return (
+                  <th key={h.id} className={`py-2 pr-3 font-normal ${meta?.align === 'right' ? 'text-right' : 'text-left'}${meta?.hiddenSm ? ' hidden sm:table-cell' : ''}`}>
+                    {h.column.getCanSort() ? (
+                      <button onClick={h.column.getToggleSortingHandler()} className={`flex w-full items-center gap-1 text-fg-faint transition hover:text-fg ${meta?.align === 'right' ? 'justify-end' : ''}`}>
+                        {flexRender(h.column.columnDef.header, h.getContext())}
+                        {sorted && <span className="text-accent">{sorted === 'asc' ? '▲' : '▼'}</span>}
+                      </button>
+                    ) : <span className="text-fg-faint">{flexRender(h.column.columnDef.header, h.getContext())}</span>}
+                  </th>
+                )
+              })}
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && (
+            {visible.length === 0 && (
               <tr><td colSpan={6} className="py-8 text-center text-fg-faint">{q.trim() ? `no rows match “${q.trim()}”` : 'no usage in this range'}</td></tr>
             )}
-            {filtered.map(r => (
-              <FragmentRow key={r.label} row={r} isOpen={open.has(r.label)} onToggle={() => handleToggleOpen(r.label)} />
+            {visible.map(row => (
+              <Fragment key={row.id}>
+                <tr className="cursor-pointer border-b border-line-faint transition hover:bg-bg-2/60" onClick={() => row.toggleExpanded()}>
+                  {row.getVisibleCells().map(cell => (
+                    <td key={cell.id} className={`${cellPad(cell.column.columnDef.meta as Meta | undefined)}${cell.column.id === 'label' ? ' whitespace-nowrap' : ''} tnum`}>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  ))}
+                </tr>
+                {row.getIsExpanded() && row.original.breakdown.map(m => {
+                  const tok = m.input + m.output + m.cacheCreate + m.cacheRead
+                  return (
+                    <tr key={m.name} className="border-b border-line-faint bg-bg-0/40 text-[11px]">
+                      <td className="py-1.5 pr-3 pl-5 text-fg-dim" colSpan={2}>
+                        <span className="mr-1.5 inline-block size-1.5 rounded-full align-middle" style={{ background: modelColor(m.name) }} />
+                        {shortModel(m.name)}
+                      </td>
+                      <td className="tnum py-1.5 pr-3 text-right text-fg-dim">{tok > 0 ? fmtTokens(tok) : dash}</td>
+                      <td className="tnum hidden py-1.5 pr-3 text-right text-positive/80 sm:table-cell">{fmtCost(m.cacheSavings)}</td>
+                      <td className="tnum hidden py-1.5 pr-3 text-right text-fg-faint sm:table-cell">{fmtNum(m.count)}</td>
+                      <td className="tnum py-1.5 text-right text-cost/90">{fmtCost(m.cost)}</td>
+                    </tr>
+                  )
+                })}
+              </Fragment>
             ))}
           </tbody>
-          {filtered.length > 0 && (
+          {visible.length > 0 && (
             <tfoot>
               <tr className="sticky bottom-0 z-10 bg-bg-1 text-fg shadow-[inset_0_1px_0_var(--color-line)]">
-                <td className="py-2 pr-3 font-display text-[11px] uppercase text-fg-dim" colSpan={2}>total · {filtered.length}</td>
+                <td className="py-2 pr-3 font-display text-[11px] uppercase text-fg-dim" colSpan={2}>total · {visible.length}</td>
                 <td className="tnum py-2 pr-3 text-right">{fmtTokens(totals.total)}</td>
                 <td className="tnum hidden py-2 pr-3 text-right text-positive sm:table-cell">{fmtCost(totals.cacheSavings)}</td>
                 <td className="tnum hidden py-2 pr-3 text-right sm:table-cell">{fmtCount(totals.count)}</td>
@@ -118,47 +138,5 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
         </table>
       </div>
     </Panel>
-  )
-}
-
-function FragmentRow({ row, isOpen, onToggle }: { row: TableRow; isOpen: boolean; onToggle: () => void }) {
-  return (
-    <>
-      <tr
-        className="cursor-pointer border-b border-line-faint transition hover:bg-bg-2/60"
-        onClick={onToggle}
-      >
-        <td className="whitespace-nowrap py-2 pr-3">
-          <button
-            type="button"
-            aria-expanded={isOpen}
-            onClick={e => { e.stopPropagation(); onToggle() }}
-            className="flex items-center gap-1 rounded text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          >
-            <span aria-hidden className={isOpen ? 'text-accent' : 'text-fg-faint'}>{isOpen ? '▾' : '▸'}</span>
-            <span className="text-fg">{fmtDayLabel(row.label)}</span>
-          </button>
-        </td>
-        <td className="py-2 pr-3 text-fg-dim">
-          <span className="line-clamp-1">{row.models.map(shortModel).join(', ')}</span>
-        </td>
-        <td className="tnum py-2 pr-3 text-right text-fg">{row.total > 0 ? fmtTokens(row.total) : <span className="text-fg-faint">—</span>}</td>
-        <td className="tnum hidden py-2 pr-3 text-right text-positive sm:table-cell">{fmtCost(row.cacheSavings)}</td>
-        <td className="tnum hidden py-2 pr-3 text-right text-fg-dim sm:table-cell">{fmtCount(row.count)}</td>
-        <td className="tnum py-2 text-right text-cost">{fmtCost(row.cost)}</td>
-      </tr>
-      {isOpen && row.breakdown.map(m => (
-        <tr key={m.name} className="border-b border-line-faint bg-bg-0/40 text-[11px]">
-          <td className="py-1.5 pr-3 pl-5 text-fg-dim" colSpan={2}>
-            <span className="mr-1.5 inline-block size-1.5 rounded-full align-middle" style={{ background: modelColor(m.name) }} />
-            {shortModel(m.name)}
-          </td>
-          <td className="tnum py-1.5 pr-3 text-right text-fg-dim">{(m.input + m.output + m.cacheCreate + m.cacheRead) > 0 ? fmtTokens(m.input + m.output + m.cacheCreate + m.cacheRead) : <span className="text-fg-faint">—</span>}</td>
-          <td className="tnum hidden py-1.5 pr-3 text-right text-positive/80 sm:table-cell">{fmtCost(m.cacheSavings)}</td>
-          <td className="tnum hidden py-1.5 pr-3 text-right text-fg-faint sm:table-cell">{fmtNum(m.count)}</td>
-          <td className="tnum py-1.5 text-right text-cost/90">{fmtCost(m.cost)}</td>
-        </tr>
-      ))}
-    </>
   )
 }
