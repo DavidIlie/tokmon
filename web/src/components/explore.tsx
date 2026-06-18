@@ -83,7 +83,7 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
                 return (
                   <th key={h.id} className={`py-2 pr-3 font-normal ${meta?.align === 'right' ? 'text-right' : 'text-left'}${meta?.hiddenSm ? ' hidden sm:table-cell' : ''}`}>
                     {h.column.getCanSort() ? (
-                      <button onClick={h.column.getToggleSortingHandler()} className={`flex w-full items-center gap-1 text-fg-faint transition hover:text-fg ${meta?.align === 'right' ? 'justify-end' : ''}`}>
+                      <button type="button" onClick={h.column.getToggleSortingHandler()} className={`flex w-full items-center gap-1 text-fg-faint transition hover:text-fg ${meta?.align === 'right' ? 'justify-end' : ''}`}>
                         {flexRender(h.column.columnDef.header, h.getContext())}
                         {sorted && <span className="text-accent">{sorted === 'asc' ? '▲' : '▼'}</span>}
                       </button>

@@ -58,6 +58,7 @@ function useTheme(): ['dark' | 'light', () => void] {
 function ThemeToggle({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: () => void }) {
   return (
     <button
+      type="button"
       onClick={onToggle}
       title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
       aria-label="Toggle theme"

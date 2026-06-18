@@ -86,7 +86,7 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
     >
       <div ref={panelRef} className="dialog-pop relative flex max-h-[88vh] w-full max-w-[720px] flex-col overflow-hidden rounded-md border border-line-2 bg-bg-1">
         <div className="pointer-events-none absolute left-3 top-2 font-display text-[11px] uppercase tracking-wider text-fg-dim">share</div>
-        <button onClick={onClose} aria-label="Close" className="absolute right-2 top-2 z-10 rounded p-1 text-fg-faint transition hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
+        <button type="button" onClick={onClose} aria-label="Close" className="absolute right-2 top-2 z-10 rounded p-1 text-fg-faint transition hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
           <X className="size-4" />
         </button>
 
@@ -125,10 +125,10 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-3">
-          <button onClick={onCopy} className="flex items-center gap-1.5 rounded border border-line bg-bg-1 px-3 py-1.5 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
+          <button type="button" onClick={onCopy} className="flex items-center gap-1.5 rounded border border-line bg-bg-1 px-3 py-1.5 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
             {done === 'copy' ? <Check className="size-3.5 text-positive" /> : done === 'fail' ? <X className="size-3.5 text-warning" /> : <Copy className="size-3.5" />} {done === 'copy' ? 'copied' : done === 'fail' ? 'copy failed' : 'copy'}
           </button>
-          <button ref={dlRef} onClick={onDownload} className="flex items-center gap-1.5 rounded border border-accent/60 bg-bg-1 px-3 py-1.5 text-xs text-accent transition hover:bg-bg-2 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
+          <button type="button" ref={dlRef} onClick={onDownload} className="flex items-center gap-1.5 rounded border border-accent/60 bg-bg-1 px-3 py-1.5 text-xs text-accent transition hover:bg-bg-2 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
             {done === 'dl' ? <Check className="size-3.5 text-positive" /> : <Download className="size-3.5" />} download PNG
           </button>
         </div>

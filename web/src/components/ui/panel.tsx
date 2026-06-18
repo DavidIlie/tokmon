@@ -40,6 +40,7 @@ export function CaptureButton({ getNode, name }: { getNode: () => HTMLElement | 
   const openShare = useShare()
   return (
     <button
+      type="button"
       title="Share this panel"
       aria-label="Share this panel as an image"
       onClick={() => { const node = getNode(); if (node) openShare({ kind: 'panel', node, captureName: name }) }}
