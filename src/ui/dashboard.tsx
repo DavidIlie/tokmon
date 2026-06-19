@@ -11,7 +11,7 @@ type Item = { account: Account; s: AccountStats | undefined }
 
 const GAP = 2
 const MIN_CARD = 56
-const MIN_CARD_DENSE = 44
+const MIN_CARD_DENSE = 50
 const CARD_H = { full: 14, compact: 12, mini: 8 } as const
 export type Variant = keyof typeof CARD_H
 const VARIANT_ORDER: Variant[] = ['full', 'compact', 'mini']
@@ -194,11 +194,11 @@ function SummaryRow({ label, s }: { label: string; s: UsageSummary }) {
   const cachedPct = s.tokens > 0 ? Math.round((s.cacheRead / s.tokens) * 100) : 0
   return (
     <Box>
-      <Box width={11}><Text dimColor>{label}</Text></Box>
-      <Box width={11} justifyContent="flex-end"><Text bold color="yellow">{fmt.currency(s.cost)}</Text></Box>
-      <Box width={13} justifyContent="flex-end"><Text dimColor>{fmt.tokens(s.tokens)} tok</Text></Box>
+      <Box width={11} flexShrink={0}><Text dimColor wrap="truncate">{label}</Text></Box>
+      <Box width={11} flexShrink={0} justifyContent="flex-end"><Text bold color="yellow" wrap="truncate">{fmt.currency(s.cost)}</Text></Box>
+      <Box width={13} flexShrink={0} justifyContent="flex-end"><Text dimColor wrap="truncate">{fmt.tokens(s.tokens)} tok</Text></Box>
       <Box flexGrow={1} justifyContent="flex-end">
-        {cachedPct > 0 ? <Text dimColor>{cachedPct}% cached</Text> : <Text> </Text>}
+        {cachedPct > 0 ? <Text dimColor wrap="truncate">{cachedPct}% cached</Text> : <Text> </Text>}
       </Box>
     </Box>
   )
