@@ -101,6 +101,38 @@ function applyStartup(c: Config, cliInterval?: number): Config {
   return c
 }
 
+// Debounced terminal size: report a settled size (so the expensive layout only
+// recomputes once a drag-resize stops, not on every SIGWINCH), and expose `resizing`
+// so a lightweight overlay can show during the drag instead of a thrashing relayout.
+function useTerminalSize(settleMs = 90): { cols: number; rows: number; resizing: boolean } {
+  const { stdout } = useStdout()
+  const [size, setSize] = useState(() => ({ cols: stdout?.columns ?? 80, rows: stdout?.rows ?? 24 }))
+  const [resizing, setResizing] = useState(false)
+  useEffect(() => {
+    if (!stdout) return
+    let t: ReturnType<typeof setTimeout> | undefined
+    const settle = () => {
+      setSize({ cols: stdout.columns ?? 80, rows: stdout.rows ?? 24 })
+      setResizing(false)
+    }
+    const onResize = () => { setResizing(true); if (t) clearTimeout(t); t = setTimeout(settle, settleMs) }
+    stdout.on('resize', onResize)
+    return () => { if (t) clearTimeout(t); stdout.off('resize', onResize) }
+  }, [stdout, settleMs])
+  return { cols: size.cols, rows: size.rows, resizing }
+}
+
+function ResizingView() {
+  const { stdout } = useStdout()
+  const cols = stdout?.columns ?? 80
+  const rows = stdout?.rows ?? 24
+  return (
+    <Box width={cols} height={rows} alignItems="center" justifyContent="center">
+      <Text dimColor>{glyphs().dotSel} resizing… <Text color="greenBright">{cols}</Text>×<Text color="greenBright">{rows}</Text></Text>
+    </Box>
+  )
+}
+
 export function App({ interval: cliInterval, initialConfig }: { interval?: number; initialConfig?: Config }) {
   const [config, setConfig] = useState<Config | null>(() => initialConfig ? applyStartup(initialConfig, cliInterval) : null)
   const [detected, setDetected] = useState<ProviderId[]>([])
@@ -132,10 +164,8 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
   const [loaderShownAt, setLoaderShownAt] = useState<number | null>(null)
   const loaderDone = useRef(false)
   const prevShowPicker = useRef(false)
-  const { stdout } = useStdout()
   const { exit } = useApp()
-  const rows = stdout?.rows ?? 24
-  const cols = stdout?.columns ?? 80
+  const { cols, rows, resizing } = useTerminalSize()
 
   const webRef = useRef<WebServerController | null>(null)
   const webBusyRef = useRef(false)
@@ -731,6 +761,10 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
 
   if (error) return <Box padding={1}><Text color="red">{error}</Text></Box>
   if (!config) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
+
+  // While a drag-resize is in flight, render a minimal overlay sized to the LIVE terminal
+  // (the layout below uses the debounced size, which is briefly stale mid-drag).
+  if (resizing) return <ResizingView />
 
   if (showPicker) {
     return (
