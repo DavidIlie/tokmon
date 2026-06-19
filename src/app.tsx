@@ -104,28 +104,32 @@ function applyStartup(c: Config, cliInterval?: number): Config {
 // Debounced terminal size: report a settled size (so the expensive layout only
 // recomputes once a drag-resize stops, not on every SIGWINCH), and expose `resizing`
 // so a lightweight overlay can show during the drag instead of a thrashing relayout.
-function useTerminalSize(settleMs = 90): { cols: number; rows: number; resizing: boolean } {
+interface TermSize { cols: number; rows: number; resizing: boolean; live: { cols: number; rows: number } }
+function useTerminalSize(settleMs = 90): TermSize {
   const { stdout } = useStdout()
-  const [size, setSize] = useState(() => ({ cols: stdout?.columns ?? 80, rows: stdout?.rows ?? 24 }))
+  // `|| 80` (not `??`): a non-TTY/piped stdout can report columns/rows of 0 or undefined.
+  const read = () => ({ cols: stdout?.columns || 80, rows: stdout?.rows || 24 })
+  const [size, setSize] = useState(read)
+  const [live, setLive] = useState(read)
   const [resizing, setResizing] = useState(false)
   useEffect(() => {
     if (!stdout) return
     let t: ReturnType<typeof setTimeout> | undefined
-    const settle = () => {
-      setSize({ cols: stdout.columns ?? 80, rows: stdout.rows ?? 24 })
-      setResizing(false)
+    const now = () => ({ cols: stdout.columns || 80, rows: stdout.rows || 24 })
+    const settle = () => { setSize(now()); setResizing(false) }
+    const onResize = () => {
+      setLive(now())
+      setResizing(true)
+      if (t) clearTimeout(t)
+      t = setTimeout(settle, settleMs)
     }
-    const onResize = () => { setResizing(true); if (t) clearTimeout(t); t = setTimeout(settle, settleMs) }
     stdout.on('resize', onResize)
     return () => { if (t) clearTimeout(t); stdout.off('resize', onResize) }
   }, [stdout, settleMs])
-  return { cols: size.cols, rows: size.rows, resizing }
+  return { cols: size.cols, rows: size.rows, resizing, live }
 }
 
-function ResizingView() {
-  const { stdout } = useStdout()
-  const cols = stdout?.columns ?? 80
-  const rows = stdout?.rows ?? 24
+function ResizingView({ cols, rows }: { cols: number; rows: number }) {
   return (
     <Box width={cols} height={rows} alignItems="center" justifyContent="center">
       <Text dimColor>{glyphs().dotSel} resizing… <Text color="greenBright">{cols}</Text>×<Text color="greenBright">{rows}</Text></Text>
@@ -165,7 +169,7 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
   const loaderDone = useRef(false)
   const prevShowPicker = useRef(false)
   const { exit } = useApp()
-  const { cols, rows, resizing } = useTerminalSize()
+  const { cols, rows, resizing, live } = useTerminalSize()
 
   const webRef = useRef<WebServerController | null>(null)
   const webBusyRef = useRef(false)
@@ -212,10 +216,10 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
   const headerRows = cols < 70 ? 2 : 1
   const CHROME = 2 + headerRows + 3 + (hasStrip ? 1 + stripLines : 0) + 2 + 2
   const gridBudget = Math.max(1, rows - CHROME)
-  const dashLayout = chooseLayout(
+  const dashLayout = useMemo(() => chooseLayout(
     Math.max(56, cols - 4), gridBudget, groups.length,
     focusId !== null || cfg.dashboardLayout === 'single', cols,
-  )
+  ), [cols, gridBudget, groups.length, focusId, cfg.dashboardLayout])
   const dashPageCount = dashLayout.pageCount
   const dashPaginated = dashPageCount > 1
   dashPageCountRef.current = dashPageCount
@@ -764,7 +768,7 @@ export function App({ interval: cliInterval, initialConfig }: { interval?: numbe
 
   // While a drag-resize is in flight, render a minimal overlay sized to the LIVE terminal
   // (the layout below uses the debounced size, which is briefly stale mid-drag).
-  if (resizing) return <ResizingView />
+  if (resizing) return <ResizingView cols={live.cols} rows={live.rows} />
 
   if (showPicker) {
     return (
