@@ -1,10 +1,4 @@
 import { EventEmitter } from 'node:events'
-import { render } from 'ink'
-import { MouseProvider } from '@zenobius/ink-mouse'
-import { loadConfig } from './config'
-import { flushDisk } from './providers/usage-core'
-import { resolveGlyphs, setGlyphs } from './glyphs'
-import { App } from './app'
 
 process.on('unhandledRejection', () => {})
 
@@ -20,9 +14,19 @@ process.emitWarning = ((warning: string | Error, ...rest: unknown[]) => {
 const args = process.argv.slice(2)
 
 const subcommand = args[0]?.toLowerCase()
+
+// Ephemeral daemon child: spawned + supervised by the TUI. Emits a one-line
+// JSON handshake on stdout, opens no browser, dies with the parent. MUST be
+// handled before any TTY/glyph setup so the handshake is the first stdout line.
+if (subcommand === '__daemon') {
+  const { runDaemon } = await import('./web/daemon')
+  await runDaemon(args.slice(1), { foreground: false })
+  process.exit(typeof process.exitCode === 'number' ? process.exitCode : 0)
+}
+
 if (subcommand === 'serve' || subcommand === 'web') {
-  const { startWeb } = await import('./web/index')
-  await startWeb(args.slice(1))
+  const { runDaemon } = await import('./web/daemon')
+  await runDaemon(args.slice(1), { foreground: true })
   process.exit(typeof process.exitCode === 'number' ? process.exitCode : 0)
 }
 
@@ -59,14 +63,13 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
+const { loadConfig } = await import('./config')
+const { resolveGlyphs, setGlyphs } = await import('./glyphs')
+const { attachOrSpawn } = await import('./client/daemon-handle')
+
 const config = await loadConfig()
 
-const altScreen = config.clearScreen && process.stdout.isTTY === true
-const leaveAltScreen = () => { try { process.stdout.write('\x1B[?1049l') } catch {} }
-if (altScreen) {
-  process.stdout.write('\x1B[?1049h\x1B[H')
-  process.once('exit', leaveAltScreen)
-}
+const isTTY = process.stdout.isTTY === true
 
 setGlyphs(resolveGlyphs({
   flag: asciiFlag,
@@ -76,9 +79,15 @@ setGlyphs(resolveGlyphs({
   platform: process.platform,
 }))
 
-const { waitUntilExit } = render(<MouseProvider><App interval={interval} initialConfig={config} /></MouseProvider>)
-await waitUntilExit()
+// Spawn the TUI's private ephemeral daemon BEFORE first render. The daemon is
+// the sole refresh-loop runner / flushDisk + cache writer; the TUI is a thin
+// WS-RPC client of it. If the spawn/handshake fails within ~3s, attachOrSpawn
+// resolves DEGRADED (baseUrl=null) and the TUI runs its in-process loops behind
+// `if (mode === 'degraded')`. Never blocks the user.
+// The daemon loads config (incl. interval) from disk itself; nothing is
+// forwarded on the wire here.
+const daemon = await attachOrSpawn()
+const mode = daemon.kind === 'spawned' ? 'connected' : 'degraded'
 
-await flushDisk()
-
-if (altScreen) leaveAltScreen()
+const { bootstrapInk } = await import('./bootstrap-ink')
+await bootstrapInk({ interval, config, daemon, mode })

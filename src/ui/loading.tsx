@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { Box, Text } from 'ink'
 import { PROVIDERS, type ProviderId, type Account } from '../providers'
 import type { DashboardData } from '../types'
+import type { BillingResult } from '../providers/types'
+import type { AccountFetchState } from '../web/contract'
 import type { AccountStats } from '../stats'
 import { glyphs } from '../glyphs'
 import * as fmt from '../format'
@@ -9,13 +11,40 @@ import { truncateName, metricValueText } from './shared'
 
 type Group = { provider: ProviderId; accounts: Account[] }
 
-export function accountReady(s: AccountStats | undefined, providerId: ProviderId): boolean {
+// Source-agnostic readiness input. The daemon path passes a WebAccount's
+// {summaryState, billingState, billing}; the in-process (degraded) path
+// synthesizes the same shape from presence via statsReadyInput() below. Keeping
+// accountReady on this shape (not AccountStats) makes the S6 switch a one-line
+// input swap and resolves the dashboard===null ambiguity: 'ready' is driven by
+// the fetch state map, not by whether dashboard happens to be non-null.
+export interface ReadyInput {
+  summaryState: AccountFetchState
+  billingState: AccountFetchState
+  billing: BillingResult | null
+}
+
+export function accountReady(s: ReadyInput | undefined, providerId: ProviderId): boolean {
   if (!s) return false
   const p = PROVIDERS[providerId]
-  if (p.hasBilling && s.billing?.error) return true   // errored → settled
-  if (p.hasUsage && !s.dashboard) return false
-  if (p.hasBilling && !s.billing) return false
+  // An errored billing fetch is settled (the row stops spinning, shows the
+  // error). Mirror the old behavior so a billing-only provider that errors
+  // doesn't hang the loader.
+  if (p.hasBilling && (s.billingState === 'error' || s.billing?.error)) return true
+  if (p.hasUsage && s.summaryState !== 'ready' && s.summaryState !== 'error') return false
+  if (p.hasBilling && s.billingState !== 'ready' && s.billingState !== 'error') return false
   return true
+}
+
+// Adapter for the in-process/degraded path, which holds AccountStats (no state
+// maps). Presence stands in for 'ready' exactly as the old accountReady did;
+// a billing.error is surfaced as billingState 'error'.
+export function statsReadyInput(s: AccountStats | undefined): ReadyInput | undefined {
+  if (!s) return undefined
+  return {
+    summaryState: s.dashboard ? 'ready' : 'pending',
+    billingState: s.billing?.error ? 'error' : s.billing ? 'ready' : 'pending',
+    billing: s.billing,
+  }
 }
 
 function groupTodayCost(items: (AccountStats | undefined)[]): number {
@@ -38,12 +67,18 @@ function headlineFor(group: Group, items: (AccountStats | undefined)[]): string 
 
 const STAGGER_FRAMES = 2   // ~160ms between row reveals at the 80ms tick
 
-export function LoadingView({ groups, stats, cols, rows }: {
+export function LoadingView({ groups, stats, cols, rows, readyInput }: {
   groups: Group[]
   stats: Map<string, AccountStats>
   cols: number
   rows: number
+  // Source-agnostic readiness resolver. CONNECTED mode passes one backed by the
+  // daemon snapshot's fetch-state maps; DEGRADED (default) falls back to
+  // presence via statsReadyInput so the in-process path is byte-for-byte the
+  // same as before.
+  readyInput?: (id: string) => ReadyInput | undefined
 }) {
+  const resolveReady = readyInput ?? ((id: string) => statsReadyInput(stats.get(id)))
   const sp = glyphs().spinner
   const [frame, setFrame] = useState(0)
   useEffect(() => {
@@ -54,7 +89,7 @@ export function LoadingView({ groups, stats, cols, rows }: {
   const nameW = Math.min(13, groups.reduce((w, g) => Math.max(w, PROVIDERS[g.provider].name.length), 0))
 
   const readyCount = groups.filter(g =>
-    g.accounts.every(a => accountReady(stats.get(a.id), g.provider))).length
+    g.accounts.every(a => accountReady(resolveReady(a.id), g.provider))).length
 
   const maxRows = Math.max(1, rows - 7)
   const visible = groups.slice(0, maxRows)
@@ -73,7 +108,7 @@ export function LoadingView({ groups, stats, cols, rows }: {
         {visible.map((g, i) => {
           const meta = PROVIDERS[g.provider]
           const items = g.accounts.map(a => stats.get(a.id))
-          const ready = g.accounts.every(a => accountReady(stats.get(a.id), g.provider))
+          const ready = g.accounts.every(a => accountReady(resolveReady(a.id), g.provider))
           const errored = items.some(s => !!s?.billing?.error)
           const revealed = frame >= i * STAGGER_FRAMES
           const name = truncateName(meta.name, nameW)

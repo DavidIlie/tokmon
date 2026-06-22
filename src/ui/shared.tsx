@@ -1,5 +1,5 @@
 import { appendFileSync } from 'node:fs'
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { Box, Text, type DOMElement } from 'ink'
 import { useOnMouseClick } from '@zenobius/ink-mouse'
 import type { Metric } from '../providers/types'
@@ -97,7 +97,7 @@ export function Spinner({ label }: { label: string }) {
   )
 }
 
-export function TabBar(
+export const TabBar = memo(function TabBar(
   { tabs, active, onSelect }: { tabs: readonly string[]; active: number; onSelect: (i: number) => void },
 ) {
   return (
@@ -109,9 +109,9 @@ export function TabBar(
       ))}
     </Box>
   )
-}
+})
 
-export function PeakBadge({ peak }: { peak: PeakStatus }) {
+export const PeakBadge = memo(function PeakBadge({ peak }: { peak: PeakStatus }) {
   const color = peak.state === 'peak' ? 'red' : 'green'
   return (
     <Box>
@@ -122,7 +122,7 @@ export function PeakBadge({ peak }: { peak: PeakStatus }) {
       )}
     </Box>
   )
-}
+})
 
 function fmtMinutes(mins: number): string {
   if (mins < 60) return `${mins}m`

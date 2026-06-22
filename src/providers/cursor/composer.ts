@@ -13,6 +13,11 @@ export interface CursorSpend {
   models: CursorModelSpend[]
 }
 
+const finiteNonNegative = (value: unknown): number => {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
 export async function cursorModelSpend(homeDir?: string): Promise<CursorSpend | null> {
   const db = cursorStateDb(homeDir)
   const sql =
@@ -25,9 +30,9 @@ export async function cursorModelSpend(homeDir?: string): Promise<CursorSpend | 
   const models: CursorModelSpend[] = []
   let total = 0
   for (const row of res.rows) {
-    const usd = (Number(row.cents) || 0) / 100
+    const usd = finiteNonNegative(row.cents) / 100
     if (usd <= 0) continue
-    models.push({ name: String(row.name ?? ''), usd, requests: Number(row.amt) || 0 })
+    models.push({ name: String(row.name ?? ''), usd, requests: finiteNonNegative(row.amt) })
     total += usd
   }
   if (total <= 0) return null
@@ -69,8 +74,8 @@ export async function cursorUsageTable(tz: string, homeDir?: string): Promise<Ta
   for (const r of res.rows) {
     const ts = Number(r.createdAt)
     if (!Number.isFinite(ts) || ts <= 0) continue
-    const usd = (Number(r.cents) || 0) / 100
-    const reqs = Number(r.amt) || 0
+    const usd = finiteNonNegative(r.cents) / 100
+    const reqs = finiteNonNegative(r.amt)
     if (usd <= 0 && reqs <= 0) continue
     const model = String(r.model ?? 'unknown')
     put(buckets.daily, dayKey(ts, tz), model, usd, reqs)

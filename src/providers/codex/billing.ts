@@ -72,7 +72,14 @@ function resetFrom(window: any): string | null {
 }
 
 function percentMetric(label: string, used: number, resets: string | null, primary?: boolean): Metric {
-  return { label, used, limit: 100, format: { kind: 'percent' }, resetsAt: resets, primary }
+  return {
+    label,
+    used: Number.isFinite(used) ? used : 0,
+    limit: 100,
+    format: { kind: 'percent' },
+    resetsAt: resets,
+    ...(primary === undefined ? {} : { primary }),
+  }
 }
 
 async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {
@@ -103,11 +110,11 @@ async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {
     const primaryPct = headerPct('x-codex-primary-used-percent') ?? primary?.used_percent
     const secondaryPct = headerPct('x-codex-secondary-used-percent') ?? secondary?.used_percent
 
-    if (typeof primaryPct === 'number') metrics.push(percentMetric('5h', primaryPct, resetFrom(primary), true))
-    if (typeof secondaryPct === 'number') metrics.push(percentMetric('Week', secondaryPct, resetFrom(secondary)))
+    if (typeof primaryPct === 'number' && Number.isFinite(primaryPct)) metrics.push(percentMetric('5h', primaryPct, resetFrom(primary), true))
+    if (typeof secondaryPct === 'number' && Number.isFinite(secondaryPct)) metrics.push(percentMetric('Week', secondaryPct, resetFrom(secondary)))
 
     const balance = data?.credits?.balance
-    if (typeof balance === 'number' && balance >= 0) {
+    if (typeof balance === 'number' && Number.isFinite(balance) && balance >= 0) {
       metrics.push({ label: 'Credits', used: balance * CREDIT_USD_RATE, limit: null, format: { kind: 'dollars' } })
     }
 
@@ -155,14 +162,14 @@ async function snapshotBilling(homeDir?: string): Promise<BillingResult | null> 
   if (!last) return null
 
   const metrics: Metric[] = []
-  if (typeof last.primary?.used_percent === 'number') {
+  if (typeof last.primary?.used_percent === 'number' && Number.isFinite(last.primary.used_percent)) {
     metrics.push(percentMetric('5h', last.primary.used_percent, resetFrom(last.primary), true))
   }
-  if (typeof last.secondary?.used_percent === 'number') {
+  if (typeof last.secondary?.used_percent === 'number' && Number.isFinite(last.secondary.used_percent)) {
     metrics.push(percentMetric('Week', last.secondary.used_percent, resetFrom(last.secondary)))
   }
   const balance = last?.credits?.balance
-  if (typeof balance === 'number' && balance >= 0) {
+  if (typeof balance === 'number' && Number.isFinite(balance) && balance >= 0) {
     metrics.push({ label: 'Credits', used: balance * CREDIT_USD_RATE, limit: null, format: { kind: 'dollars' } })
   }
   if (metrics.length === 0) return null

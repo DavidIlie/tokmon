@@ -18,7 +18,9 @@
     "dev:web": "pnpm --prefix web run dev"
   },
   "dependencies": {
+    "@effect/platform-node": "4.0.0-beta.59",
     "@zenobius/ink-mouse": "^1.0.3",
+    "effect": "4.0.0-beta.59",
     "ink": "^5.0.0",
     "react": "^18.0.0"
   },

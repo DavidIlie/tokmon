@@ -82,8 +82,17 @@ function planLabel(auth: ClaudeAuth): string | null {
   return tier ? `${base} ${tier[1]}x` : base
 }
 
-const pct = (used: number, resets?: string | null, primary?: boolean): Metric =>
-  ({ label: '', used, limit: 100, format: { kind: 'percent' }, resetsAt: resets ?? null, primary })
+const finite = (value: unknown, fallback = 0): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback
+
+const pct = (used: number, resets?: string | null, primary?: boolean): Metric => ({
+  label: '',
+  used: finite(used),
+  limit: 100,
+  format: { kind: 'percent' },
+  resetsAt: resets ?? null,
+  ...(primary === undefined ? {} : { primary }),
+})
 
 export async function claudeBilling(account: Account): Promise<BillingResult> {
   const auth = await getAuth(account.homeDir)
@@ -118,10 +127,11 @@ export async function claudeBilling(account: Account): Promise<BillingResult> {
       metrics.push({ ...pct(data.seven_day_sonnet.utilization), label: 'Sonnet' })
     }
     if (data.extra_usage?.is_enabled) {
+      const monthlyLimit = data.extra_usage.monthly_limit
       metrics.push({
         label: 'Extra',
-        used: (data.extra_usage.used_credits ?? 0) / 100,
-        limit: data.extra_usage.monthly_limit != null ? data.extra_usage.monthly_limit / 100 : null,
+        used: finite(data.extra_usage.used_credits) / 100,
+        limit: typeof monthlyLimit === 'number' && Number.isFinite(monthlyLimit) ? monthlyLimit / 100 : null,
         format: { kind: 'dollars', currency: data.extra_usage.currency ?? 'USD' },
       })
     }

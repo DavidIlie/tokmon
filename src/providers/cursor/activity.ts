@@ -28,7 +28,8 @@ export async function cursorActivity(homeDir?: string): Promise<{ series: number
     const byDay = new Map<string, number>()
     let month = 0
     for (const row of res.rows) {
-      const n = Number(row.c) || 0
+      const raw = Number(row.c)
+      const n = Number.isFinite(raw) && raw > 0 ? raw : 0
       byDay.set(String(row.d), n)
       month += n
     }

@@ -1,10 +1,7 @@
 import { readJson } from './http'
+import type { PeakStatus } from './web/contract'
 
-export interface PeakStatus {
-  state: 'peak' | 'off-peak' | 'weekend'
-  label: string
-  minutesUntilChange: number | null
-}
+export type { PeakStatus }
 
 interface PromoClockResponse {
   status?: string

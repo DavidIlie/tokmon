@@ -134,10 +134,29 @@ export function safeNum(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0
 }
 
+function finiteNonNegative(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0
+}
+
+function cleanEntry(e: Entry): Entry {
+  return {
+    ...e,
+    ts: finiteNonNegative(e.ts),
+    cost: finiteNonNegative(e.cost),
+    input: finiteNonNegative(e.input),
+    output: finiteNonNegative(e.output),
+    cacheCreate: finiteNonNegative(e.cacheCreate),
+    cacheRead: finiteNonNegative(e.cacheRead),
+    cacheSavings: finiteNonNegative(e.cacheSavings),
+  }
+}
+
 export function dedupe(entries: Entry[]): Entry[] {
   const seen = new Set<string>()
   const out: Entry[] = []
-  for (const e of entries) {
+  for (const raw of entries) {
+    const e = cleanEntry(raw)
+    if (e.ts <= 0) continue
     const k = e.id ?? `${e.ts} ${e.model} ${e.input} ${e.output} ${e.cacheCreate} ${e.cacheRead}`
     if (seen.has(k)) continue
     seen.add(k)
@@ -165,7 +184,8 @@ export function summarize(entries: Entry[], tz: string): DashboardData {
     s.cacheRead += e.cacheRead
     s.cacheSavings += e.cacheSavings
   }
-  for (const e of entries) {
+  for (const raw of entries) {
+    const e = cleanEntry(raw)
     if (e.ts >= monthStart) add(month, e)
     if (e.ts >= weekStart) add(week, e)
     if (e.ts >= todayStart) { add(today, e); hadToday = true; if (e.ts < oldestToday) oldestToday = e.ts }
@@ -174,7 +194,8 @@ export function summarize(entries: Entry[], tz: string): DashboardData {
   }
 
   const hrs = Math.max((now - oldestToday) / 3_600_000, 1 / 60)
-  const burnRate = hadToday ? today.cost / hrs : 0
+  const rawBurnRate = hadToday ? today.cost / hrs : 0
+  const burnRate = Number.isFinite(rawBurnRate) ? rawBurnRate : 0
 
   const series: number[] = []
   for (let i = SPARK_DAYS - 1; i >= 0; i--) series.push(byDay.get(dayKey(now - i * DAY_MS, tz)) ?? 0)
@@ -184,7 +205,8 @@ export function summarize(entries: Entry[], tz: string): DashboardData {
 
 function groupBy(entries: Entry[], keyFn: (e: Entry) => string): TableRow[] {
   const groups = new Map<string, Entry[]>()
-  for (const e of entries) {
+  for (const raw of entries) {
+    const e = cleanEntry(raw)
     const key = keyFn(e)
     const arr = groups.get(key)
     if (arr) arr.push(e)
@@ -274,4 +296,14 @@ export function mergeTables(list: TableData[]): TableData {
     weekly: mergeRows(list.map(t => t.weekly)),
     monthly: mergeRows(list.map(t => t.monthly)),
   }
+}
+
+// Coalesce a per-account scope's tables into one. Shared by the DEGRADED fetch
+// path (fetchScopeTable in app.tsx — maps fetches → coalesce) and the CONNECTED
+// path (pickTable in snapshot-adapter.ts — maps snapshot lookups → coalesce), so
+// the empty-triple / single / merge shape lives in exactly one place.
+export function coalesceTables(list: TableData[]): TableData {
+  if (list.length === 0) return { daily: [], weekly: [], monthly: [] }
+  if (list.length === 1) return list[0]
+  return mergeTables(list)
 }

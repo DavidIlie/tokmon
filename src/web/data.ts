@@ -4,8 +4,11 @@ import { resolveTimezone } from '../tz'
 import type { Config } from '../config'
 import type { Account, BillingResult } from '../providers/types'
 import type { DashboardData, TableData } from '../types'
+import { toJsonSafe } from '../json-safe'
 import { colorHex, namedHex } from './colors'
-import type { WebSnapshot, WebAccount, WebProviderInfo } from './contract'
+import type {
+  WebSnapshot, WebAccount, WebProviderInfo, AccountFetchState, PeakStatus,
+} from './contract'
 
 export interface ResolvedAccount {
   account: Account
@@ -29,22 +32,25 @@ export async function resolveAccounts(config: Config): Promise<ResolvedAccount[]
   })
 }
 
+// These intentionally do NOT swallow fetch errors: a missing capability
+// resolves to null (-> 'ready'), but a thrown fetch propagates so the engine
+// can mark the account 'error' instead of conflating it with empty data.
 export async function fetchAccountSummary(account: Account, tz: string): Promise<DashboardData | null> {
   const p = PROVIDERS[account.providerId]
   if (!p.fetchSummary) return null
-  return p.fetchSummary(account, tz).catch(() => null)
+  return p.fetchSummary(account, tz)
 }
 
 export async function fetchAccountTable(account: Account, tz: string): Promise<TableData | null> {
   const p = PROVIDERS[account.providerId]
   if (!p.fetchTable) return null
-  return p.fetchTable(account, tz).catch(() => null)
+  return p.fetchTable(account, tz)
 }
 
 export async function fetchAccountBilling(account: Account): Promise<BillingResult | null> {
   const p = PROVIDERS[account.providerId]
   if (!p.fetchBilling) return null
-  return p.fetchBilling(account).catch(() => null)
+  return p.fetchBilling(account)
 }
 
 export function assembleSnapshot(opts: {
@@ -54,6 +60,11 @@ export function assembleSnapshot(opts: {
   resolved: ResolvedAccount[]
   usage: Map<string, { dashboard: DashboardData | null; table: TableData | null }>
   billing: Map<string, BillingResult | null>
+  summaryState?: Map<string, AccountFetchState>
+  billingState?: Map<string, AccountFetchState>
+  tableState?: Map<string, AccountFetchState>
+  seeded?: boolean
+  peak?: PeakStatus | null
 }): WebSnapshot {
   const accounts: WebAccount[] = opts.resolved.map(r => {
     const u = opts.usage.get(r.account.id)
@@ -67,6 +78,9 @@ export function assembleSnapshot(opts: {
       dashboard: u?.dashboard ?? null,
       table: u?.table ?? null,
       billing: opts.billing.get(r.account.id) ?? null,
+      summaryState: opts.summaryState?.get(r.account.id) ?? 'pending',
+      billingState: opts.billingState?.get(r.account.id) ?? 'pending',
+      tableState: opts.tableState?.get(r.account.id) ?? 'pending',
     }
   })
 
@@ -82,14 +96,16 @@ export function assembleSnapshot(opts: {
     })
   }
 
-  return {
+  return toJsonSafe({
     version: opts.version,
     generatedAt: Date.now(),
     tz: opts.tz,
     intervalMs: opts.intervalMs,
     providers,
     accounts,
-  }
+    seeded: opts.seeded ?? false,
+    peak: opts.peak ?? null,
+  })
 }
 
 export function tzFor(config: Config): string {

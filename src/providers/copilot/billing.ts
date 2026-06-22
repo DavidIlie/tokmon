@@ -204,14 +204,27 @@ function resetDate(value: unknown): string | null {
 }
 
 function percentMetric(label: string, snapshot: QuotaSnapshot | undefined, reset: string | null, primary?: boolean): Metric | null {
-  if (!snapshot || typeof snapshot.percent_remaining !== 'number') return null
+  if (!snapshot || typeof snapshot.percent_remaining !== 'number' || !Number.isFinite(snapshot.percent_remaining)) return null
   if (snapshot.unlimited === true || snapshot.entitlement === 0) return null
   const used = Math.min(100, Math.max(0, 100 - snapshot.percent_remaining))
-  return { label, used, limit: 100, format: { kind: 'percent' }, resetsAt: reset, primary }
+  return {
+    label,
+    used,
+    limit: 100,
+    format: { kind: 'percent' },
+    resetsAt: reset,
+    ...(primary === undefined ? {} : { primary }),
+  }
 }
 
 function countMetric(label: string, remaining: unknown, total: unknown, reset: string | null): Metric | null {
-  if (typeof remaining !== 'number' || typeof total !== 'number' || total <= 0) return null
+  if (
+    typeof remaining !== 'number'
+    || typeof total !== 'number'
+    || !Number.isFinite(remaining)
+    || !Number.isFinite(total)
+    || total <= 0
+  ) return null
   return {
     label,
     used: Math.max(0, total - remaining),

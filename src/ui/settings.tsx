@@ -1,6 +1,7 @@
+import { memo } from 'react'
 import { Box, Text } from 'ink'
 import { glyphs } from '../glyphs'
-import { configLocation, generateAccountId, type Config, type Account } from '../config'
+import { configLocation, generateAccountId, COLOR_PALETTE, type Config, type Account } from '../config'
 import { PROVIDER_ORDER, PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
 import { truncateName } from './shared'
@@ -18,23 +19,24 @@ export interface AccountForm {
   name: string
   homeDir: string
   color: string
+  // Caret column for the focused TEXT field (name/homeDir). Clamped 0..len;
+  // reset to end when switching into a text field. Ignored for provider/color.
+  caret: number
   editingId: string | null
   error: string | null
 }
 
 export const FORM_FIELDS: FormField[] = ['provider', 'name', 'homeDir', 'color']
 
-export const COLOR_PALETTE = [
-  'cyan', 'magenta', 'green', 'yellow', 'blue', 'red',
-  'cyanBright', 'magentaBright', 'greenBright',
-] as const
+export { COLOR_PALETTE } from '../config'
 
-export function SettingsView({
-  config, cursor, tzEdit, tzError, resolvedTz, accountForm, activeAccountId,
+export const SettingsView = memo(function SettingsView({
+  config, cursor, tzEdit, tzCaret, tzError, resolvedTz, accountForm, activeAccountId,
 }: {
   config: Config
   cursor: number
   tzEdit: string | null
+  tzCaret: number
   tzError: string | null
   resolvedTz: string
   accountForm: AccountForm | null
@@ -62,7 +64,7 @@ export function SettingsView({
       </Row>
       <Row cursor={cursor} idx={3} label="Timezone">
         {editingTz ? (
-          <><Text dimColor>[</Text><Text bold color="cyan">{tzEdit}</Text><Text color="cyan">_</Text><Text dimColor>]</Text></>
+          <><Text dimColor>[</Text><CaretText value={tzEdit ?? ''} caret={tzCaret} color="cyan" /><Text dimColor>]</Text></>
         ) : (
           <Text bold color="yellow">{tzDisplay}</Text>
         )}
@@ -139,6 +141,25 @@ export function SettingsView({
       )}
     </Box>
   )
+})
+
+// Renders `value` with a block caret (the vbar glyph) at column `caret`. When the
+// caret sits past the last char (caret >= len) the cursor trails the value; when
+// it sits on a char, that char is shown inverse so the cursor reads as a block.
+// Shared by the account-form text fields, the tz editor, and the table search so
+// all three render the cursor identically (P14). `color` styles the typed text.
+export function CaretText({ value, caret, color }: { value: string; caret: number; color?: string }) {
+  const c = Math.max(0, Math.min(caret, value.length))
+  if (c >= value.length) {
+    return <><Text bold color={color}>{value}</Text><Text color={color}>{glyphs().vbar}</Text></>
+  }
+  return (
+    <>
+      <Text bold color={color}>{value.slice(0, c)}</Text>
+      <Text inverse color={color}>{value[c]}</Text>
+      <Text bold color={color}>{value.slice(c + 1)}</Text>
+    </>
+  )
 }
 
 function Row({ cursor, idx, label, children }: { cursor: number; idx: number; label: string; children: React.ReactNode }) {
@@ -172,10 +193,10 @@ function AccountFormView({ form, accounts }: { form: AccountForm; accounts: Acco
         <ProviderField value={form.providerId} focused={form.field === 'provider'} />
         <Box height={1} />
         <FormField label="Name" hint="display name for this account" value={form.name}
-          focused={form.field === 'name'} accent={accent} placeholder="e.g. Work, Personal" />
+          focused={form.field === 'name'} caret={form.caret} accent={accent} placeholder="e.g. Work, Personal" />
         <Box height={1} />
         <FormField label="Home directory" hint={`path containing the tool's data dir  ${glyphs().middot}  ~ for default`} value={form.homeDir}
-          focused={form.field === 'homeDir'} accent={accent} placeholder="~/work" mono />
+          focused={form.field === 'homeDir'} caret={form.caret} accent={accent} placeholder="~/work" mono />
         <Box height={1} />
         <ColorField value={form.color} focused={form.field === 'color'} />
         <Box height={1} />
@@ -191,9 +212,12 @@ function AccountFormView({ form, accounts }: { form: AccountForm; accounts: Acco
       <Box marginTop={1}>
         <Text dimColor>tab/{glyphs().arrowU}{glyphs().arrowD} </Text><Text>switch field</Text><Text dimColor>  {glyphs().middot}  </Text>
         <Text dimColor>enter </Text><Text>{form.field === 'color' ? 'save' : 'next'}</Text><Text dimColor>  {glyphs().middot}  </Text>
-        {(form.field === 'color' || form.field === 'provider') && (
+        {(form.field === 'color' || form.field === 'provider') ? (
           <><Text dimColor>{glyphs().arrowL}{glyphs().arrowR} </Text><Text>{form.field === 'provider' ? 'pick provider' : 'pick color'}</Text><Text dimColor>  {glyphs().middot}  </Text></>
+        ) : (
+          <><Text dimColor>{glyphs().arrowL}{glyphs().arrowR} </Text><Text>move caret</Text><Text dimColor>  {glyphs().middot}  </Text></>
         )}
+        <Text dimColor>ctrl+s </Text><Text>save</Text><Text dimColor>  {glyphs().middot}  </Text>
         <Text dimColor>esc </Text><Text>cancel</Text>
       </Box>
     </Box>
@@ -253,8 +277,8 @@ function ProviderField({ value, focused }: { value: ProviderId; focused: boolean
   )
 }
 
-function FormField({ label, hint, value, focused, accent, placeholder, mono }: {
-  label: string; hint: string; value: string; focused: boolean; accent: string; placeholder: string; mono?: boolean
+function FormField({ label, hint, value, focused, caret, accent, placeholder, mono }: {
+  label: string; hint: string; value: string; focused: boolean; caret?: number; accent: string; placeholder: string; mono?: boolean
 }) {
   const isPlaceholder = value === ''
   const display = isPlaceholder ? placeholder : value
@@ -267,13 +291,13 @@ function FormField({ label, hint, value, focused, accent, placeholder, mono }: {
       </Box>
       <Box>
         <Text color={focused ? accent : undefined}>  {focused ? glyphs().vbar : ' '} </Text>
-        <Text
-          bold={focused && !isPlaceholder}
-          color={focused && !isPlaceholder ? accent : undefined}
-          dimColor={isPlaceholder}
-          italic={mono && isPlaceholder}
-        >{display}</Text>
-        {focused && <Text color={accent}>{glyphs().vbar}</Text>}
+        {focused
+          ? isPlaceholder
+            // Empty value: dim placeholder with the cursor parked at the start.
+            ? <><Text color={accent}>{glyphs().vbar}</Text><Text dimColor italic={mono}>{placeholder}</Text></>
+            // Real value: render the caret inline at its column (P7/P14).
+            : <CaretText value={value} caret={caret ?? value.length} color={accent} />
+          : <Text dimColor={isPlaceholder} italic={mono && isPlaceholder}>{display}</Text>}
       </Box>
       <Box><Text dimColor>      {hint}</Text></Box>
     </Box>

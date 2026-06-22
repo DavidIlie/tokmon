@@ -17,7 +17,9 @@ function reBucket(daily: TableRow[], tz: string, keyOf: (ts: number, tz: string)
   const out = new Map<string, TableRow>()
   for (const day of daily) {
     const [y, mo, d] = day.label.split('-').map(Number)
-    const label = keyOf(Date.UTC(y, mo - 1, d, 12), tz) // noon UTC avoids tz day-shift
+    const ts = Date.UTC(y, mo - 1, d, 12) // noon UTC avoids tz day-shift
+    if (!Number.isFinite(ts)) continue
+    const label = keyOf(ts, tz)
     let row = out.get(label)
     if (!row) {
       row = { label, models: [], input: 0, output: 0, cacheCreate: 0, cacheRead: 0, cacheSavings: 0, total: 0, cost: 0, count: 0, breakdown: [] }

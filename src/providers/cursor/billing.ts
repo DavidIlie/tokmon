@@ -80,7 +80,10 @@ async function connectPost(url: string, token: string): Promise<any | null> {
   }
 }
 
-const dollars = (cents: number): number => cents / 100
+const finite = (value: unknown, fallback = 0): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback
+
+const dollars = (cents: number): number => finite(cents) / 100
 
 export async function cursorBilling(account: Account): Promise<BillingResult> {
   const [core, activity, spend] = await Promise.all([
@@ -91,14 +94,19 @@ export async function cursorBilling(account: Account): Promise<BillingResult> {
   let merged = activity
   if (spend) {
     const lines = activity?.summary ?? ''
-    const spendLabel = `$${Math.round(spend.total)} all-time`
+    const spendLabel = `$${Math.round(finite(spend.total))} all-time`
     merged = {
       series: activity?.series ?? [],
       summary: lines ? `${lines} · ${spendLabel}` : spendLabel,
     }
   }
+  // Keep ALL models (no slice): the daemon's snapshot is the sole source for the
+  // TUI Cursor spend table (toCursorRows), which previously read the full,
+  // unsliced cursorModelSpend list. Each consumer caps its own display (the SPA
+  // slices to 4 in cards.tsx, the TUI paginates), so shipping the full list
+  // preserves byte-for-byte parity with the old in-process path.
   const modelSpend = spend?.models?.length
-    ? spend.models.slice(0, 6).map(m => ({ name: m.name, usd: m.usd, requests: m.requests }))
+    ? spend.models.map(m => ({ name: m.name, usd: finite(m.usd), requests: finite(m.requests) }))
     : null
   return { ...core, activity: merged, modelSpend }
 }
@@ -138,7 +146,12 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
   const resets = Number.isFinite(endMs) && endMs > 0 && endMs <= 8.64e15
     ? resetIn(new Date(endMs).toISOString()) : null
 
-  if (typeof pu.totalPercentUsed === 'number' && typeof pu.limit === 'number') {
+  if (
+    typeof pu.totalPercentUsed === 'number'
+    && Number.isFinite(pu.totalPercentUsed)
+    && typeof pu.limit === 'number'
+    && Number.isFinite(pu.limit)
+  ) {
     metrics.push({
       label: 'Usage',
       used: pu.totalPercentUsed,
@@ -147,7 +160,10 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
       resetsAt: resets,
       primary: true,
     })
-    const spentCents = typeof pu.totalSpend === 'number' ? pu.totalSpend : pu.limit - (pu.remaining ?? 0)
+    const remaining = typeof pu.remaining === 'number' && Number.isFinite(pu.remaining) ? pu.remaining : 0
+    const spentCents = typeof pu.totalSpend === 'number' && Number.isFinite(pu.totalSpend)
+      ? pu.totalSpend
+      : pu.limit - remaining
     metrics.push({
       label: 'Spend',
       used: dollars(spentCents),
@@ -156,17 +172,19 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
     })
   }
 
-  if (pu.autoPercentUsed) {
+  if (typeof pu.autoPercentUsed === 'number' && Number.isFinite(pu.autoPercentUsed)) {
     metrics.push({ label: 'Auto', used: pu.autoPercentUsed, limit: 100, format: { kind: 'percent' } })
   }
-  if (pu.apiPercentUsed) {
+  if (typeof pu.apiPercentUsed === 'number' && Number.isFinite(pu.apiPercentUsed)) {
     metrics.push({ label: 'API', used: pu.apiPercentUsed, limit: 100, format: { kind: 'percent' } })
   }
 
   const su = usage.spendLimitUsage
   if (su) {
-    const limitCents = su.individualLimit ?? su.pooledLimit ?? 0
-    const remainingCents = su.individualRemaining ?? su.pooledRemaining ?? 0
+    const rawLimitCents = su.individualLimit ?? su.pooledLimit ?? 0
+    const rawRemainingCents = su.individualRemaining ?? su.pooledRemaining ?? 0
+    const limitCents = finite(rawLimitCents)
+    const remainingCents = finite(rawRemainingCents)
     if (limitCents > 0) {
       metrics.push({
         label: 'On-demand',

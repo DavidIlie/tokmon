@@ -23,6 +23,9 @@ export const Copy = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
 export const Download = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
   <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /><path d="M12 15V3" /></Icon>
 )
+export const Folder = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
+  <Icon {...p}><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H9l2 2h7.5A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" /></Icon>
+)
 export const Share = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
   <Icon {...p}><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" /><path d="m16 6-4-4-4 4" /><path d="M12 2v13" /></Icon>
 )
@@ -40,4 +43,19 @@ export const Sun = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
 )
 export const Moon = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
   <Icon {...p}><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></Icon>
+)
+export const Settings = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
+  <Icon {...p}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></Icon>
+)
+export const Plus = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
+  <Icon {...p}><path d="M12 5v14M5 12h14" /></Icon>
+)
+export const Trash = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
+  <Icon {...p}><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></Icon>
+)
+export const Pencil = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
+  <Icon {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" /></Icon>
+)
+export const ChevronUp = (p: SVGProps<SVGSVGElement> & { className?: string }) => (
+  <Icon {...p}><path d="m18 15-6-6-6 6" /></Icon>
 )

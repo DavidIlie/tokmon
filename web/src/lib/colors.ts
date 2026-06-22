@@ -16,6 +16,28 @@ export function providerHex(id: ProviderId | string): string {
   return PROVIDER_HEX[id] ?? '#8b979c'
 }
 
+// Ink/terminal named-color → hex. Mirrors the COLOR_PALETTE the TUI account form
+// offers (cyan…greenBright). Tuned to read on the dark dashboard while staying
+// recognizably the same hue as the terminal swatch the TUI shows.
+export const NAMED_COLOR_HEX: Record<string, string> = {
+  cyan: '#7ccbcd',
+  magenta: '#bd7bcd',
+  green: '#6caa71',
+  yellow: '#d9c074',
+  blue: '#6d96b4',
+  red: '#cf6a5a',
+  cyanBright: '#9ee8ea',
+  magentaBright: '#d79ae3',
+  greenBright: '#8fd594',
+  white: '#dee5eb',
+}
+
+/** Resolve a stored account color (a named color, or already a hex/css value). */
+export function namedColorHex(name: string | undefined | null): string {
+  if (!name) return '#8b979c'
+  return NAMED_COLOR_HEX[name] ?? (name.startsWith('#') ? name : '#8b979c')
+}
+
 const MODEL_PALETTE = [
   '#00d7ff', '#00d787', '#e6b450', '#d75f87', '#5f87ff',
   '#af87ff', '#5fd7a7', '#ff8787', '#d7af5f', '#87d7ff',

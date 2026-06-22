@@ -22,9 +22,10 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 5173,
-    // Dev: proxy API/SSE to a running `tokmon serve`.
+    // Dev: proxy API + WebSocket RPC to a running `tokmon serve`.
     proxy: {
       '/api': { target: 'http://127.0.0.1:4317', changeOrigin: true },
+      '/ws': { target: 'ws://127.0.0.1:4317', ws: true, changeOrigin: true },
       '/healthz': { target: 'http://127.0.0.1:4317', changeOrigin: true },
     },
   },

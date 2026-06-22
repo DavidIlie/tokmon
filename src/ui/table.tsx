@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Box, Text } from 'ink'
 import * as fmt from '../format'
 import { PROVIDERS } from '../providers'
@@ -5,11 +6,12 @@ import type { ProviderId } from '../providers/types'
 import type { TableRow } from '../types'
 import type { CursorModelSpend } from '../providers/cursor/composer'
 import { ClickableBox } from './shared'
+import { CaretText } from './settings'
 import { glyphs } from '../glyphs'
 
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-export function TableProviderBar({ providers, active, onSelect }: {
+export const TableProviderBar = memo(function TableProviderBar({ providers, active, onSelect }: {
   providers: ProviderId[]
   active: ProviderId | null
   onSelect: (p: ProviderId) => void
@@ -30,13 +32,14 @@ export function TableProviderBar({ providers, active, onSelect }: {
       <Text dimColor>  p/P switch</Text>
     </Box>
   )
-}
+})
 
-export function ControlBar({ views, period, sort, search, searching, showPeriod }: {
+export const ControlBar = memo(function ControlBar({ views, period, sort, search, searchCaret, searching, showPeriod }: {
   views: readonly string[]
   period: number
   sort: string
   search: string
+  searchCaret: number
   searching: boolean
   showPeriod: boolean
 }) {
@@ -55,15 +58,15 @@ export function ControlBar({ views, period, sort, search, searching, showPeriod 
       <Text dimColor>sort </Text><Text bold color="magenta">{sort}</Text>
       <Text dimColor>  o cycle  {glyphs().middot}  </Text>
       {searching
-        ? <><Text dimColor>/</Text><Text bold color="cyan">{search}</Text><Text color="cyan">{glyphs().vbar}</Text></>
+        ? <><Text dimColor>/</Text><CaretText value={search} caret={searchCaret} color="cyan" /></>
         : search
           ? <><Text dimColor>filter </Text><Text bold color="green">{search}</Text><Text dimColor> (/ edit {glyphs().middot} esc clear)</Text></>
           : <Text dimColor>/ filter</Text>}
     </Box>
   )
-}
+})
 
-export function TokenTable({ rows, cursor, expanded, maxRows, cols, onRowClick }: {
+export const TokenTable = memo(function TokenTable({ rows, cursor, expanded, maxRows, cols, onRowClick }: {
   rows: TableRow[]
   cursor: number
   expanded: number
@@ -141,7 +144,7 @@ export function TokenTable({ rows, cursor, expanded, maxRows, cols, onRowClick }
       <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} navigate  {glyphs().middot}  Enter detail  {glyphs().middot}  o sort  {glyphs().middot}  g/G top/bottom  {glyphs().middot}  {clampedCursor + 1}/{rows.length}</Text>
     </Box>
   )
-}
+})
 
 function RowDetail({ row, indent }: { row: TableRow; indent: number }) {
   return (
@@ -161,7 +164,7 @@ function RowDetail({ row, indent }: { row: TableRow; indent: number }) {
   )
 }
 
-export function CursorSpendTable({ rows, cursor, maxRows, onRowClick }: {
+export const CursorSpendTable = memo(function CursorSpendTable({ rows, cursor, maxRows, onRowClick }: {
   rows: CursorModelSpend[]
   cursor: number
   maxRows: number
@@ -211,7 +214,7 @@ export function CursorSpendTable({ rows, cursor, maxRows, onRowClick }: {
       <Text dimColor>local spend by model (composerData) {glyphs().middot} est. API-equivalent {glyphs().middot} {clamped + 1}/{rows.length}</Text>
     </Box>
   )
-}
+})
 
 function fmtLabel(label: string): string {
   if (label.length === 7 && label[4] === '-') {

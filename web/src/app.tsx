@@ -7,7 +7,8 @@ import type { WebSnapshot } from '@shared'
 
 import { FilterBar } from './components/filter-bar'
 import { ShareControl } from './components/share-card'
-import { Moon, Sun } from './components/icons'
+import { Moon, Settings, Sun } from './components/icons'
+import { SettingsSheet } from './components/settings-sheet'
 import { AnalyticsTab, ExploreTab, ModelsTab, OverviewTab, TABS, type TabKey } from './components/tabs'
 import { deriveAll, hasBillingSignal, PERIODS, type Derived, type Filters } from './lib/derive'
 import { fmtAgo } from './lib/format'
@@ -95,10 +96,25 @@ function Connecting({ label }: { label: string }) {
   )
 }
 
+function SettingsButton({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title="Settings"
+      aria-label="Open settings"
+      className="rounded border border-line bg-bg-1 p-1.5 text-fg-dim transition hover:border-line-2 hover:text-fg max-sm:p-2.5"
+    >
+      <Settings className="size-3.5" />
+    </button>
+  )
+}
+
 function RootLayout() {
   const { snapshot, conn } = useSnapshot()
   const [filters, setFilters] = useFilters()
   const [theme, toggleTheme] = useTheme()
+  const [showSettings, setShowSettings] = useState(false)
 
   const derived = useMemo(() => deriveAll(snapshot, filters), [snapshot, filters])
   const periodLabel = PERIODS.find(p => p.key === filters.period)?.label ?? filters.period
@@ -152,6 +168,7 @@ function RootLayout() {
             </span>
             <div className="ml-auto flex min-w-0 items-center gap-3">
               <ConnDot conn={conn} freshAt={snapshot?.generatedAt ?? null} />
+              <SettingsButton onOpen={() => setShowSettings(true)} />
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
               {ready && (hasUsage || hasBilling) && (
                 <ShareControl derived={derived} periodLabel={periodLabel} tz={snapshot?.tz ?? ''} version={snapshot?.version ?? ''} />
@@ -199,6 +216,9 @@ function RootLayout() {
       <footer className="mx-auto max-w-[1600px] px-5 2xl:max-w-[1920px] py-6 text-center text-[11px] text-fg-faint">
         tokmon{snapshot?.version ? ` v${snapshot.version}` : ''} · by David Ilie · live LLM usage dashboard
       </footer>
+
+      {/* Settings sheet lives OUTSIDE the usage gate so it works with zero usage. */}
+      {showSettings && <SettingsSheet onClose={() => setShowSettings(false)} />}
     </div>
   )
 }

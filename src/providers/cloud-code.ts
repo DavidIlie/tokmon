@@ -315,9 +315,10 @@ function parseBuckets(data: any): CloudCodeBucket[] {
   return data.buckets.flatMap((bucket: any) => {
     const modelId = typeof bucket?.modelId === 'string' ? bucket.modelId.trim() : ''
     if (!modelId) return []
+    const remainingFraction = bucket.remainingFraction
     return [{
       modelId,
-      remainingFraction: typeof bucket.remainingFraction === 'number' ? bucket.remainingFraction : 0,
+      remainingFraction: typeof remainingFraction === 'number' && Number.isFinite(remainingFraction) ? remainingFraction : 0,
       resetTime: typeof bucket.resetTime === 'string' ? bucket.resetTime : undefined,
     }]
   })
@@ -337,9 +338,10 @@ function parseModelBuckets(data: any): CloudCodeBucket[] {
       ''
     if (!displayName) return []
     const quotaInfo = model.quotaInfo
+    const remainingFraction = quotaInfo?.remainingFraction
     return [{
       modelId: displayName,
-      remainingFraction: typeof quotaInfo?.remainingFraction === 'number' ? quotaInfo.remainingFraction : 0,
+      remainingFraction: typeof remainingFraction === 'number' && Number.isFinite(remainingFraction) ? remainingFraction : 0,
       resetTime: typeof quotaInfo?.resetTime === 'string' ? quotaInfo.resetTime : undefined,
     }]
   })
@@ -426,7 +428,8 @@ export function cloudCodeBucketsToMetrics(buckets: CloudCodeBucket[]): Metric[] 
   return [...pooled.values()]
     .sort((a, b) => sortKey(a.modelId).localeCompare(sortKey(b.modelId)))
     .map((bucket, i) => {
-      const clamped = Math.max(0, Math.min(1, bucket.remainingFraction))
+      const remaining = Number.isFinite(bucket.remainingFraction) ? bucket.remainingFraction : 0
+      const clamped = Math.max(0, Math.min(1, remaining))
       return {
         label: bucket.modelId,
         used: Math.round((1 - clamped) * 100),

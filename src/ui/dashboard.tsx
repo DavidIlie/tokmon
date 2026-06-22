@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Box, Text } from 'ink'
 import * as fmt from '../format'
 import { PROVIDERS } from '../providers'
@@ -60,7 +61,7 @@ export function chooseLayout(content: number, budget: number, n: number, single:
   return { ncols, variant: 'mini', cardsPerPage, pageCount }
 }
 
-export function DashboardView({ groups, stats, cols, budget, focusId, layout, page = 0 }: {
+export const DashboardView = memo(function DashboardView({ groups, stats, cols, budget, focusId, layout, page = 0 }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
   stats: Map<string, AccountStats>
   cols: number
@@ -102,7 +103,7 @@ export function DashboardView({ groups, stats, cols, budget, focusId, layout, pa
       )}
     </Box>
   )
-}
+})
 
 function ProviderCard({ provider, accounts, stats, width, variant }: {
   provider: ProviderId
@@ -290,7 +291,7 @@ function aggregate(list: DashboardData[]): DashboardData {
   return z
 }
 
-export function TotalsRow({ groups, stats, cols }: {
+export const TotalsRow = memo(function TotalsRow({ groups, stats, cols }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
   stats: Map<string, AccountStats>
   cols: number
@@ -320,4 +321,4 @@ export function TotalsRow({ groups, stats, cols }: {
       <Text dimColor>{text}</Text>
     </Box>
   )
-}
+})
