@@ -30,8 +30,6 @@ export function Panel({
           {right}
         </div>
       )}
-      {/* Camera sits on the top border (like the title notch) so it never overlaps body
-          content — e.g. a table's rightmost column header. */}
       {captureName && (
         <div data-chrome className="absolute -top-[11px] right-3 z-20">
           <CaptureButton getNode={() => ref.current} name={captureName} />

@@ -50,7 +50,6 @@ export const cursorProvider: Provider = {
   id: 'cursor',
   name: 'Cursor',
   color: 'magenta',
-  // hasUsage: false — TUI keys its dedicated Cursor spend-table off this flag directly.
   hasUsage: false,
   hasBilling: true,
   detect: (homeDir) => detectCursor(homeDir),

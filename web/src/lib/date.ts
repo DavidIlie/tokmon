@@ -1,5 +1,3 @@
-// Timezone-free: operates on the YYYY-MM-DD labels the server emits in the user's tz
-// so period math and the calendar heatmap can't drift apart.
 export const DAY = 86_400_000
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 

@@ -12,7 +12,6 @@ interface PromoClockResponse {
   minutesUntilChange?: number
 }
 
-/** Anthropic peak / off-peak pricing clock (promoclock.co). Global, not per-account. */
 export async function fetchPeak(): Promise<PeakStatus | null> {
   try {
     const res = await fetch('https://promoclock.co/api/status', {

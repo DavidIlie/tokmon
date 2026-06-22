@@ -15,12 +15,9 @@ const TABLE_INTERVAL_MS = 300_000
 const PEAK_INTERVAL_MS = 300_000
 const IDLE_PAUSE_MS = 60_000
 const SNAPSHOT_CACHE_THROTTLE_MS = 20_000
-// Throttle the incremental rebuild() emitted inside per-account loops so a long
-// list of accounts reveals progressively without flooding WS subscribers.
 const REVEAL_THROTTLE_MS = 500
 const snapshotCacheFile = () => join(cacheDir(), 'web-snapshot.json')
 
-// Which refresh loops an RPC refresh should kick. 'all' forces every loop.
 export type RefreshScope = 'all' | 'summary' | 'table' | 'billing' | 'peak'
 
 interface DataEngineOptions {
@@ -39,17 +36,13 @@ export interface DataEngine {
   subscribeConfig(onConfig: (config: Config) => void): () => void
   touch(): void
   refresh(scope?: RefreshScope): void
-  // Live-reload the resolved account set (after a config PUT) without dropping
-  // surviving accounts' already-fetched data. tz/interval changes apply too.
   setConfig(next: { resolved: ResolvedAccount[]; tz: string; summaryIntervalMs: number; billingIntervalMs: number }): void
-  // Broadcast a config value to every WS config stream subscriber.
   broadcastConfig(config: Config): void
   stop(): void
 }
 
 export function createDataEngine(opts: DataEngineOptions): DataEngine {
   const { version } = opts
-  // tz / intervals / resolved are mutable so setConfig() can live-reload them.
   let tz = opts.tz
   let summaryIntervalMs = opts.summaryIntervalMs
   let billingIntervalMs = opts.billingIntervalMs
@@ -62,7 +55,6 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   const billingState = new Map<string, AccountFetchState>()
   const tableState = new Map<string, AccountFetchState>()
   let peak: PeakStatus | null = null
-  // true while serving cache-hydrated data; flipped false on first live rebuild.
   let seeded = false
   let current: WebSnapshot | null = null
   const snapshotSubscribers = new Set<(snapshot: WebSnapshot) => void>()
@@ -77,13 +69,9 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   let lastPersist = 0
   let lastReveal = 0
 
-  // Bumped on every setConfig(). Each refresh loop captures the epoch at entry
-  // and abandons its writes if the config changed mid-fetch — so an in-flight
-  // loop started under the OLD config can never clobber the reconciled maps
-  // (no stale data for edited accounts, no orphaned entries for removed ones).
+  // Bumped on setConfig(); in-flight loops bail if epoch changed to avoid clobbering reconciled maps.
   let configEpoch = 0
 
-  // Only poll the global peak clock if at least one resolved account is claude.
   let hasClaude = resolved.some(r => r.account.providerId === 'claude')
 
   const idle = () => snapshotSubscribers.size === 0 && Date.now() - lastActivity > IDLE_PAUSE_MS
@@ -122,11 +110,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     if (Date.now() - lastPersist < SNAPSHOT_CACHE_THROTTLE_MS) return
     lastPersist = Date.now()
     try {
-      mkdirSync(cacheDir(), { recursive: true, mode: 0o700 })
-      // Atomic write (tmp + rename, like lockfile.ts): if more than one tokmon
-      // process runs concurrently (e.g. `tokmon serve` + a TUI's spawned child),
-      // last-writer-wins instead of a torn/corrupt JSON read by the other side.
-      // 0o600: the snapshot holds usage/billing data — keep it owner-only.
+      mkdirSync(cacheDir(), { recursive: true, mode: 0o700 }) // 0o700: owner-only usage data
       const tmp = join(cacheDir(), `web-snapshot.json.${process.pid}.tmp`)
       writeFileSync(tmp, JSON.stringify(current), { mode: 0o600 })
       renameSync(tmp, snapshotCacheFile())
@@ -135,7 +119,6 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
 
   const rebuild = () => {
     if (stopped) return
-    // First live data supersedes any cache-hydrated view.
     seeded = false
     current = buildSnapshot()
     persist()
@@ -144,9 +127,6 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     }
   }
 
-  // Throttled rebuild for use INSIDE the per-account fetch loops so a long
-  // account list reveals progressively. The trailing rebuild() after each loop
-  // guarantees the final state always flushes.
   const reveal = () => {
     if (stopped) return
     if (Date.now() - lastReveal < REVEAL_THROTTLE_MS) return
@@ -157,12 +137,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   let usageAccounts = resolved.filter(r => r.hasUsage)
   let billingAccounts = resolved.filter(r => r.hasBilling)
 
-  // Each loop guards against (a) idle pausing (unless forced), and (b) a
-  // concurrent run. A FORCED call that lands while the loop is busy can't run
-  // immediately, so it sets a *ForcePending flag the in-flight run re-checks in
-  // its finally and re-invokes itself — this makes setConfig()/RPC refresh
-  // deterministically re-fetch (e.g. a just-added account) instead of being
-  // silently dropped until the next interval timer (up to 5 min for the table).
+  // Each loop uses a *ForcePending flag so a forced call that lands mid-run re-invokes after the in-flight run finishes.
   let summaryBusy = false
   let summaryForcePending = false
   const refreshSummary = async (force = false): Promise<void> => {
@@ -177,8 +152,6 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
         let dashboard: DashboardData | null = null
         let ok = true
         try { dashboard = await fetchAccountSummary(r.account, tz) } catch { ok = false }
-        // Config changed mid-fetch -> abandon this write so we never clobber the
-        // reconciled maps (stale data for edited ids / orphans for removed ids).
         if (stopped || epoch !== configEpoch) return
         if (ok) { usageEntry(r.account.id).dashboard = dashboard; summaryState.set(r.account.id, 'ready') }
         else summaryState.set(r.account.id, 'error')
@@ -249,15 +222,12 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     peakBusy = true
     try {
       const next = await fetchPeak()
-      // Keep the last known value on a null fetch (transient failure).
       if (next) { peak = next; rebuild() }
     } finally {
       peakBusy = false
     }
   }
 
-  // Tear down the polling timers WITHOUT marking the engine stopped, so
-  // setConfig() can rebuild them. (stop() additionally sets `stopped`.)
   const clearTimers = () => {
     clearInterval(summaryTimer); summaryTimer = undefined
     clearInterval(tableTimer); tableTimer = undefined
@@ -303,31 +273,17 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
 
     setConfig(next) {
       if (stopped) return
-      // 1. Stop the polling loops. In-flight async fetches keep running but, via
-      //    the configEpoch bump below, abandon their writes so they can't clobber
-      //    the reconciled maps (surviving accounts keep their data in step 3).
       clearTimers()
-
-      // 2. Bump the epoch FIRST (same synchronous block as the swaps): any loop
-      //    that captured the old epoch will see epoch !== configEpoch after its
-      //    next await and bail before writing.
       configEpoch++
-
-      // 3. Swap in the new resolution + tz/interval settings.
       tz = next.tz
       summaryIntervalMs = next.summaryIntervalMs
       billingIntervalMs = next.billingIntervalMs
       resolved = next.resolved
       hasClaude = resolved.some(r => r.account.providerId === 'claude')
-      // Last claude account removed -> clear the stale peak clock so the snapshot
-      // doesn't keep emitting a peak/off-peak badge for a config without claude.
       if (!hasClaude) peak = null
       usageAccounts = resolved.filter(r => r.hasUsage)
       billingAccounts = resolved.filter(r => r.hasBilling)
 
-      // 4. Reconcile the data/state maps: KEEP data for surviving account ids,
-      //    drop entries for removed accounts, leave new accounts to default
-      //    'pending' (their first fetch fills them in).
       const survivors = new Set(resolved.map(r => r.account.id))
       for (const id of [...usage.keys()]) if (!survivors.has(id)) usage.delete(id)
       for (const id of [...billing.keys()]) if (!survivors.has(id)) billing.delete(id)
@@ -335,10 +291,6 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
         for (const id of [...map.keys()]) if (!survivors.has(id)) map.delete(id)
       }
 
-      // 5. Re-emit immediately so clients see the reconciled account set, then
-      //    restart the loops + a forced fetch for the (possibly) new accounts.
-      //    The forced fetches re-arm via *ForcePending if an old-epoch loop is
-      //    still draining, so the new config's data lands promptly regardless.
       rebuild()
       void refreshSummary(true)
       void refreshTable(true)

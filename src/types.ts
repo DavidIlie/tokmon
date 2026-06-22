@@ -2,7 +2,6 @@ export interface UsageSummary {
   cost: number
   tokens: number
   cacheRead: number
-  /** USD the cache saved vs paying full input rate for those reads. */
   cacheSavings: number
 }
 

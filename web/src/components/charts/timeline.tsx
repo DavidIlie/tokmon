@@ -43,7 +43,6 @@ export function CostTimeline({ derived, title = 'cost over time', height = 260, 
 
   const data = derived.timeline.map(p => {
     const row: Record<string, number | string | null> = { date: p.date, total: p.total, ...p.byProvider }
-    // Log scale can't plot 0 — null lets connectNulls bridge the gap cleanly.
     if (scale === 'log') for (const k of Object.keys(row)) if (k !== 'date' && row[k] === 0) row[k] = null
     return row
   })

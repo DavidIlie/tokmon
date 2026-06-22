@@ -15,9 +15,6 @@ const args = process.argv.slice(2)
 
 const subcommand = args[0]?.toLowerCase()
 
-// Ephemeral daemon child: spawned + supervised by the TUI. Emits a one-line
-// JSON handshake on stdout, opens no browser, dies with the parent. MUST be
-// handled before any TTY/glyph setup so the handshake is the first stdout line.
 if (subcommand === '__daemon') {
   const { runDaemon } = await import('./web/daemon')
   await runDaemon(args.slice(1), { foreground: false })
@@ -79,13 +76,6 @@ setGlyphs(resolveGlyphs({
   platform: process.platform,
 }))
 
-// Spawn the TUI's private ephemeral daemon BEFORE first render. The daemon is
-// the sole refresh-loop runner / flushDisk + cache writer; the TUI is a thin
-// WS-RPC client of it. If the spawn/handshake fails within ~3s, attachOrSpawn
-// resolves DEGRADED (baseUrl=null) and the TUI runs its in-process loops behind
-// `if (mode === 'degraded')`. Never blocks the user.
-// The daemon loads config (incl. interval) from disk itself; nothing is
-// forwarded on the wire here.
 const daemon = await attachOrSpawn()
 const mode = daemon.kind === 'spawned' ? 'connected' : 'degraded'
 

@@ -1,6 +1,5 @@
 import type { ProviderId } from '@shared'
 
-// Keep in sync with TUI palette (Ink color name → terminal hex) and each provider's `.color`.
 export const PROVIDER_HEX: Record<string, string> = {
   claude: '#6caa71',
   codex: '#7ccbcd',
@@ -16,9 +15,6 @@ export function providerHex(id: ProviderId | string): string {
   return PROVIDER_HEX[id] ?? '#8b979c'
 }
 
-// Ink/terminal named-color → hex. Mirrors the COLOR_PALETTE the TUI account form
-// offers (cyan…greenBright). Tuned to read on the dark dashboard while staying
-// recognizably the same hue as the terminal swatch the TUI shows.
 export const NAMED_COLOR_HEX: Record<string, string> = {
   cyan: '#7ccbcd',
   magenta: '#bd7bcd',
@@ -32,7 +28,6 @@ export const NAMED_COLOR_HEX: Record<string, string> = {
   white: '#dee5eb',
 }
 
-/** Resolve a stored account color (a named color, or already a hex/css value). */
 export function namedColorHex(name: string | undefined | null): string {
   if (!name) return '#8b979c'
   return NAMED_COLOR_HEX[name] ?? (name.startsWith('#') ? name : '#8b979c')

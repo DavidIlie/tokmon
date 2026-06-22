@@ -10,9 +10,6 @@ function isContained(root: string, target: string): boolean {
   return target === root || target.startsWith(root + sep)
 }
 
-// Path picker root: every listing is contained to the user's home directory.
-// `..`, absolute paths like /etc, and symlinks that point outside home are all
-// clamped or skipped so config path browsing cannot escape $HOME.
 export async function listHomeDirectory(rawPath: string): Promise<FsListing> {
   const root = resolvePath(homedir())
   const expanded = expandHome(rawPath || '~')

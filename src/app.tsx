@@ -92,25 +92,17 @@ const LOADER_MIN_VISIBLE_MS = 700
 
 type Slot = { id: string | null; name: string; color: string }
 
-// Stable per-account serialization used to key effect dep arrays (account
-// add/remove/homeDir change). Pure, module-scoped so it carries no closure.
 const acctKey = (a: Account): string => `${a.id}:${a.homeDir ?? ''}`
 
-// The only account-form fields that are free-text (carry a caret). provider and
-// color are value-cyclers; left/right there cycle the value, not move a caret.
 const TEXT_FIELDS = ['name', 'homeDir'] as const
 
-// Clamp a caret position into [0, len].
 const clampCaret = (caret: number, len: number): number => Math.max(0, Math.min(caret, len))
 
-// Insert `text` into `value` at `caret`, returning the new value + caret (after
-// the inserted run). Pure — shared by every text field's typed-char + paste path.
 function spliceInsert(value: string, caret: number, text: string): { value: string; caret: number } {
   const c = clampCaret(caret, value.length)
   return { value: value.slice(0, c) + text + value.slice(c), caret: c + text.length }
 }
 
-// Delete one char to the LEFT of `caret` (backspace). No-op at column 0.
 function spliceBackspace(value: string, caret: number): { value: string; caret: number } {
   const c = clampCaret(caret, value.length)
   if (c === 0) return { value, caret: 0 }
@@ -123,12 +115,6 @@ function applyStartup(c: Config, cliInterval?: number): Config {
   return c
 }
 
-// Key-order-independent structural compare for the daemon-config echo (P16).
-// The daemon normalizes/re-orders keys, so JSON.stringify(a) === JSON.stringify(b)
-// is a false negative even when the two configs are semantically identical —
-// which forced a redundant setConfig + full re-render (visible focus-chip flash)
-// a few hundred ms after every config keypress. This compares values regardless
-// of key order so the echo only adopts (and re-renders) on a real change.
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true
   if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
@@ -147,13 +133,9 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return true
 }
 
-// Debounced terminal size: report a settled size (so the expensive layout only
-// recomputes once a drag-resize stops, not on every SIGWINCH), and expose `resizing`
-// so a lightweight overlay can show during the drag instead of a thrashing relayout.
 interface TermSize { cols: number; rows: number; resizing: boolean; live: { cols: number; rows: number } }
 function useTerminalSize(settleMs = 90): TermSize {
   const { stdout } = useStdout()
-  // `|| 80` (not `??`): a non-TTY/piped stdout can report columns/rows of 0 or undefined.
   const read = () => ({ cols: stdout?.columns || 80, rows: stdout?.rows || 24 })
   const [size, setSize] = useState(read)
   const [live, setLive] = useState(read)
@@ -186,24 +168,16 @@ function ResizingView({ cols, rows }: { cols: number; rows: number }) {
 export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsToken = null, mode = 'degraded' }: {
   interval?: number
   initialConfig?: Config
-  // The daemon base URL (null in DEGRADED mode). When set, the TUI renders from
-  // the daemon over WS-RPC; when null it runs the in-process loops below.
   baseUrl?: string | null
   wsToken?: string | null
   mode?: 'connected' | 'degraded'
 }) {
   const connected = mode === 'connected' && baseUrl !== null && wsToken !== null
   const degraded = !connected
-  // The daemon client. In DEGRADED mode baseUrl is null and the hook stays inert
-  // (snapshot null / conn 'connecting'); the in-process effects below take over.
   const daemon = useDaemon(connected ? baseUrl : null, connected ? wsToken : null)
 
   const [config, setConfig] = useState<Config | null>(() => initialConfig ? applyStartup(initialConfig, cliInterval) : null)
   const [detected, setDetected] = useState<ProviderId[]>([])
-  // In-process (DEGRADED) live state. In CONNECTED mode these are unused for
-  // rendering — stats/peak/table/cursorRows/updated are derived from the daemon
-  // snapshot below — but the hooks stay declared so the in-process effects can
-  // keep populating them when degraded.
   const [statsLocal, setStats] = useState<Map<string, AccountStats>>(new Map())
   const [peakLocal, setPeak] = useState<PeakStatus | null>(null)
   const [tableLocal, setTable] = useState<TableData | null>(null)
@@ -223,9 +197,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const [settingsCursor, setSettingsCursor] = useState(0)
   const [tzEdit, setTzEdit] = useState<string | null>(null)
   const [tzError, setTzError] = useState<string | null>(null)
-  // Caret columns for the two non-form text inputs (tz editor, table search).
-  // The account-form caret lives inside accountForm (per-field). All clamped to
-  // their value's length and reset to end when the field (re)opens.
   const [tzCaret, setTzCaret] = useState(0)
   const [searchCaret, setSearchCaret] = useState(0)
   const [accountForm, setAccountForm] = useState<AccountForm | null>(null)
@@ -235,13 +206,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const [debouncePassed, setDebouncePassed] = useState(false)
   const [graceHold, setGraceHold] = useState(false)
   const [loaderShownAt, setLoaderShownAt] = useState<number | null>(null)
-  // loaderDone gates the loader in two ways: a ref for the LIVE reads inside the
-  // gating effects' bodies/timeouts (must reflect the latest write synchronously,
-  // even between renders), and a mirrored state so the RENDER read (showLoader)
-  // re-renders when the latch flips (P15). Mutating only the ref doesn't schedule
-  // a render, so a write with no coincident setState (the allReady + null-shownAt
-  // branch) could leave the loader stuck on screen until an unrelated re-render.
-  // setLoaderDone() updates both; reads pick ref (live) vs state (render) per site.
   const loaderDone = useRef(false)
   const [loaderDoneState, setLoaderDoneFlag] = useState(false)
   const setLoaderDone = useCallback((v: boolean) => {
@@ -252,11 +216,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const { exit } = useApp()
   const { cols, rows, resizing, live } = useTerminalSize()
 
-  // DEGRADED-only in-process web fallback (decision #1). In CONNECTED mode the
-  // daemon IS the web server and `w` just opens its URL (no in-process server,
-  // no start/stop chrome — decision #3 deleted webStatus/webUrl/etc.). This ref
-  // holds a degraded fallback server so the unmount cleanup can stop it; the
-  // boolean guards a concurrent start.
   const webRef = useRef<WebServerController | null>(null)
   const webStartingRef = useRef(false)
   useEffect(() => () => { void webRef.current?.stop() }, [])
@@ -271,66 +230,33 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const accountsRef = useRef<Account[]>([])
   accountsRef.current = accounts
   const rowCountRef = useRef(0)
-  // Tracks the active tab for the once-registered scroll handler (P12), so the
-  // mouse/stdin effect doesn't tear down + re-attach (and re-issue the mode-
-  // disable TTY write) on every Dashboard<->Table switch.
   const tabRef = useRef(0)
   tabRef.current = tab
   const dashPageCountRef = useRef(1)
   const seededRef = useRef(false)
-  // Bracketed-paste handling. `pasteBufRef` accumulates the payload across stdin
-  // chunks once \x1b[200~ is seen, until \x1b[201~ closes it. `insertPasteRef`
-  // is kept fresh every render so the data tap (registered once) inserts into
-  // whatever field is focused right now without stale-closure bugs.
   const pasteBufRef = useRef<string | null>(null)
-  // Carries the last few bytes of a chunk that had no paste marker yet, so a
-  // marker split across a chunk boundary (e.g. "...\x1b[20" then "0~...") is
-  // still recognized on the next chunk. Only used while NOT mid-paste.
   const pasteCarryRef = useRef<string>('')
   const insertPasteRef = useRef<(text: string) => void>(() => {})
-  // Live value+caret mirrors for the two non-form text inputs (tz editor, table
-  // search). Synced from state each render so external changes (open/clear/switch)
-  // are reflected, and mutated synchronously by edits so back-to-back keystrokes
-  // before a re-render compose correctly (state is async). The account-form caret
-  // lives in accountForm itself (atomic functional setState, no ref needed).
   const tzValueRef = useRef('')
   const tzCaretRef = useRef(0)
   const searchValueRef = useRef('')
   const searchCaretRef = useRef(0)
   const accountsKey = useMemo(() => accounts.map(acctKey).join('|'), [accounts])
 
-  // ── Render source: daemon snapshot (CONNECTED) vs in-process state (DEGRADED).
-  // In CONNECTED mode stats/peak/updated are PROJECTED from the daemon snapshot
-  // via the adapter (view scoping stays client-side: the snapshot ships ALL
-  // resolved accounts and we map them onto our own resolved Account[], which
-  // carry the config/named colors). In DEGRADED mode they come from the local
-  // state the in-process effects populate.
   const snapshot = daemon.snapshot
   const stats = useMemo(
     () => connected ? toStatsMap(snapshot, accounts) : statsLocal,
     [connected, snapshot, accounts, statsLocal],
   )
-  // Gate the peak badge on whether the TUI's VISIBLE accounts (which honor
-  // config.disabledProviders) include a claude account. The daemon resolves with
-  // disabledProviders:[] so snapshot.peak is present even for a disabled-but-
-  // configured claude account; the DEGRADED path only fetches peak when claude is
-  // a built (non-disabled) account, so this keeps CONNECTED parity.
   const showPeak = accounts.some(a => a.providerId === 'claude')
   const peak = connected ? (showPeak ? (snapshot?.peak ?? null) : null) : peakLocal
   const updated = useMemo(
     () => connected ? new Date(snapshot?.generatedAt ?? Date.now()) : updatedLocal,
     [connected, snapshot, updatedLocal],
   )
-  // Header refresh-interval label. CONNECTED reflects the daemon's EFFECTIVE
-  // interval (it floors summary at 8s — snapshot.intervalMs carries the floored
-  // value), so the header isn't misleading for sub-8s configs; DEGRADED uses the
-  // un-floored in-process interval as before.
   const intervalLabel = connected && snapshot?.intervalMs
     ? Math.round(snapshot.intervalMs / 1000)
     : cfg.interval
-  // Per-account readiness input, source-agnostic. CONNECTED reads the snapshot's
-  // fetch-state maps (resolving the dashboard===null ambiguity); DEGRADED falls
-  // back to presence via statsReadyInput.
   const readyInputFor = useCallback((id: string): ReadyInput | undefined => {
     if (connected) {
       const wa = snapshot?.accounts.find(a => a.id === id)
@@ -340,10 +266,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     return statsReadyInput(statsLocal.get(id))
   }, [connected, snapshot, statsLocal])
 
-  // Memoize the slot chain so its array identities only change when accounts or
-  // the active account change — gives the React.memo'd leaf views (AccountStrip,
-  // DashboardView, TotalsRow) stable props so a cursor/scroll/poll key doesn't
-  // re-render them. accounts is already memoized (:204).
   const slots: Slot[] = useMemo(() => accounts.length > 1
     ? [{ id: null, name: 'All', color: 'whiteBright' }, ...accounts.map(a => ({ id: a.id, name: a.name, color: a.color }))]
     : accounts.map(a => ({ id: a.id, name: a.name, color: a.color })),
@@ -358,8 +280,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     () => focusId === null ? accounts : accounts.filter(a => a.id === focusId),
     [accounts, focusId],
   )
-  // Call accountsByProvider(accounts) ONCE (allGroups) and derive both the table
-  // provider list and the focus-scoped groups from it.
   const allGroups = useMemo(() => accountsByProvider(accounts), [accounts])
   const groups = useMemo(
     () => focusId === null ? allGroups : accountsByProvider(visibleAccounts),
@@ -386,25 +306,14 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const dashPaginated = dashPageCount > 1
   dashPageCountRef.current = dashPageCount
 
-  // Keep the live value+caret mirrors in sync with state each render so external
-  // mutations (tz opened with prefill, search cleared on esc / provider switch,
-  // backspace, caret-move) are reflected before the next edit reads the ref.
   tzValueRef.current = tzEdit ?? ''
   tzCaretRef.current = clampCaret(tzCaret, (tzEdit ?? '').length)
   searchValueRef.current = search
   searchCaretRef.current = clampCaret(searchCaret, search.length)
 
-  // True for a real typed printable run (not a control/meta combo or a bracketed-
-  // paste payload). Single predicate replacing the 4 duplicated inline gates.
   const isPrintable = (input: string, key: { ctrl: boolean; meta: boolean }): boolean =>
     !!input && !key.ctrl && !key.meta && !isPasteInput(input)
 
-  // Single text-insertion path shared by the typed-char branches in useInput AND
-  // the paste tap (insertPasteRef). Owns the field-routing priority
-  // (settings form > tz > search) and splices `text` at the focused field's caret,
-  // advancing the caret past the inserted run. Defined as a render-body closure
-  // (re-created each render) so it always sees the currently focused field with no
-  // stale-closure bug — same lifetime model as insertPasteRef.current.
   const insertText = (text: string): void => {
     if (showSettings && accountForm && (accountForm.field === 'name' || accountForm.field === 'homeDir')) {
       setAccountForm(f => {
@@ -413,9 +322,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
         return { ...f, [f.field]: r.value, caret: r.caret, error: null }
       })
     } else if (showSettings && tzEdit !== null) {
-      // tzValueRef/tzCaretRef are the LIVE value+caret (mutated synchronously so
-      // back-to-back edits before a re-render compose correctly); state mirrors
-      // only drive the render.
       const r = spliceInsert(tzValueRef.current, tzCaretRef.current, text)
       tzValueRef.current = r.value; tzCaretRef.current = r.caret
       setTzEdit(r.value); setTzCaret(r.caret); setTzError(null)
@@ -425,8 +331,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       setSearch(r.value); setSearchCaret(r.caret)
     }
   }
-  // Refreshed each render so the once-registered paste tap always targets the
-  // currently focused field (same priority as the useInput handler below).
   insertPasteRef.current = insertText
 
   const effTableProvider = (tableProvider && tableProvs.includes(tableProvider)) ? tableProvider : (tableProvs[0] ?? null)
@@ -437,9 +341,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   )
   const SORTS_FOR = tableIsCursor ? CURSOR_SORTS : SORTS
 
-  // CONNECTED: project the table + cursor rows from the daemon's already-fetched
-  // per-account data (no client-side fetch). DEGRADED: use the local state the
-  // in-process table effect fills.
   const tableAccountIds = useMemo(() => tableAccounts.map(a => a.id), [tableAccounts])
   const table = useMemo(
     () => connected ? pickTable(snapshot, tableAccountIds) : tableLocal,
@@ -488,9 +389,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     detectProviders().then(setDetected)
   }, [])
 
-  // ── DEGRADED-only: cache seed (read-only). The daemon is the SOLE writer of
-  // web-snapshot.json; here we only READ it to seed the in-process view from a
-  // prior connected session. The TUI never writes the cache (one writer only).
   useEffect(() => {
     if (!degraded) return
     if (seededRef.current || !configReady || showPicker || accounts.length === 0) return
@@ -520,26 +418,15 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
 
   useEffect(() => {
     if (!allReady || loaderDone.current) return
-    // Fast load: allReady before the loader was ever shown — latch done now. This
-    // is the site the old ref-only write left non-reactive (P15): setLoaderDone
-    // flips the state mirror so showLoader re-evaluates and the loader clears.
     if (loaderShownAt === null) { setLoaderDone(true); return }
     setGraceHold(true)
     const minRemaining = Math.max(0, LOADER_MIN_VISIBLE_MS - (Date.now() - loaderShownAt))
     const hold = Math.max(LOADER_GRACE_MS, minRemaining)
     const t = setTimeout(() => { setLoaderDone(true); setGraceHold(false) }, hold)
     return () => clearTimeout(t)
-    // loaderShownAt in deps (P15): if allReady flips true before loaderShownAt is
-    // set, the run above takes the immediate-latch branch; re-running once
-    // loaderShownAt lands lets the min-visible/grace hold compute against the real
-    // timestamp instead of being skipped. Idempotent: the loaderDone.current guard
-    // short-circuits a re-run after the latch, and the cleanup clears any pending
-    // timeout so only one hold is ever in flight.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allReady, loaderShownAt])
 
-  // ── DEGRADED-only: in-process summary loop. CONNECTED mode reads dashboards
-  // from the daemon snapshot via toStatsMap.
   useEffect(() => {
     if (!degraded || !configReady || showPicker) return
     let active = true
@@ -563,8 +450,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     return () => { active = false; clearTimeout(timer) }
   }, [degraded, interval, tz, configReady, showPicker, accountsKey])
 
-  // ── DEGRADED-only: in-process billing + peak loop. CONNECTED mode reads
-  // billing from the snapshot and peak from snapshot.peak.
   useEffect(() => {
     if (!degraded || !configReady || showPicker) return
     let active = true
@@ -599,15 +484,9 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     setTable(null); setCursorRows(null)
     setCursor(0); setExpanded(-1)
     setSort(tableIsCursor ? 0 : 1)
-    // Clear any stranded spinner (P13b): if tableKey changes while tab!==1 (e.g.
-    // tz edited from settings), the degraded fetch effect early-returns and never
-    // clears a previously-true tableLoading, leaving a stuck spinner on the next
-    // Table visit. Connected mode never sets tableLoading, so this is a no-op there.
     setTableLoading(false)
   }, [tableKey])
 
-  // ── DEGRADED-only: in-process table/cursor fetch loop. CONNECTED mode projects
-  // the table via pickTable and cursor rows via toCursorRows from the snapshot.
   useEffect(() => {
     if (!degraded || tab !== 1 || !effTableProvider) return
     let active = true
@@ -642,33 +521,16 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const resetView = useCallback(() => { setCursor(0); setExpanded(-1) }, [])
   const clampRow = (n: number) => Math.max(0, Math.min(rowCountRef.current - 1, n))
 
-  // Bracketed-paste consumer for the raw stdin tap. Bracketed paste is enabled
-  // in cli.tsx (\x1b[?2004h), so a paste arrives as \x1b[200~<payload>\x1b[201~,
-  // possibly split across several stdin chunks (the TTY chunks at arbitrary byte
-  // boundaries on large/fast pastes). We buffer between the markers, run the
-  // payload through sanitizeTyped, and insert it as ONE setState into the focused
-  // field. Returns true while a paste is being consumed so the caller skips
-  // feeding those bytes to dispatchLinkClicks. Stable ([] deps): reads everything
-  // through refs to avoid stale closures.
-  //
-  // Robustness: both START and END markers may straddle a chunk boundary, so we
-  // always scan the combined buffer (carry/buffer + new chunk) rather than the
-  // raw chunk alone, and keep a trailing carry of the bytes that could be the
-  // prefix of a marker. A safety cap bounds the buffer so a malformed/never-
-  // closed paste can never permanently freeze input.
   const PASTE_START = '\x1b[200~'
   const PASTE_END = '\x1b[201~'
-  const PASTE_MAX = 1 << 20 // 1 MiB: flush+abort a runaway paste rather than wedge input
+  const PASTE_MAX = 1 << 20
   const handlePasteData = useCallback((chunk: Buffer | string): boolean => {
     const s = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
 
-    // Mid-paste: search the COMBINED buffer so a split end marker is still found.
     if (pasteBufRef.current !== null) {
       const combined = pasteBufRef.current + s
       const end = combined.indexOf(PASTE_END)
       if (end === -1) {
-        // No end yet. Safety cap: if the paste grows without ever closing, flush
-        // what we have and abort so input is never permanently swallowed.
         if (combined.length >= PASTE_MAX) {
           const clean = sanitizeTyped(combined)
           pasteBufRef.current = null
@@ -681,16 +543,12 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       const clean = sanitizeTyped(combined.slice(0, end))
       pasteBufRef.current = null
       if (clean) insertPasteRef.current(clean)
-      // Anything after the end marker is normal input; let Ink/useInput see it.
       return end + PASTE_END.length >= combined.length
     }
 
-    // Not mid-paste: scan carry + chunk so a split START marker is recognized.
     const combined = pasteCarryRef.current + s
     const start = combined.indexOf(PASTE_START)
     if (start === -1) {
-      // No start marker. Retain a trailing tail that could be the prefix of a
-      // START marker (split across the next chunk); pass the rest through.
       const keep = Math.min(combined.length, PASTE_START.length - 1)
       pasteCarryRef.current = combined.slice(combined.length - keep)
       return false
@@ -699,11 +557,9 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     const rest = combined.slice(start + PASTE_START.length)
     const end = rest.indexOf(PASTE_END)
     if (end === -1) {
-      // Multi-chunk paste: open the buffer and wait for the rest.
       pasteBufRef.current = rest
       return true
     }
-    // Whole paste in one chunk.
     const clean = sanitizeTyped(rest.slice(0, end))
     if (clean) insertPasteRef.current(clean)
     return true
@@ -722,12 +578,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   useEffect(() => {
     if (!IS_TTY) return
     mouse.enable()
-    // ink-mouse's enable() turns on 1000 (button/click) + 1003 (any-motion) +
-    // 1015 (urxvt ext) + 1006 (SGR ext). Motion tracking floods stdin with
-    // \x1b[<35;..M reports on every cursor move, which lag the UI and leak into
-    // text fields. Drop motion (1003/1002) + urxvt (1015), keep click (1000) +
-    // SGR (1006). Wheel scroll still arrives: it's reported as button events
-    // (codes 64/65) under mode 1000, so the scroll handler below keeps working.
+    // ink-mouse also enables motion tracking (1003/1002) which floods stdin; drop those, keep click (1000) + SGR (1006).
     if (process.stdout.isTTY) {
       try { process.stdout.write('\x1b[?1003l\x1b[?1002l\x1b[?1015l') } catch {}
     }
@@ -735,9 +586,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       const up = dir === 'scrollup'
       const t = tabRef.current
       if (t === 1) {
-        // Clamp scroll-down to the row count (clampRow reads rowCountRef, set
-        // each render) so wheeling past the last row can't drive the highlight
-        // off the end — matching every keyboard nav path (P11).
         setCursor(c => up ? Math.max(0, c - 3) : clampRow(c + 3))
       } else if (t === 0 && dashPageCountRef.current > 1) {
         setDashPage(p => up ? Math.max(0, p - 1) : Math.min(dashPageCountRef.current - 1, p + 1))
@@ -747,26 +595,9 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     const onData = (d: Buffer | string) => { if (!handlePasteData(d)) dispatchLinkClicks(d) }
     process.stdin.on('data', onData)
     return () => { mouse.events.off('scroll', onScroll); process.stdin.off('data', onData) }
-    // Register once for the session: read `tab` via tabRef so a tab switch
-    // doesn't re-bind listeners or re-issue the TTY mode-disable write.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Config writes. CONNECTED: optimistically apply locally (so view scoping —
-  // focus/provider toggles/layout — reacts instantly), then PUT to the daemon,
-  // which normalizes + persists + live-reloads its engine and broadcasts a
-  // `config` event we reconcile from (see the daemon.config effect below). The
-  // daemon is the sole saveConfig caller in this mode. DEGRADED: write to disk
-  // directly, exactly as before.
-  // Functional setState so two config-mutating keypresses before a re-render
-  // serialize (the second reads the first's result, not a stale render closure).
-  // The persistence side-effect fires INSIDE the updater: Ink's reconciler runs
-  // it synchronously and exactly once (tokmon mounts <App> with no StrictMode),
-  // so `next` is always the real value — firing it after setConfig would read an
-  // undefined `next` because the updater is deferred, silently dropping every
-  // write (onboarding/settings/accounts never persisted). saveConfig + the daemon
-  // PUT are both idempotent, so a stray re-invoke is harmless. useCallback keeps
-  // the identity stable for the cycle* handlers (P2) that depend on it.
   const updateConfig = useCallback((fn: (prev: Config) => Config): void => {
     setConfig(prev => {
       const next = fn(prev ?? DEFAULTS)
@@ -776,11 +607,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     })
   }, [connected, daemon])
 
-  // Reconcile the optimistic config with the daemon's normalized echo (arrives
-  // on the WS config stream after a successful setConfig). The echo is the full
-  // normalized Config (activeAccountId/focus included), so we adopt it verbatim
-  // — NOT through applyStartup, which would re-zero the focus. Cheap equality
-  // guard avoids a redundant re-render when the normalized form is unchanged.
   const daemonConfig = daemon.config
   useEffect(() => {
     if (!connected || !daemonConfig) return
@@ -841,10 +667,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     const cur = effTableProvider ? tableProvs.indexOf(effTableProvider) : 0
     const nextProv = tableProvs[(cur + dir + tableProvs.length) % tableProvs.length]
     setTableProvider(nextProv)
-    // Reset sort synchronously from the TARGET provider's kind (P13a). The
-    // tableKey effect does this one commit later; without the synchronous reset
-    // SORTS_FOR (cursor vs token) would index the OLD sort against the NEW array
-    // for one frame, briefly showing a wrong sort label/order.
     const nextIsCursor = !!nextProv && !PROVIDERS[nextProv].hasUsage
     setSort(nextIsCursor ? 0 : 1)
     setCursor(0); setExpanded(-1); setSearch(''); setSearchCaret(0); setSearchMode(false)
@@ -893,7 +715,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       if (!f) return f
       const i = FORM_FIELDS.indexOf(f.field)
       const next = FORM_FIELDS[(i + dir + FORM_FIELDS.length) % FORM_FIELDS.length]
-      // Land the caret at end-of-value when entering a text field.
       const caret = next === 'name' ? f.name.length : next === 'homeDir' ? f.homeDir.length : f.caret
       return { ...f, field: next, caret }
     })
@@ -933,10 +754,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
 
   const totalSettingsRows = ACCOUNT_ROWS_START + cfg.accounts.length + 1
 
-  // w/W (decision #3): CONNECTED just opens the browser at the already-running
-  // daemon's URL — no start/stop chrome, the daemon's lifecycle is the TUI's.
-  // DEGRADED (decision #1): start the in-process web server once (lazily) and
-  // open the browser; a second press reuses the running server's URL.
   async function toggleWeb(): Promise<void> {
     if (connected) {
       if (baseUrl) openUrl(baseUrl)
@@ -955,10 +772,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     }
   }
 
-  // Stable click/select handlers for the React.memo'd leaf views (P1). Deps are
-  // now stable from P3 (slots memoized) + P6 (updateConfig/resetView useCallback),
-  // so these identities only change when their real inputs change — letting e.g.
-  // TabBar/AccountStrip bail out on a cursor/scroll/poll re-render.
   const onTabSelect = useCallback((i: number) => { setTab(i); resetView() }, [resetView])
   const onStripSelect = useCallback((i: number) => {
     updateConfig(c => ({ ...c, activeAccountId: slots[i].id })); resetView()
@@ -966,20 +779,11 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const onProviderSelect = useCallback((p: ProviderId) => {
     setTableProvider(p); setCursor(0); setExpanded(-1); setSearch(''); setSearchCaret(0); setSearchMode(false)
   }, [])
-  // Legitimately depends on `cursor`: it changes when the cursor moves, which only
-  // re-renders TokenTable (the view that owns the cursor) — correct and cheap.
   const onRowClickToken = useCallback((idx: number) => {
     if (idx === cursor) setExpanded(e => e === idx ? -1 : idx); else setCursor(idx)
   }, [cursor])
   const onRowClickCursor = useCallback((idx: number) => setCursor(idx), [])
 
-  // Filter+sort the visible table ONCE per relevant change instead of on every
-  // render (dashboard keystroke/scroll/poll, or a Table-tab cursor move that
-  // doesn't touch table/view/search/sort). Each path returns [] when its tab/mode
-  // isn't active so the work is skipped entirely off-tab. rowCountRef (set in the
-  // render body just before return) stays in sync because the memos run each
-  // render; clampRow inside useInput reads the ref, which is only consulted on
-  // the Table tab.
   const tokenRows = useMemo(
     () => tab === 1 && !tableIsCursor
       ? sortRows(filterTokenRows(table ? [table.daily, table.weekly, table.monthly][view] : [], search), sort)
@@ -1010,9 +814,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
 
     if (showSettings && accountForm) {
       if (key.escape) { setAccountForm(null); return }
-      // Submit from ANY field (P9): ctrl+s commits the form (color has a sane
-      // default; commit re-validates name as the backstop). ctrl chosen so it
-      // can't collide with the caret ctrl+a/ctrl+e below.
       if (key.ctrl && input === 's') { commitAccountForm(); return }
       if (key.tab) { cycleFormField(key.shift ? -1 : 1); return }
       if (key.upArrow) { cycleFormField(-1); return }
@@ -1020,7 +821,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       if (accountForm.field === 'provider') {
         if (key.leftArrow) { cycleProvider(-1); return }
         if (key.rightArrow) { cycleProvider(1); return }
-        // Advance into Name with the caret at its end.
         if (key.return) { setAccountForm(f => f && { ...f, field: 'name', caret: f.name.length }); return }
         return
       }
@@ -1030,18 +830,12 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
         if (key.return) { commitAccountForm(); return }
         return
       }
-      // TEXT fields (name/homeDir): left/right move the caret intra-field; Home/
-      // End/ctrl+a/ctrl+e jump to the edges; backspace deletes at the caret;
-      // typed chars splice at the caret (via insertText).
       const tf = accountForm.field as 'name' | 'homeDir'
       if (key.leftArrow) { setAccountForm(f => f && { ...f, caret: clampCaret(f.caret - 1, f[tf].length) }); return }
       if (key.rightArrow) { setAccountForm(f => f && { ...f, caret: clampCaret(f.caret + 1, f[tf].length) }); return }
-      // Home/End via ctrl+a / ctrl+e (Ink doesn't map the Home/End keys).
       if (key.ctrl && input === 'a') { setAccountForm(f => f && { ...f, caret: 0 }); return }
       if (key.ctrl && input === 'e') { setAccountForm(f => f && { ...f, caret: f[tf].length }); return }
       if (key.return) {
-        // Eagerly validate Name when leaving it (P9): blank name stays put with
-        // the error instead of walking the user to Color before bouncing back.
         if (tf === 'name' && accountForm.name.trim() === '') {
           setAccountForm(f => f && { ...f, error: 'Name required', caret: f.name.length })
           return
@@ -1077,7 +871,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
         }
         return
       }
-      // Caret nav (intra-field): left/right + ctrl+a/ctrl+e (Home/End).
       if (key.leftArrow) { setTzCaret(c => clampCaret(c - 1, tzEdit.length)); return }
       if (key.rightArrow) { setTzCaret(c => clampCaret(c + 1, tzEdit.length)); return }
       if (key.ctrl && input === 'a') { setTzCaret(0); return }
@@ -1094,7 +887,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
 
     if (tab === 1 && searchMode) {
       if (key.return || key.escape) { setSearchMode(false); if (key.escape) { setSearch(''); setSearchCaret(0) } return }
-      // Caret nav (intra-field): left/right + ctrl+a/ctrl+e (Home/End).
       if (key.leftArrow) { setSearchCaret(c => clampCaret(c - 1, search.length)); return }
       if (key.rightArrow) { setSearchCaret(c => clampCaret(c + 1, search.length)); return }
       if (key.ctrl && input === 'a') { setSearchCaret(0); return }
@@ -1111,8 +903,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
 
     if (input === 'q') { exit(); return }
     if (input === 'O') { openUrl(REPO_URL); return }
-    // Web toggle: `W` anywhere, plus lowercase `w` outside the Table tab (where
-    // `w` = Weekly). Gated until the initial load finishes rendering the dashboard.
     if (input === 'W' || (input === 'w' && tab !== 1 && !showSettings)) {
       if (showLoader || !configReady) return
       void toggleWeb(); return
@@ -1183,11 +973,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       return
     }
     if (tab === 0) {
-      // Dashboard owns no list cursor: page nav when paginated, otherwise the
-      // cursor/page keys no-op. Return unconditionally so up/down/G/g/pageUp/
-      // pageDown can't fall through to the generic cursor handlers below and
-      // silently mutate the invisible Table cursor (a dead re-render that also
-      // desyncs the cursor for the next Table visit) (P10).
       if (dashPaginated) {
         if (input === ']' || key.downArrow || key.pageDown) { setDashPage(p => Math.min(dashPageCount - 1, p + 1)); return }
         if (input === '[' || key.upArrow || key.pageUp) { setDashPage(p => Math.max(0, p - 1)); return }
@@ -1213,9 +998,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       if (key.leftArrow || key.rightArrow) { setTab(t => (t + 1) % TABS.length); resetView(); return }
     }
 
-    // Row-cursor nav belongs only to the interactive (token) Table. Scope it so
-    // cursor moves never fire on the Dashboard (already returned above) or on a
-    // non-interactive cursor table — no dead re-renders, no cursor desync (P10).
     if (tab === 1 && !tableIsCursor) {
       if (key.upArrow) { setCursor(c => Math.max(0, c - 1)); return }
       if (key.downArrow) { setCursor(c => clampRow(c + 1)); return }

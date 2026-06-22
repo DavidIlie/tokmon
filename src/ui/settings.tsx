@@ -19,8 +19,6 @@ export interface AccountForm {
   name: string
   homeDir: string
   color: string
-  // Caret column for the focused TEXT field (name/homeDir). Clamped 0..len;
-  // reset to end when switching into a text field. Ignored for provider/color.
   caret: number
   editingId: string | null
   error: string | null
@@ -143,11 +141,6 @@ export const SettingsView = memo(function SettingsView({
   )
 })
 
-// Renders `value` with a block caret (the vbar glyph) at column `caret`. When the
-// caret sits past the last char (caret >= len) the cursor trails the value; when
-// it sits on a char, that char is shown inverse so the cursor reads as a block.
-// Shared by the account-form text fields, the tz editor, and the table search so
-// all three render the cursor identically (P14). `color` styles the typed text.
 export function CaretText({ value, caret, color }: { value: string; caret: number; color?: string }) {
   const c = Math.max(0, Math.min(caret, value.length))
   if (c >= value.length) {
@@ -293,9 +286,7 @@ function FormField({ label, hint, value, focused, caret, accent, placeholder, mo
         <Text color={focused ? accent : undefined}>  {focused ? glyphs().vbar : ' '} </Text>
         {focused
           ? isPlaceholder
-            // Empty value: dim placeholder with the cursor parked at the start.
             ? <><Text color={accent}>{glyphs().vbar}</Text><Text dimColor italic={mono}>{placeholder}</Text></>
-            // Real value: render the caret inline at its column (P7/P14).
             : <CaretText value={value} caret={caret ?? value.length} color={accent} />
           : <Text dimColor={isPlaceholder} italic={mono && isPlaceholder}>{display}</Text>}
       </Box>

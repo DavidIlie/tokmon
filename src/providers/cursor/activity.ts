@@ -15,7 +15,6 @@ function localDayKey(ms: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-/** Last-SPARK_DAYS daily AI-code line counts + a 30-day summary, or null if unavailable. */
 export async function cursorActivity(homeDir?: string): Promise<{ series: number[]; summary: string } | null> {
   const db = trackingDb(homeDir)
   try {

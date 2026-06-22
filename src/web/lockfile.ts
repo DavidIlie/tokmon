@@ -2,10 +2,6 @@ import { readFileSync, writeFileSync, unlinkSync, mkdirSync, renameSync } from '
 import { join } from 'node:path'
 import { cacheDir } from '../config'
 
-// The daemon advertises itself here so `tokmon serve` can dedup (attach front
-// door) and version-check. The TUI v1 always spawns its OWN private daemon on
-// an ephemeral port and does NOT read this file — it relies on the stdout
-// handshake instead. This lockfile is therefore only consulted by serve/web.
 export interface DaemonLock {
   pid: number
   port: number
@@ -38,8 +34,7 @@ export function writeLock(lock: DaemonLock): void {
   try {
     mkdirSync(cacheDir(), { recursive: true, mode: 0o700 })
     const tmp = join(cacheDir(), `daemon.json.${process.pid}.tmp`)
-    // 0o600: the lock holds the wsToken credential — keep it owner-only so
-    // other local users on a shared machine can't read it + hijack the daemon.
+    // 0o600: lockfile holds the wsToken credential — owner-only so other local users can't hijack the daemon.
     writeFileSync(tmp, JSON.stringify(lock), { mode: 0o600 })
     renameSync(tmp, lockfilePath())
   } catch {}
@@ -49,15 +44,13 @@ export function unlinkLock(): void {
   try { unlinkSync(lockfilePath()) } catch {}
 }
 
-// `kill(pid, 0)` performs no signal delivery — it only validates that the pid
-// exists and is signalable. ESRCH means the process is gone (stale lock).
+// kill(pid, 0) validates the pid exists without delivering a signal; EPERM means alive but unsignalable.
 export function isAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false
   try {
     process.kill(pid, 0)
     return true
   } catch (err) {
-    // EPERM means it exists but we can't signal it -> still alive.
     return (err as NodeJS.ErrnoException).code === 'EPERM'
   }
 }

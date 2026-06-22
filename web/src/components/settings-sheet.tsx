@@ -16,15 +16,6 @@ import { Segmented } from './ui'
 const FOCUS = 'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent'
 const FOCUSABLE = 'button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'
 
-/**
- * Modal focus management scoped to a single panel ref, modelled on share-sheet's
- * trap but reusable so each stacked dialog (settings sheet AND the account
- * editor) gets its own instance. While `active` is false the trap is inert (the
- * settings sheet disables its own trap when the editor is open so the editor —
- * which mounts a fresh active trap — owns the keyboard). On mount it moves focus
- * INTO the panel (so keyboard users start inside the modal even with zero
- * fields), and on unmount it restores the previously-focused element.
- */
 function useDialogTrap(
   panelRef: React.RefObject<HTMLElement>,
   { active, onEscape, initialFocusRef }: {
@@ -36,9 +27,6 @@ function useDialogTrap(
   useEffect(() => {
     if (!active) return
     const prev = document.activeElement as HTMLElement | null
-    // Move focus into the panel: an explicit initial-focus target if provided,
-    // else the first focusable control, else the panel itself (it carries
-    // tabIndex=-1) when there are none.
     const panel = panelRef.current
     const firstFocusable = panel?.querySelector<HTMLElement>(FOCUSABLE)
     ;(initialFocusRef?.current ?? firstFocusable ?? panel)?.focus?.()
@@ -59,7 +47,6 @@ function useDialogTrap(
   }, [active])
 }
 
-// ── editor draft for the inline add/edit account form ──────────────────────
 interface AccountDraft {
   mode: 'add' | 'edit'
   editingId: string | null
@@ -78,8 +65,6 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
   const [dirty, setDirty] = useState(false)
   const [acctEditor, setAcctEditor] = useState<AccountDraft | null>(null)
 
-  // Load current config. Also subscribe to live `event: config` pushes, but only
-  // adopt them while the local draft is pristine (don't clobber unsaved edits).
   useEffect(() => {
     let alive = true
     getConfig()
@@ -93,14 +78,8 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
     return subscribeConfig(c => { if (!dirty) setDraft(c) })
   }, [dirty])
 
-  // Focus trap + Escape, scoped to the settings panel. Disabled while the
-  // account editor is open: the editor mounts its own active trap and the
-  // settings panel below is marked `inert` so its controls leave the tab order.
   useDialogTrap(panelRef, { active: !acctEditor, onEscape: onClose })
 
-  // Mark the settings panel inert while the editor overlays it, so its controls
-  // drop out of the tab order / pointer + a11y tree (React 18 has no JSX `inert`
-  // prop, so set the attribute imperatively).
   useEffect(() => {
     const panel = panelRef.current
     if (!panel) return
@@ -193,7 +172,6 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
   )
 }
 
-// ── General ─────────────────────────────────────────────────────────────────
 function GeneralSection({ draft, patch }: { draft: Config; patch: (fn: (c: Config) => Config) => void }) {
   return (
     <Section title="General">
@@ -230,16 +208,10 @@ function GeneralSection({ draft, patch }: { draft: Config; patch: (fn: (c: Confi
   )
 }
 
-// Timezone input with TUI-parity validation: an invalid IANA name (e.g. Foo/Bar)
-// shows an inline error and is NOT committed to the draft (the TUI rejects at
-// entry via isValidTimezone — see src/app.tsx). Empty = System (null). We keep a
-// local text buffer so a mid-edit invalid value can be shown without polluting
-// the persisted config.
 function TimezoneField({ value, onChange }: { value: string | null; onChange: (tz: string | null) => void }) {
   const [text, setText] = useState(value ?? '')
   const [error, setError] = useState(false)
 
-  // Reflect external changes (live config pushes / reset) into the local buffer.
   useEffect(() => { setText(value ?? ''); setError(false) }, [value])
 
   const onInput = (raw: string) => {
@@ -248,7 +220,7 @@ function TimezoneField({ value, onChange }: { value: string | null; onChange: (t
     const trimmed = v.trim()
     if (!trimmed) { setError(false); onChange(null); return }
     if (isValidTimezone(trimmed)) { setError(false); onChange(trimmed) }
-    else setError(true) // keep the bad text visible but don't commit it
+    else setError(true)
   }
 
   return (
@@ -267,7 +239,6 @@ function TimezoneField({ value, onChange }: { value: string | null; onChange: (t
   )
 }
 
-// ── Providers ─────────────────────────────────────────────────────────────────
 function ProvidersSection({ draft, patch }: { draft: Config; patch: (fn: (c: Config) => Config) => void }) {
   const toggle = (pid: ProviderId, enabled: boolean) =>
     patch(c => ({
@@ -308,7 +279,6 @@ function ProvidersSection({ draft, patch }: { draft: Config; patch: (fn: (c: Con
   )
 }
 
-// ── Accounts (W2) ─────────────────────────────────────────────────────────────
 function AccountsSection({ draft, patch, onEdit, onAdd }: {
   draft: Config
   patch: (fn: (c: Config) => Config) => void
@@ -323,7 +293,6 @@ function AccountsSection({ draft, patch, onEdit, onAdd }: {
     accounts: c.accounts.filter(a => a.id !== id),
     activeAccountId: c.activeAccountId === id ? null : c.activeAccountId,
   }))
-  // moveAccount parity: swap with the adjacent index, guarding the ends.
   const move = (idx: number, dir: -1 | 1) => patch(c => {
     const next = [...c.accounts]
     const target = idx + dir
@@ -357,10 +326,6 @@ function AccountsSection({ draft, patch, onEdit, onAdd }: {
                   aria-checked={active}
                   aria-label={`Set ${acc.name} active`}
                   title={active ? 'Active account (click to clear)' : 'Set active'}
-                  // Intentional web-only affordance: clicking the already-active
-                  // radio clears activeAccountId to null (valid persisted state =
-                  // "all"/defaultFocus semantics). The TUI is set-only with no
-                  // per-row clear; this is a deliberate divergence, not a bug.
                   onClick={() => setActive(active ? null : acc.id)}
                   className={`relative inline-flex size-4 shrink-0 items-center justify-center rounded-full border transition ${FOCUS}`}
                   style={{ borderColor: hex }}
@@ -390,7 +355,6 @@ function AccountsSection({ draft, patch, onEdit, onAdd }: {
   )
 }
 
-// ── Inline account add/edit editor (sub-panel over the sheet) ──────────────────
 function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }: {
   editor: AccountDraft
   accounts: Account[]
@@ -403,13 +367,8 @@ function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }: {
   const [error, setError] = useState<string | null>(null)
   const accent = namedColorHex(editor.color)
 
-  // The editor is its own modal: scope a fresh focus trap to its panel so Tab
-  // stays inside it (the settings sheet below is marked inert) and Escape closes
-  // just the editor. Name field gets initial focus, mirroring the TUI.
   useDialogTrap(editorRef, { active: true, onEscape: onCancel, initialFocusRef: nameRef })
 
-  // id preview mirrors the TUI: add => generateAccountId(name, accounts); the
-  // editing account is excluded so its own id doesn't count as a collision.
   const others = editor.mode === 'edit' ? accounts.filter(a => a.id !== editor.editingId) : accounts
   const previewId = editor.mode === 'edit'
     ? (editor.editingId ?? '')
@@ -680,10 +639,7 @@ function HomeDirectoryField({ value, onChange, onEnter }: {
   )
 }
 
-// ── editor draft helpers (parity with TUI openAddAccount / openEditAccount) ────
 function newDraft(cfg: Config): AccountDraft {
-  // TUI seeds provider from the first detected provider; the web sheet has no
-  // detection list, so default to the first provider order entry (claude).
   return {
     mode: 'add', editingId: null,
     providerId: PROVIDER_ORDER[0],
@@ -700,7 +656,6 @@ function toDraft(a: Account): AccountDraft {
   }
 }
 
-// ── small presentational helpers ──────────────────────────────────────────────
 function Section({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
   return (
     <section className="mb-6 last:mb-0">
@@ -737,14 +692,11 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 
 function NumberStepper({ value, min, unit, onChange }: { value: number; min: number; unit: string; onChange: (v: number) => void }) {
   const set = (v: number) => onChange(Math.max(min, Math.round(v)))
-  // Local text buffer so the field can be transiently empty/intermediate while
-  // retyping (e.g. clear "2" to type "20") without snapping to min mid-edit.
-  // The buffer is null while not actively editing → the input shows `value`.
   const [buf, setBuf] = useState<string | null>(null)
   const commit = () => {
     if (buf === null) return
     const n = Number(buf)
-    set(Number.isFinite(n) && buf.trim() !== '' ? n : min) // empty/garbage clamps to min on blur
+    set(Number.isFinite(n) && buf.trim() !== '' ? n : min)
     setBuf(null)
   }
   return (
@@ -758,8 +710,6 @@ function NumberStepper({ value, min, unit, onChange }: { value: number; min: num
         onChange={e => {
           const v = e.target.value
           setBuf(v)
-          // Commit live only for a valid in-range number; leave empty/partial in
-          // the buffer (committed/clamped onBlur) so editing isn't janky.
           const n = Number(v)
           if (v.trim() !== '' && Number.isFinite(n) && n >= min) set(n)
         }}

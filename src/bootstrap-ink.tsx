@@ -43,18 +43,7 @@ export async function bootstrapInk({ interval, config, daemon, mode }: Bootstrap
   )
 
   await waitUntilExit()
-  // FAST QUIT: at this point the React tree is already unmounted, which fired
-  // useDaemon's effect cleanup (a fire-and-forget client.close()). The lingering
-  // event-loop handles are the WS Socket(s) over the Effect runtime + the daemon
-  // ChildProcess — the open WS in particular keeps the loop alive for several
-  // seconds before its close handshake/idle timeout fires, so falling off the end
-  // of cli.tsx (no process.exit) makes `q` feel like a ~4s+ hang.
-  //
-  // We don't need a graceful socket close on quit: daemon.stop() SIGTERMs the
-  // child (frees the port + runs flushDisk), and the child also self-exits when
-  // our stdin write-end closes on parent death (the stdin-close backstop in
-  // daemon-handle.ts). So restore the terminal synchronously and exit promptly
-  // rather than waiting for the WS teardown to drain the loop.
+  // The open WS keeps the event loop alive for seconds; exit promptly instead of waiting for teardown.
   daemon.stop()
   if (isTTY) restoreInputModes()
   if (altScreen) leaveAltScreen()

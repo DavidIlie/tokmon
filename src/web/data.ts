@@ -19,7 +19,6 @@ export interface ResolvedAccount {
 
 export async function resolveAccounts(config: Config): Promise<ResolvedAccount[]> {
   const detected = await detectProviders()
-  // disabledProviders: [] — web shows ALL providers; the TUI still honors config.disabledProviders.
   const accounts = buildAccounts({ ...config, disabledProviders: [] }, detected)
   return accounts.map(a => {
     const p = PROVIDERS[a.providerId]
@@ -32,9 +31,6 @@ export async function resolveAccounts(config: Config): Promise<ResolvedAccount[]
   })
 }
 
-// These intentionally do NOT swallow fetch errors: a missing capability
-// resolves to null (-> 'ready'), but a thrown fetch propagates so the engine
-// can mark the account 'error' instead of conflating it with empty data.
 export async function fetchAccountSummary(account: Account, tz: string): Promise<DashboardData | null> {
   const p = PROVIDERS[account.providerId]
   if (!p.fetchSummary) return null

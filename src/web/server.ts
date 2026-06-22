@@ -9,7 +9,6 @@ import type { WebSnapshot } from './contract'
 import { billingIntervalFor, summaryIntervalFor } from './config-control'
 import { mountWsRpc } from './ws'
 
-// SECURITY: web server must only be reachable from localhost.
 const HOST = '127.0.0.1'
 
 const DEFAULT_PORT = 4317
@@ -29,13 +28,8 @@ export interface StartOptions {
   log?: boolean
 }
 
-// ── Security for retained debug/control GET routes ───────────────────────────
-// /api/data stays lenient for quick local inspection. /api/config remains
-// guarded by loopback Origin/Host + X-Tokmon-Client. WS-RPC owns mutation,
-// refresh, filesystem browsing, snapshots, and config streams.
 function isLoopbackHostHeader(value: string | undefined): boolean {
   if (!value) return false
-  // Strip an optional :port; accept 127.0.0.1, ::1, localhost.
   let host = value.trim().toLowerCase()
   if (host.startsWith('[')) host = host.slice(1, host.indexOf(']') === -1 ? host.length : host.indexOf(']'))
   else host = host.split(':')[0]
@@ -43,7 +37,6 @@ function isLoopbackHostHeader(value: string | undefined): boolean {
 }
 
 function isLoopbackOrigin(origin: string | undefined): boolean {
-  // A missing Origin is allowed (non-browser node clients don't send one).
   if (!origin || origin === 'null') return true
   try {
     const u = new URL(origin)
@@ -80,7 +73,6 @@ function createRouter(
     const path = url.split('?')[0]
     const method = req.method || 'GET'
 
-    // ── Lenient public routes (SPA) ──
     if (path === '/api/data') {
       engine.touch()
       sendJson(res, 200, engine.snapshot() ?? { pending: true })
@@ -174,9 +166,7 @@ function delay(ms: number): Promise<void> {
 
 function listenWithFallback(server: Server, startPort: number): Promise<number> {
   return new Promise((resolve, reject) => {
-    // Port 0 = ask the kernel for a free ephemeral port (the TUI's private
-    // daemon). Bind directly and read the assigned port back from address();
-    // no EADDRINUSE walk applies.
+    // port 0 = OS-assigned ephemeral port; read back from address() with no EADDRINUSE walk.
     if (startPort === 0) {
       server.once('error', reject)
       server.listen(0, HOST, () => {

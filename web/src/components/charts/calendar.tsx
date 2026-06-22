@@ -30,8 +30,6 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
     const dow = new Array(7).fill(0)
     for (const c of cal) dow[dowMonday(parseDate(c.date))] += weightOf(c)
     const busiest = dow.indexOf(Math.max(...dow))
-    // Streak = consecutive calendar DAYS ending at the latest active day (not array
-    // entries — the calendar omits zero days, so gaps must break the streak).
     const activeSet = new Set(active.map(c => c.date))
     let streak = 0
     for (let ms = parseDate(active[active.length - 1].date); activeSet.has(fmtDate(ms)); ms -= DAY) streak++

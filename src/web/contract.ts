@@ -15,8 +15,6 @@ export type {
   ProviderId,
 } from '../providers/types'
 
-// Browser-safe shared config schema. config-schema.ts is node-free, so the SPA
-// can import these via the @shared alias without breaking the Vite build.
 export type { Config, Account } from '../config-schema'
 export {
   normalizeConfig,
@@ -30,14 +28,8 @@ export {
   sanitizeTyped,
 } from '../config-schema'
 
-// Per-account fetch lifecycle. 'ready' is set even when the resolved value is
-// null (e.g. a provider with no dashboard), so the loader can distinguish
-// "resolved to empty" from "still loading" from "fetch threw".
 export type AccountFetchState = 'pending' | 'ready' | 'error'
 
-// Anthropic peak / off-peak pricing clock status. Defined HERE (not re-exported
-// from src/peak.ts) so the browser's @shared import of this module never
-// transitively pulls the node-only ./http dependency that peak.ts uses.
 export interface PeakStatus {
   state: 'peak' | 'off-peak' | 'weekend'
   label: string
@@ -72,8 +64,6 @@ export interface WebSnapshot {
   intervalMs: number
   providers: WebProviderInfo[]
   accounts: WebAccount[]
-  // true while serving cache-hydrated data before the first live rebuild().
   seeded: boolean
-  // global peak/off-peak clock; null when unknown or no claude account present.
   peak: PeakStatus | null
 }

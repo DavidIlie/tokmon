@@ -16,7 +16,6 @@ export interface Entry {
   output: number
   cacheCreate: number
   cacheRead: number
-  /** What cache reads saved vs paying full input rate: cacheRead·(in − cacheRead rate). */
   cacheSavings: number
 }
 
@@ -298,10 +297,6 @@ export function mergeTables(list: TableData[]): TableData {
   }
 }
 
-// Coalesce a per-account scope's tables into one. Shared by the DEGRADED fetch
-// path (fetchScopeTable in app.tsx — maps fetches → coalesce) and the CONNECTED
-// path (pickTable in snapshot-adapter.ts — maps snapshot lookups → coalesce), so
-// the empty-triple / single / merge shape lives in exactly one place.
 export function coalesceTables(list: TableData[]): TableData {
   if (list.length === 0) return { daily: [], weekly: [], monthly: [] }
   if (list.length === 1) return list[0]

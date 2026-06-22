@@ -15,7 +15,6 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
   const usageAccounts = accounts.filter(a => a.hasUsage)
   const usageProviderIds = new Set(usageAccounts.map(a => a.providerId))
 
-  // Only usage providers are filter chips — a billing-only chip would blank every chart.
   const chipProviders = providers.filter(p => usageProviderIds.has(p.id))
   const cardProviderIds = new Set(derived.cardAccounts.map(a => a.providerId))
   const billingProviders = providers.filter(p => !usageProviderIds.has(p.id) && cardProviderIds.has(p.id))

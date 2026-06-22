@@ -36,7 +36,6 @@ export function col(s: string, w: number, align: 'left' | 'right' = 'right'): st
   return align === 'right' ? spaces + s : s + spaces
 }
 
-/** Human countdown to an ISO instant, e.g. "3h 12m", "5d 2h", or "now". */
 export function resetIn(iso: string): string {
   const diff = new Date(iso).getTime() - Date.now()
   if (!Number.isFinite(diff) || diff <= 0) return 'now'

@@ -81,16 +81,9 @@ function isAuthorized(req: IncomingMessage, token: string): boolean {
   const origin = header(req, 'origin')
   if (!isLoopbackHost(host) || !isLoopbackOrigin(origin)) return false
 
-  // Native/CLI clients (the TUI) authenticate with the per-daemon wsToken,
-  // obtained from the spawn handshake or the 0600 lockfile they can read. We do
-  // NOT honor a spoofable `X-Tokmon-Client` header — any local process could
-  // send it and bypass the token (defeating the token + the lockfile perms).
+  // X-Tokmon-Client header is NOT trusted for auth — any local process could spoof it bypassing the token.
   if (wsToken(req) === token) return true
 
-  // The same-origin browser dashboard can't set custom headers on a WS upgrade
-  // and can't read the lockfile, so it's allowed by exact same-origin loopback
-  // (a malicious cross-origin page carries its own Origin → rejected, and can't
-  // forge the Origin header from JS).
   return isSameOrigin(req)
 }
 

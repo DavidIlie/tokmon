@@ -67,9 +67,7 @@ async function readMacKeychain(): Promise<ClaudeAuth | null> {
 
 async function getAuth(homeDir?: string): Promise<ClaudeAuth | null> {
   const isDefault = !homeDir || homeDir === homedir()
-  // Default account: macOS keeps its OAuth in the "Claude Code-credentials"
-  // keychain entry, so try that first. A custom-homeDir account keeps creds in
-  // <dir>/.credentials.json, so try the file first for those.
+  // macOS default account: keychain ("Claude Code-credentials") first; custom-homeDir accounts use .credentials.json first.
   if (isDefault) {
     if (process.platform === 'darwin') {
       const auth = await readMacKeychain()
@@ -77,10 +75,7 @@ async function getAuth(homeDir?: string): Promise<ClaudeAuth | null> {
     }
     return readCredentialsFile(homeDir)
   }
-  // Non-default account: prefer its own credentials file, but fall back to the
-  // keychain on macOS — Claude Code sometimes stores creds only in the keychain
-  // even for a custom config dir, which previously left these accounts unable to
-  // authenticate ("no OAuth token" / keychain-not-found for a 2nd account).
+  // Non-default: file first, but fall back to keychain — Claude Code sometimes stores creds only there even for custom dirs.
   const fileAuth = await readCredentialsFile(homeDir)
   if (fileAuth) return fileAuth
   if (process.platform === 'darwin') return readMacKeychain()

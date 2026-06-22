@@ -31,7 +31,6 @@ export function getProvider(id: ProviderId): Provider {
 
 export const ALL_PROVIDERS: Provider[] = PROVIDER_ORDER.map(id => PROVIDERS[id])
 
-/** Provider ids that look present — tool installed (PATH/app) or local data exists. */
 export async function detectProviders(): Promise<ProviderId[]> {
   const found = await Promise.all(
     PROVIDER_ORDER.map(async id => {

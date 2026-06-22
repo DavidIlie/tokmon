@@ -123,8 +123,6 @@ function RootLayout() {
   const pathname = useRouterState({ select: s => s.location.pathname })
   const activeKey: TabKey = (TABS.find(t => pathOf(t.key) === pathname)?.key) ?? 'overview'
 
-  // Drop stale provider/account/model ids (e.g. from a shared URL) once the snapshot
-  // reveals them — otherwise a vanished id silently empties every panel.
   useEffect(() => {
     if (!snapshot) return
     const provIds = new Set<string>(snapshot.providers.map(p => p.id))
@@ -217,7 +215,6 @@ function RootLayout() {
         tokmon{snapshot?.version ? ` v${snapshot.version}` : ''} · by David Ilie · live LLM usage dashboard
       </footer>
 
-      {/* Settings sheet lives OUTSIDE the usage gate so it works with zero usage. */}
       {showSettings && <SettingsSheet onClose={() => setShowSettings(false)} />}
     </div>
   )
@@ -244,7 +241,6 @@ const rootRoute = createRootRoute({ component: RootLayout })
 const tabRoute = (key: TabKey, component: () => JSX.Element) =>
   createRoute({ getParentRoute: () => rootRoute, path: pathOf(key), component })
 const routeTree = rootRoute.addChildren([
-  // Bare load ("#/") and "#/overview" both render the overview.
   createRoute({ getParentRoute: () => rootRoute, path: '/', component: OverviewRoute }),
   tabRoute('overview', OverviewRoute),
   tabRoute('analytics', AnalyticsRoute),

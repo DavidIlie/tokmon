@@ -1,8 +1,3 @@
-// Renderer-agnostic React hook over the daemon client. Uses `react` only (no
-// ink, no DOM), so it works in the Ink TUI today and any React renderer later.
-// It owns the subscribe lifecycle and surfaces the latest snapshot + connection
-// state; setConfig/refresh/browse are passed through to the transport.
-
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Config, WebSnapshot } from '../web/contract'
 import {
@@ -17,23 +12,17 @@ export type ConnState = Exclude<RpcConnState, 'closed'>
 export interface UseDaemon {
   snapshot: WebSnapshot | null
   conn: ConnState
-  // The daemon persists + normalizes; the normalized echo is returned and also
-  // arrives via the WS config stream for reconciliation.
   setConfig: (next: Config) => Promise<Config>
   refresh: (scope?: RefreshScope) => Promise<void>
   browse: (path: string) => Promise<FsListing>
-  // The latest config pushed over the `config` event (null until first PUT).
   config: Config | null
 }
 
-// baseUrl null = degraded/not-yet-resolved: the hook stays inert (conn stays
-// 'connecting', snapshot null) so the caller can run its in-process fallback.
 export function useDaemon(baseUrl: string | null, wsToken: string | null): UseDaemon {
   const [snapshot, setSnapshot] = useState<WebSnapshot | null>(null)
   const [conn, setConn] = useState<ConnState>('connecting')
   const [config, setConfigState] = useState<Config | null>(null)
 
-  // Recreate the transport only when the daemon endpoint changes.
   const client = useMemo(() => {
     if (!baseUrl || !wsToken) return null
     return createDaemonRpcClient(baseUrl, {

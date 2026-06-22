@@ -11,12 +11,6 @@ import { truncateName, metricValueText } from './shared'
 
 type Group = { provider: ProviderId; accounts: Account[] }
 
-// Source-agnostic readiness input. The daemon path passes a WebAccount's
-// {summaryState, billingState, billing}; the in-process (degraded) path
-// synthesizes the same shape from presence via statsReadyInput() below. Keeping
-// accountReady on this shape (not AccountStats) makes the S6 switch a one-line
-// input swap and resolves the dashboard===null ambiguity: 'ready' is driven by
-// the fetch state map, not by whether dashboard happens to be non-null.
 export interface ReadyInput {
   summaryState: AccountFetchState
   billingState: AccountFetchState
@@ -26,18 +20,12 @@ export interface ReadyInput {
 export function accountReady(s: ReadyInput | undefined, providerId: ProviderId): boolean {
   if (!s) return false
   const p = PROVIDERS[providerId]
-  // An errored billing fetch is settled (the row stops spinning, shows the
-  // error). Mirror the old behavior so a billing-only provider that errors
-  // doesn't hang the loader.
   if (p.hasBilling && (s.billingState === 'error' || s.billing?.error)) return true
   if (p.hasUsage && s.summaryState !== 'ready' && s.summaryState !== 'error') return false
   if (p.hasBilling && s.billingState !== 'ready' && s.billingState !== 'error') return false
   return true
 }
 
-// Adapter for the in-process/degraded path, which holds AccountStats (no state
-// maps). Presence stands in for 'ready' exactly as the old accountReady did;
-// a billing.error is surfaced as billingState 'error'.
 export function statsReadyInput(s: AccountStats | undefined): ReadyInput | undefined {
   if (!s) return undefined
   return {
@@ -65,17 +53,13 @@ function headlineFor(group: Group, items: (AccountStats | undefined)[]): string 
   return billing.plan ?? 'no data'
 }
 
-const STAGGER_FRAMES = 2   // ~160ms between row reveals at the 80ms tick
+const STAGGER_FRAMES = 2
 
 export function LoadingView({ groups, stats, cols, rows, readyInput }: {
   groups: Group[]
   stats: Map<string, AccountStats>
   cols: number
   rows: number
-  // Source-agnostic readiness resolver. CONNECTED mode passes one backed by the
-  // daemon snapshot's fetch-state maps; DEGRADED (default) falls back to
-  // presence via statsReadyInput so the in-process path is byte-for-byte the
-  // same as before.
   readyInput?: (id: string) => ReadyInput | undefined
 }) {
   const resolveReady = readyInput ?? ((id: string) => statsReadyInput(stats.get(id)))

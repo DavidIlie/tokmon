@@ -18,7 +18,6 @@ export type MetricFormat =
 export interface Metric {
   label: string
   used: number
-  /** null = no defined ceiling (show the used value alone). */
   limit: number | null
   format: MetricFormat
   resetsAt?: string | null

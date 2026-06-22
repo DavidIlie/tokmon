@@ -100,11 +100,6 @@ export async function cursorBilling(account: Account): Promise<BillingResult> {
       summary: lines ? `${lines} · ${spendLabel}` : spendLabel,
     }
   }
-  // Keep ALL models (no slice): the daemon's snapshot is the sole source for the
-  // TUI Cursor spend table (toCursorRows), which previously read the full,
-  // unsliced cursorModelSpend list. Each consumer caps its own display (the SPA
-  // slices to 4 in cards.tsx, the TUI paginates), so shipping the full list
-  // preserves byte-for-byte parity with the old in-process path.
   const modelSpend = spend?.models?.length
     ? spend.models.map(m => ({ name: m.name, usd: finite(m.usd), requests: finite(m.requests) }))
     : null

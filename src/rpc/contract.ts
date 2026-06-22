@@ -88,9 +88,6 @@ export const FsListingSchema = Schema.Struct({
 
 export type FsListing = typeof FsListingSchema.Type
 
-// WebSnapshot is assembled from several provider sources. Encode through a JSON
-// round-trip so the RPC stream cannot fail on JSON.stringify-compatible values
-// such as NaN/Infinity/undefined, which JSON itself normalizes.
 export const WebSnapshotSchema = jsonSafePassthrough<WebSnapshot>()
 
 const EmptyPayloadSchema = Schema.Struct({})
