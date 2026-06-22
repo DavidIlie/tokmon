@@ -760,16 +760,20 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   // directly, exactly as before.
   // Functional setState so two config-mutating keypresses before a re-render
   // serialize (the second reads the first's result, not a stale render closure).
-  // The side-effect (daemon PUT / disk save) is fired from the captured `next`
-  // AFTER setConfig returns — not inside the updater — so a StrictMode double-
-  // invoke of the updater can't double-fire it. useCallback keeps the identity
-  // stable for the cycle* handlers (P2) that depend on it.
+  // The persistence side-effect fires INSIDE the updater: Ink's reconciler runs
+  // it synchronously and exactly once (tokmon mounts <App> with no StrictMode),
+  // so `next` is always the real value — firing it after setConfig would read an
+  // undefined `next` because the updater is deferred, silently dropping every
+  // write (onboarding/settings/accounts never persisted). saveConfig + the daemon
+  // PUT are both idempotent, so a stray re-invoke is harmless. useCallback keeps
+  // the identity stable for the cycle* handlers (P2) that depend on it.
   const updateConfig = useCallback((fn: (prev: Config) => Config): void => {
-    let next: Config | undefined
-    setConfig(prev => { next = fn(prev ?? DEFAULTS); return next })
-    if (next === undefined) return
-    if (connected) { void daemon.setConfig(next).catch(() => {}) }
-    else saveConfig(next)
+    setConfig(prev => {
+      const next = fn(prev ?? DEFAULTS)
+      if (connected) { void daemon.setConfig(next).catch(() => {}) }
+      else void saveConfig(next)
+      return next
+    })
   }, [connected, daemon])
 
   // Reconcile the optimistic config with the daemon's normalized echo (arrives
