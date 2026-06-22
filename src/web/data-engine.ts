@@ -122,12 +122,13 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     if (Date.now() - lastPersist < SNAPSHOT_CACHE_THROTTLE_MS) return
     lastPersist = Date.now()
     try {
-      mkdirSync(cacheDir(), { recursive: true })
+      mkdirSync(cacheDir(), { recursive: true, mode: 0o700 })
       // Atomic write (tmp + rename, like lockfile.ts): if more than one tokmon
       // process runs concurrently (e.g. `tokmon serve` + a TUI's spawned child),
       // last-writer-wins instead of a torn/corrupt JSON read by the other side.
+      // 0o600: the snapshot holds usage/billing data — keep it owner-only.
       const tmp = join(cacheDir(), `web-snapshot.json.${process.pid}.tmp`)
-      writeFileSync(tmp, JSON.stringify(current))
+      writeFileSync(tmp, JSON.stringify(current), { mode: 0o600 })
       renameSync(tmp, snapshotCacheFile())
     } catch {}
   }

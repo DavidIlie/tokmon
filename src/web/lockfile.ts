@@ -36,9 +36,11 @@ export function readLock(): DaemonLock | null {
 
 export function writeLock(lock: DaemonLock): void {
   try {
-    mkdirSync(cacheDir(), { recursive: true })
+    mkdirSync(cacheDir(), { recursive: true, mode: 0o700 })
     const tmp = join(cacheDir(), `daemon.json.${process.pid}.tmp`)
-    writeFileSync(tmp, JSON.stringify(lock))
+    // 0o600: the lock holds the wsToken credential — keep it owner-only so
+    // other local users on a shared machine can't read it + hijack the daemon.
+    writeFileSync(tmp, JSON.stringify(lock), { mode: 0o600 })
     renameSync(tmp, lockfilePath())
   } catch {}
 }
