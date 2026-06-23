@@ -64,6 +64,7 @@ export function assembleSnapshot(opts: {
 }): WebSnapshot {
   const accounts: WebAccount[] = opts.resolved.map(r => {
     const u = opts.usage.get(r.account.id)
+    const billing = opts.billing.get(r.account.id) ?? null
     return {
       id: r.account.id,
       providerId: r.account.providerId,
@@ -71,9 +72,12 @@ export function assembleSnapshot(opts: {
       color: r.color,
       hasUsage: r.hasUsage,
       hasBilling: r.hasBilling,
+      email: billing?.email ?? null,
+      displayName: billing?.displayName ?? null,
+      plan: billing?.plan ?? null,
       dashboard: u?.dashboard ?? null,
       table: u?.table ?? null,
-      billing: opts.billing.get(r.account.id) ?? null,
+      billing,
       summaryState: opts.summaryState?.get(r.account.id) ?? 'pending',
       billingState: opts.billingState?.get(r.account.id) ?? 'pending',
       tableState: opts.tableState?.get(r.account.id) ?? 'pending',

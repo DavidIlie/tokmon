@@ -65,6 +65,24 @@ async function readState(db: string, key: string): Promise<{ value: string | nul
   return { value: typeof raw === 'string' && raw.trim() ? raw.trim() : null, status: r.status }
 }
 
+function cleanStoredString(value: string | null): string | undefined {
+  if (!value) return undefined
+  try {
+    const parsed = JSON.parse(value)
+    if (typeof parsed === 'string' && parsed.trim()) return parsed.trim()
+  } catch {
+  }
+  const trimmed = value.trim().replace(/^"|"$/g, '')
+  return trimmed || undefined
+}
+
+function identityFields(email: string | undefined, displayName?: string): Pick<BillingResult, 'email' | 'displayName'> {
+  return {
+    email: email ?? null,
+    displayName: displayName ?? null,
+  }
+}
+
 async function connectPost(url: string, token: string): Promise<any | null> {
   try {
     const res = await fetch(url, {
@@ -108,17 +126,21 @@ export async function cursorBilling(account: Account): Promise<BillingResult> {
 
 async function cursorBillingCore(account: Account): Promise<BillingResult> {
   const db = cursorStateDb(account.homeDir)
-  const [tokenRes, membershipRes] = await Promise.all([
+  const [tokenRes, membershipRes, emailRes, nameRes] = await Promise.all([
     readState(db, 'cursorAuth/accessToken'),
     readState(db, 'cursorAuth/stripeMembershipType'),
+    readState(db, 'cursorAuth/cachedEmail'),
+    readState(db, 'cursorAuth/cachedName'),
   ])
   const token = tokenRes.value
   const membership = membershipRes.value
+  const email = cleanStoredString(emailRes.value)
+  const displayName = cleanStoredString(nameRes.value)
   const planFallback = membership ? membership.charAt(0).toUpperCase() + membership.slice(1) : null
 
   if (!token) {
     const error = tokenRes.status === 'ok' ? 'Not signed in — open Cursor' : sqliteStatusMessage(tokenRes.status)
-    return { plan: planFallback, metrics: [], error }
+    return { plan: planFallback, metrics: [], error, ...identityFields(email, displayName) }
   }
 
   const [usage, planInfo] = await Promise.all([
@@ -127,7 +149,7 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
   ])
   if (!usage || usage.__status) {
     const expired = usage?.__status === 401 || usage?.__status === 403
-    return { plan: planFallback, metrics: [], error: expired ? 'Token expired — re-open Cursor' : 'Cursor API error' }
+    return { plan: planFallback, metrics: [], error: expired ? 'Token expired — re-open Cursor' : 'Cursor API error', ...identityFields(email, displayName) }
   }
 
   const planName = planInfo?.planInfo?.planName ?? planFallback
@@ -183,7 +205,7 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
   }
 
   if (metrics.length === 0) {
-    return { plan, metrics: [], error: usage.enabled === false ? 'No active subscription' : 'No usage data' }
+    return { plan, metrics: [], error: usage.enabled === false ? 'No active subscription' : 'No usage data', ...identityFields(email, displayName) }
   }
-  return { plan, metrics, error: null }
+  return { plan, metrics, error: null, ...identityFields(email, displayName) }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { type Config } from '@shared'
+import { type Config, type WebSnapshot } from '@shared'
 import { getConfig, putConfig, subscribeConfig } from '../lib/config-client'
 import { Check, X } from './icons'
 import { FOCUS, useDialogTrap } from './settings/use-dialog-trap'
@@ -9,7 +9,7 @@ import { ProvidersSection } from './settings/providers-section'
 import { AccountsSection } from './settings/accounts-section'
 import { AccountEditor } from './settings/account-editor'
 
-export function SettingsSheet({ onClose }: { onClose: () => void }) {
+export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snapshot: WebSnapshot | null }) {
   const panelRef = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState<Config | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -84,7 +84,7 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
               <GeneralSection draft={draft} patch={patch} />
               <ProvidersSection draft={draft} patch={patch} />
               <AccountsSection
-                draft={draft} patch={patch}
+                draft={draft} patch={patch} snapshot={snapshot}
                 onEdit={a => setAcctEditor(toDraft(a))}
                 onConfigure={row => setAcctEditor(newDraft(draft, {
                   providerId: row.providerId,

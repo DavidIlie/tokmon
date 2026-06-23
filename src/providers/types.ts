@@ -28,6 +28,8 @@ export interface BillingResult {
   plan: string | null
   metrics: Metric[]
   error: string | null
+  email?: string | null
+  displayName?: string | null
   activity?: { series: number[]; summary: string } | null
   modelSpend?: { name: string; usd: number; requests: number }[] | null
 }

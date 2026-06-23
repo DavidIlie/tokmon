@@ -24,12 +24,18 @@ export interface AccountForm {
   error: string | null
 }
 
+export interface AccountIdentity {
+  email?: string | null
+  displayName?: string | null
+  plan?: string | null
+}
+
 export const FORM_FIELDS: FormField[] = ['provider', 'name', 'homeDir', 'color']
 
 export { COLOR_PALETTE } from '../config'
 
 export const SettingsView = memo(function SettingsView({
-  config, cursor, tzEdit, tzCaret, tzError, resolvedTz, accountForm, activeAccountId, trackedAccounts,
+  config, cursor, tzEdit, tzCaret, tzError, resolvedTz, accountForm, activeAccountId, trackedAccounts, accountIdentities,
 }: {
   config: Config
   cursor: number
@@ -40,6 +46,7 @@ export const SettingsView = memo(function SettingsView({
   accountForm: AccountForm | null
   activeAccountId: string | null
   trackedAccounts: TrackedAccountRow[]
+  accountIdentities: Map<string, AccountIdentity>
 }) {
   if (accountForm) return <AccountFormView form={accountForm} accounts={config.accounts} />
 
@@ -108,12 +115,16 @@ export const SettingsView = memo(function SettingsView({
         const selected = cursor === idx
         const isActive = acc.id === activeAccountId
         const provider = PROVIDERS[acc.providerId]
+        const identity = accountIdentities.get(acc.id)
+        const identityLabel = identity?.email || identity?.displayName || acc.name
+        const plan = identity?.plan ?? null
         return (
           <Box key={`${acc.source}:${acc.id}`}>
             <Text color={selected ? 'green' : undefined}>{selected ? glyphs().caretR : ' '} </Text>
             <Text color={acc.color || provider.color}>{isActive ? glyphs().dot : glyphs().radioOff} </Text>
-            <Box width={16}><Text bold>{truncateName(acc.name, 15)}</Text></Box>
+            <Box width={28}><Text bold>{truncateName(identityLabel, 27)}</Text></Box>
             <Box width={9}><Text color={provider.color}>{provider.name}</Text></Box>
+            <Box width={18}><Text dimColor>{plan ? truncateName(plan, 17) : ''}</Text></Box>
             <Box width={12}><Text dimColor>{acc.source === 'auto' ? 'auto tracking' : 'configured'}</Text></Box>
             <Text dimColor>{truncateName(acc.homeDir, 24)}</Text>
           </Box>

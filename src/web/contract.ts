@@ -44,6 +44,9 @@ export interface WebAccount {
   color: string
   hasUsage: boolean
   hasBilling: boolean
+  email?: string | null
+  displayName?: string | null
+  plan?: string | null
   dashboard: DashboardData | null
   table: TableData | null
   billing: BillingResult | null

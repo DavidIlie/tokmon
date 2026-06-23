@@ -215,7 +215,7 @@ function RootLayout() {
         tokmon{snapshot?.version ? ` v${snapshot.version}` : ''} · by David Ilie · live LLM usage dashboard
       </footer>
 
-      {showSettings && <SettingsSheet onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsSheet snapshot={snapshot} onClose={() => setShowSettings(false)} />}
     </div>
   )
 }

@@ -1,12 +1,20 @@
-import { getTrackedAccountRows, PROVIDER_META, type Account, type Config, type TrackedAccountRow } from '@shared'
+import { getTrackedAccountRows, PROVIDER_META, type Account, type Config, type TrackedAccountRow, type WebAccount, type WebSnapshot } from '@shared'
 import { namedColorHex } from '../../lib/colors'
 import { ChevronUp, ChevronDown, Pencil, Plus, Trash } from '../icons'
 import { FOCUS } from './use-dialog-trap'
 import { Section, IconBtn } from './primitives'
 
-export function AccountsSection({ draft, patch, onEdit, onConfigure, onAdd }: {
+function accountFromSnapshot(row: TrackedAccountRow, snapshot: WebSnapshot | null): WebAccount | null {
+  if (!snapshot) return null
+  return snapshot.accounts.find(account => account.id === row.id)
+    ?? (row.source === 'auto' ? snapshot.accounts.find(account => account.providerId === row.providerId) : null)
+    ?? null
+}
+
+export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, onAdd }: {
   draft: Config
   patch: (fn: (c: Config) => Config) => void
+  snapshot: WebSnapshot | null
   onEdit: (a: Account) => void
   onConfigure: (row: TrackedAccountRow) => void
   onAdd: () => void
@@ -42,6 +50,9 @@ export function AccountsSection({ draft, patch, onEdit, onConfigure, onAdd }: {
         <ul className="flex flex-col gap-1.5" role="radiogroup" aria-label="Active account">
           {accounts.map(acc => {
             const meta = PROVIDER_META[acc.providerId]
+            const live = accountFromSnapshot(acc, snapshot)
+            const identity = live?.email || live?.displayName || acc.name || meta.name
+            const plan = live?.plan ?? live?.billing?.plan ?? null
             const hex = namedColorHex(acc.color || meta.color)
             const active = acc.id === draft.activeAccountId
             const configured = acc.source === 'configured'
@@ -62,8 +73,11 @@ export function AccountsSection({ draft, patch, onEdit, onConfigure, onAdd }: {
                 <span className="size-2.5 shrink-0 rounded-full" style={{ background: hex }} aria-hidden />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate text-sm text-fg-bright">{acc.name}</span>
+                    <span className="truncate text-sm text-fg-bright">{identity}</span>
                     <span className="shrink-0 rounded bg-bg-3 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fg-dim">{meta.name}</span>
+                    {plan && (
+                      <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-dim">{plan}</span>
+                    )}
                     <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fg-faint">
                       {acc.source === 'auto' ? 'auto' : 'configured'}
                     </span>

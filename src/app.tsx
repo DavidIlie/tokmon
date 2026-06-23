@@ -26,7 +26,7 @@ import { Onboarding, type OnboardItem } from './ui/onboarding'
 import { LoadingView, accountReady, statsReadyInput, type ReadyInput } from './ui/loading'
 import {
   SettingsView, ACCOUNT_ROWS_START, COLOR_PALETTE, FORM_FIELDS,
-  type AccountForm,
+  type AccountForm, type AccountIdentity,
 } from './ui/settings'
 import { deriveSlots, findActiveSlot, computeChrome } from './ui/app-layout.logic'
 import { ResizingView } from './ui/resizing'
@@ -159,6 +159,19 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     () => connected ? toStatsMap(snapshot, accounts) : statsLocal,
     [connected, snapshot, accounts, statsLocal],
   )
+  const accountIdentities = useMemo(() => {
+    const out = new Map<string, AccountIdentity>()
+    for (const [id, stat] of stats) {
+      const billing = stat.billing
+      if (!billing) continue
+      out.set(id, {
+        email: billing.email ?? null,
+        displayName: billing.displayName ?? null,
+        plan: billing.plan ?? null,
+      })
+    }
+    return out
+  }, [stats])
   const showPeak = accounts.some(a => a.providerId === 'claude')
   const peak = connected ? (showPeak ? (snapshot?.peak ?? null) : null) : peakLocal
   const updated = useMemo(
@@ -788,6 +801,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
           accountForm={accountForm}
           activeAccountId={cfg.activeAccountId}
           trackedAccounts={trackedAccountRows}
+          accountIdentities={accountIdentities}
         />
       ) : (
         <>

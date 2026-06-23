@@ -27,6 +27,53 @@ interface ClaudeAuth {
   rateLimitTier?: string
 }
 
+interface ClaudeIdentity {
+  email?: string
+  displayName?: string
+  plan?: string
+}
+
+function titleWords(value: string): string {
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ')
+}
+
+function claudeOrgPlanLabel(orgType: unknown): string | null {
+  if (typeof orgType !== 'string' || !orgType.trim()) return null
+  const normalized = orgType.trim().toLowerCase()
+  const stripped = normalized.startsWith('claude_') ? normalized.slice('claude_'.length) : normalized
+  const label = titleWords(stripped)
+  return label ? `Claude ${label}` : null
+}
+
+async function readClaudeIdentity(homeDir?: string): Promise<ClaudeIdentity> {
+  const base = homeDir ? expandHome(homeDir) : homedir()
+  try {
+    const parsed = JSON.parse(await readFile(join(base, '.claude.json'), 'utf-8'))
+    const oauth = parsed?.oauthAccount
+    const email = typeof oauth?.emailAddress === 'string' && oauth.emailAddress.trim()
+      ? oauth.emailAddress.trim()
+      : undefined
+    const displayName = typeof oauth?.displayName === 'string' && oauth.displayName.trim()
+      ? oauth.displayName.trim()
+      : undefined
+    const plan = claudeOrgPlanLabel(parsed?.organizationType)
+    return { email, displayName, plan: plan ?? undefined }
+  } catch {
+    return {}
+  }
+}
+
+function identityFields(identity: ClaudeIdentity): Pick<BillingResult, 'email' | 'displayName'> {
+  return {
+    email: identity.email ?? null,
+    displayName: identity.displayName ?? null,
+  }
+}
+
 function parseAuth(raw: string): ClaudeAuth | null {
   try {
     const creds = JSON.parse(raw)
@@ -96,9 +143,12 @@ function usageMetric(label: string, window: { utilization?: unknown; resets_at?:
 }
 
 export async function claudeBilling(account: Account): Promise<BillingResult> {
-  const auth = await getAuth(account.homeDir)
-  if (!auth) return { plan: null, metrics: [], error: 'No OAuth token — run claude and log in' }
-  const plan = planLabel(auth)
+  const [auth, identity] = await Promise.all([
+    getAuth(account.homeDir),
+    readClaudeIdentity(account.homeDir),
+  ])
+  if (!auth) return { plan: identity.plan ?? null, metrics: [], error: 'No OAuth token — run claude and log in', ...identityFields(identity) }
+  const plan = identity.plan ?? planLabel(auth)
 
   try {
     const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
@@ -110,12 +160,12 @@ export async function claudeBilling(account: Account): Promise<BillingResult> {
       signal: AbortSignal.timeout(10000),
     })
 
-    if (res.status === 429) return { plan, metrics: [], error: 'Rate limited — retrying next poll' }
-    if (res.status === 401) return { plan, metrics: [], error: 'Token expired — restart Claude Code' }
-    if (!res.ok) return { plan, metrics: [], error: `API ${res.status}` }
+    if (res.status === 429) return { plan, metrics: [], error: 'Rate limited — retrying next poll', ...identityFields(identity) }
+    if (res.status === 401) return { plan, metrics: [], error: 'Token expired — restart Claude Code', ...identityFields(identity) }
+    if (!res.ok) return { plan, metrics: [], error: `API ${res.status}`, ...identityFields(identity) }
 
     const data = await readJson<OAuthResponse>(res)
-    if (!data) return { plan, metrics: [], error: 'Unexpected API response' }
+    if (!data) return { plan, metrics: [], error: 'Unexpected API response', ...identityFields(identity) }
     const metrics: Metric[] = []
 
     const fiveHour = usageMetric('5h', data.five_hour, true)
@@ -134,8 +184,8 @@ export async function claudeBilling(account: Account): Promise<BillingResult> {
       })
     }
 
-    return { plan, metrics, error: null }
+    return { plan, metrics, error: null, ...identityFields(identity) }
   } catch {
-    return { plan, metrics: [], error: 'Network error' }
+    return { plan, metrics: [], error: 'Network error', ...identityFields(identity) }
   }
 }

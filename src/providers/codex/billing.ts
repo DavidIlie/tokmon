@@ -13,7 +13,59 @@ import { codexHomes } from './usage'
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
 const CREDIT_USD_RATE = 0.04
 
-interface CodexAuth { accessToken: string; accountId?: string }
+interface CodexAuth {
+  accessToken: string
+  accountId?: string
+  email?: string
+  displayName?: string
+  plan?: string
+}
+
+function decodeBase64UrlJson(segment: string): any | null {
+  try {
+    const normalized = segment.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4)
+    return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'))
+  } catch {
+    return null
+  }
+}
+
+function chatGptPlanLabel(planType: unknown): string | null {
+  if (typeof planType !== 'string' || !planType.trim()) return null
+  const p = planType.trim().toLowerCase()
+  const labels: Record<string, string> = {
+    free: 'ChatGPT Free',
+    plus: 'ChatGPT Plus',
+    pro: 'ChatGPT Pro',
+    team: 'ChatGPT Team',
+    enterprise: 'ChatGPT Enterprise',
+    edu: 'ChatGPT Edu',
+  }
+  if (labels[p]) return labels[p]
+  return `ChatGPT ${p.charAt(0).toUpperCase()}${p.slice(1)}`
+}
+
+function identityFromIdToken(idToken: unknown): Pick<CodexAuth, 'email' | 'displayName' | 'plan'> {
+  if (typeof idToken !== 'string' || !idToken.includes('.')) return {}
+  const payload = decodeBase64UrlJson(idToken.split('.')[1])
+  if (!payload || typeof payload !== 'object') return {}
+  const email = typeof payload.email === 'string' && payload.email.trim() ? payload.email.trim() : undefined
+  const displayName = typeof payload.name === 'string' && payload.name.trim()
+    ? payload.name.trim()
+    : typeof payload.given_name === 'string' && payload.given_name.trim()
+      ? payload.given_name.trim()
+      : undefined
+  const plan = chatGptPlanLabel(payload['https://api.openai.com/auth']?.chatgpt_plan_type)
+  return { email, displayName, plan: plan ?? undefined }
+}
+
+function identityFields(auth: CodexAuth | null): Pick<BillingResult, 'email' | 'displayName'> {
+  return {
+    email: auth?.email ?? null,
+    displayName: auth?.displayName ?? null,
+  }
+}
 
 async function readAuthFile(home: string): Promise<CodexAuth | null> {
   try {
@@ -21,7 +73,7 @@ async function readAuthFile(home: string): Promise<CodexAuth | null> {
     const auth = JSON.parse(raw)
     const accessToken = auth?.tokens?.access_token
     if (!accessToken) return null
-    return { accessToken, accountId: auth?.tokens?.account_id }
+    return { accessToken, accountId: auth?.tokens?.account_id, ...identityFromIdToken(auth?.tokens?.id_token) }
   } catch {
     return null
   }
@@ -34,7 +86,7 @@ async function readKeychainAuth(): Promise<CodexAuth | null> {
     const auth = JSON.parse(raw)
     const accessToken = auth?.tokens?.access_token
     if (!accessToken) return null
-    return { accessToken, accountId: auth?.tokens?.account_id }
+    return { accessToken, accountId: auth?.tokens?.account_id, ...identityFromIdToken(auth?.tokens?.id_token) }
   } catch {
     return null
   }
@@ -103,7 +155,7 @@ async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {
     }
 
     if (metrics.length === 0) return null
-    return { plan: planLabel(data.plan_type), metrics, error: null }
+    return { plan: auth.plan ?? planLabel(data.plan_type), metrics, error: null, ...identityFields(auth) }
   } catch {
     return null
   }
@@ -127,7 +179,7 @@ async function newestRolloutFile(homeDir?: string): Promise<string | null> {
   return best?.path ?? null
 }
 
-async function snapshotBilling(homeDir?: string): Promise<BillingResult | null> {
+async function snapshotBilling(homeDir?: string, auth: CodexAuth | null = null): Promise<BillingResult | null> {
   const path = await newestRolloutFile(homeDir)
   if (!path) return null
   let last: any = null
@@ -157,7 +209,7 @@ async function snapshotBilling(homeDir?: string): Promise<BillingResult | null> 
     metrics.push({ label: 'Credits', used: balance * CREDIT_USD_RATE, limit: null, format: { kind: 'dollars' } })
   }
   if (metrics.length === 0) return null
-  return { plan: planLabel(last.plan_type), metrics, error: null }
+  return { plan: auth?.plan ?? planLabel(last.plan_type), metrics, error: null, ...identityFields(auth) }
 }
 
 export async function codexBilling(account: Account): Promise<BillingResult> {
@@ -166,11 +218,12 @@ export async function codexBilling(account: Account): Promise<BillingResult> {
     const live = await liveBilling(auth)
     if (live) return live
   }
-  const snap = await snapshotBilling(account.homeDir)
+  const snap = await snapshotBilling(account.homeDir, auth)
   if (snap) return snap
   return {
-    plan: null,
+    plan: auth?.plan ?? null,
     metrics: [],
     error: auth ? 'Usage API failed — run codex to refresh' : 'Not logged in — run codex',
+    ...identityFields(auth),
   }
 }
