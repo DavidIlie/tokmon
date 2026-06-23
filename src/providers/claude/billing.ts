@@ -87,6 +87,14 @@ function planLabel(auth: ClaudeAuth): string | null {
 const pct = (used: number, resets?: string | null, primary?: boolean): Metric =>
   percentMetric('', used, resets ?? null, primary)
 
+function usageMetric(label: string, window: { utilization?: unknown; resets_at?: unknown } | null | undefined, primary?: boolean): Metric | null {
+  if (!window || typeof window.utilization !== 'number' || !Number.isFinite(window.utilization)) return null
+  const resets = typeof window.resets_at === 'string' && window.resets_at.trim()
+    ? resetIn(window.resets_at)
+    : null
+  return { ...pct(window.utilization, resets, primary), label }
+}
+
 export async function claudeBilling(account: Account): Promise<BillingResult> {
   const auth = await getAuth(account.homeDir)
   if (!auth) return { plan: null, metrics: [], error: 'No OAuth token — run claude and log in' }
@@ -110,15 +118,12 @@ export async function claudeBilling(account: Account): Promise<BillingResult> {
     if (!data) return { plan, metrics: [], error: 'Unexpected API response' }
     const metrics: Metric[] = []
 
-    if (data.five_hour) {
-      metrics.push({ ...pct(data.five_hour.utilization, resetIn(data.five_hour.resets_at), true), label: '5h' })
-    }
-    if (data.seven_day) {
-      metrics.push({ ...pct(data.seven_day.utilization, resetIn(data.seven_day.resets_at)), label: 'Week' })
-    }
-    if (data.seven_day_sonnet) {
-      metrics.push({ ...pct(data.seven_day_sonnet.utilization), label: 'Sonnet' })
-    }
+    const fiveHour = usageMetric('5h', data.five_hour, true)
+    if (fiveHour) metrics.push(fiveHour)
+    const sevenDay = usageMetric('Week', data.seven_day)
+    if (sevenDay) metrics.push(sevenDay)
+    const sevenDaySonnet = usageMetric('Sonnet', data.seven_day_sonnet)
+    if (sevenDaySonnet) metrics.push(sevenDaySonnet)
     if (data.extra_usage?.is_enabled) {
       const monthlyLimit = data.extra_usage.monthly_limit
       metrics.push({

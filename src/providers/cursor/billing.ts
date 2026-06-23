@@ -38,6 +38,9 @@ interface UsageResponse {
   enabled?: boolean
 }
 
+const finiteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value)
+
 export function cursorStateDb(homeDir?: string): string {
   const base = homeDir ?? homedir()
   const tail = ['Cursor', 'User', 'globalStorage', 'state.vscdb']
@@ -138,23 +141,21 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
   const iso = msToIso(endMs)
   const resets = iso && endMs > 0 ? resetIn(iso) : null
 
-  if (
-    typeof pu.totalPercentUsed === 'number'
-    && Number.isFinite(pu.totalPercentUsed)
-    && typeof pu.limit === 'number'
-    && Number.isFinite(pu.limit)
-  ) {
+  if (finiteNumber(pu.totalPercentUsed) && finiteNumber(pu.limit)) {
     metrics.push(percentMetric('Usage', pu.totalPercentUsed, resets, true))
-    const remaining = typeof pu.remaining === 'number' && Number.isFinite(pu.remaining) ? pu.remaining : 0
-    const spentCents = typeof pu.totalSpend === 'number' && Number.isFinite(pu.totalSpend)
+    const spentCents = finiteNumber(pu.totalSpend)
       ? pu.totalSpend
-      : pu.limit - remaining
-    metrics.push({
-      label: 'Spend',
-      used: dollars(spentCents),
-      limit: dollars(pu.limit),
-      format: { kind: 'dollars' },
-    })
+      : finiteNumber(pu.remaining)
+        ? pu.limit - pu.remaining
+        : pu.limit * (pu.totalPercentUsed / 100)
+    if (Number.isFinite(spentCents)) {
+      metrics.push({
+        label: 'Spend',
+        used: dollars(spentCents),
+        limit: dollars(pu.limit),
+        format: { kind: 'dollars' },
+      })
+    }
   }
 
   if (typeof pu.autoPercentUsed === 'number' && Number.isFinite(pu.autoPercentUsed)) {
@@ -166,15 +167,16 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
 
   const su = usage.spendLimitUsage
   if (su) {
-    const rawLimitCents = su.individualLimit ?? su.pooledLimit ?? 0
-    const rawRemainingCents = su.individualRemaining ?? su.pooledRemaining ?? 0
-    const limitCents = finite(rawLimitCents)
-    const remainingCents = finite(rawRemainingCents)
-    if (limitCents > 0) {
+    const pair = finiteNumber(su.individualLimit) && finiteNumber(su.individualRemaining)
+      ? { limit: su.individualLimit, remaining: su.individualRemaining }
+      : finiteNumber(su.pooledLimit) && finiteNumber(su.pooledRemaining)
+        ? { limit: su.pooledLimit, remaining: su.pooledRemaining }
+        : null
+    if (pair && pair.limit > 0) {
       metrics.push({
         label: 'On-demand',
-        used: dollars(limitCents - remainingCents),
-        limit: dollars(limitCents),
+        used: dollars(pair.limit - pair.remaining),
+        limit: dollars(pair.limit),
         format: { kind: 'dollars' },
       })
     }

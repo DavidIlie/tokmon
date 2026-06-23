@@ -310,15 +310,20 @@ function readPlan(loadData: any): string | null {
   return raw.replace(/^Gemini Code Assist (?:in|for)\s+/i, '').replace(/^Gemini Code Assist$/i, 'Code Assist')
 }
 
+function readRemainingFraction(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
 function parseBuckets(data: any): CloudCodeBucket[] {
   if (!Array.isArray(data?.buckets)) return []
   return data.buckets.flatMap((bucket: any) => {
     const modelId = typeof bucket?.modelId === 'string' ? bucket.modelId.trim() : ''
     if (!modelId) return []
-    const remainingFraction = bucket.remainingFraction
+    const remainingFraction = readRemainingFraction(bucket.remainingFraction)
+    if (remainingFraction === null) return []
     return [{
       modelId,
-      remainingFraction: typeof remainingFraction === 'number' && Number.isFinite(remainingFraction) ? remainingFraction : 0,
+      remainingFraction,
       resetTime: typeof bucket.resetTime === 'string' ? bucket.resetTime : undefined,
     }]
   })
@@ -338,10 +343,11 @@ function parseModelBuckets(data: any): CloudCodeBucket[] {
       ''
     if (!displayName) return []
     const quotaInfo = model.quotaInfo
-    const remainingFraction = quotaInfo?.remainingFraction
+    const remainingFraction = readRemainingFraction(quotaInfo?.remainingFraction)
+    if (remainingFraction === null) return []
     return [{
       modelId: displayName,
-      remainingFraction: typeof remainingFraction === 'number' && Number.isFinite(remainingFraction) ? remainingFraction : 0,
+      remainingFraction,
       resetTime: typeof quotaInfo?.resetTime === 'string' ? quotaInfo.resetTime : undefined,
     }]
   })
@@ -402,13 +408,22 @@ function normalizeLabel(label: string): string {
 
 function poolLabel(label: string): string {
   const lower = normalizeLabel(label).toLowerCase()
+  // Claude is matched EXPLICITLY (Antigravity pools Claude models too) -- never
+  // as a fallback, or non-pro/flash Gemini models render as a bogus "Claude"
+  // quota row on the Gemini card.
+  if (lower.includes('claude')) return 'Claude'
   if (lower.includes('gemini') && lower.includes('pro')) return 'Pro'
   if (lower.includes('gemini') && lower.includes('flash')) return 'Flash'
-  return 'Claude'
+  if (lower.includes('gemini')) return 'Gemini'
+  return normalizeLabel(label) || 'Other'
 }
 
 function sortKey(label: string): string {
   const lower = label.toLowerCase()
+  if (lower === 'pro') return `0a_${label}`
+  if (lower === 'flash') return `0b_${label}`
+  if (lower === 'gemini') return `0c_${label}`
+  if (lower === 'claude') return `1b_${label}`
   if (lower.includes('gemini') && lower.includes('pro')) return `0a_${label}`
   if (lower.includes('gemini')) return `0b_${label}`
   if (lower.includes('claude') && lower.includes('opus')) return `1a_${label}`
@@ -419,6 +434,7 @@ function sortKey(label: string): string {
 export function cloudCodeBucketsToMetrics(buckets: CloudCodeBucket[]): Metric[] {
   const pooled = new Map<string, CloudCodeBucket>()
   for (const bucket of buckets) {
+    if (!Number.isFinite(bucket.remainingFraction)) continue
     const label = poolLabel(bucket.modelId)
     const existing = pooled.get(label)
     if (!existing || bucket.remainingFraction < existing.remainingFraction) {
@@ -428,8 +444,7 @@ export function cloudCodeBucketsToMetrics(buckets: CloudCodeBucket[]): Metric[] 
   return [...pooled.values()]
     .sort((a, b) => sortKey(a.modelId).localeCompare(sortKey(b.modelId)))
     .map((bucket, i) => {
-      const remaining = Number.isFinite(bucket.remainingFraction) ? bucket.remainingFraction : 0
-      const clamped = Math.max(0, Math.min(1, remaining))
+      const clamped = Math.max(0, Math.min(1, bucket.remainingFraction))
       return {
         label: bucket.modelId,
         used: Math.round((1 - clamped) * 100),

@@ -14,7 +14,7 @@ const PRICING: Record<string, { in: number; cr: number; out: number }> = {
   'gpt-5': { in: 1.25e-6, cr: 0.125e-6, out: 10e-6 },
   'o4-mini': { in: 1.1e-6, cr: 0.275e-6, out: 4.4e-6 },
 }
-const FALLBACK = PRICING['gpt-5-codex']
+const ZERO_PRICE = { in: 0, cr: 0, out: 0 }
 const PRICE_KEYS = Object.keys(PRICING).sort((a, b) => b.length - a.length)
 
 export function codexHomes(homeDir?: string): string[] {
@@ -34,12 +34,25 @@ export async function detectCodex(homeDir?: string): Promise<boolean> {
   return false
 }
 
-function priceFor(model: string) {
-  const m = model.toLowerCase()
-  for (const key of PRICE_KEYS) {
-    if (m.startsWith(key) || m.includes(key)) return PRICING[key]
+function modelKeyMatches(model: string, key: string): boolean {
+  let idx = model.indexOf(key)
+  while (idx >= 0) {
+    const before = idx === 0 ? '' : model[idx - 1]
+    const rest = model.slice(idx + key.length)
+    if ((!before || !/[a-z0-9-]/.test(before)) && (rest === '' || rest[0] === '-' || !/[a-z0-9]/.test(rest[0]))) {
+      return true
+    }
+    idx = model.indexOf(key, idx + key.length)
   }
-  return FALLBACK
+  return false
+}
+
+function priceFor(model: string) {
+  const m = model.toLowerCase().trim()
+  for (const key of PRICE_KEYS) {
+    if (modelKeyMatches(m, key)) return PRICING[key]
+  }
+  return ZERO_PRICE
 }
 
 function extractModel(obj: any): string | null {
@@ -78,7 +91,7 @@ function eventSig(last: CodexDelta | undefined, total: CodexDelta | undefined): 
 
 async function parseFile(path: string): Promise<Entry[]> {
   const entries: Entry[] = []
-  let model = 'gpt-5-codex'
+  let model = 'unknown'
   let prevTotal: CodexDelta | null = null
   let prevSig: string | null = null
   const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity })

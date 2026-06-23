@@ -19,7 +19,7 @@ export interface ResolvedAccount {
 
 export async function resolveAccounts(config: Config): Promise<ResolvedAccount[]> {
   const detected = await detectProviders()
-  const accounts = buildAccounts({ ...config, disabledProviders: [] }, detected)
+  const accounts = buildAccounts(config, detected)
   return accounts.map(a => {
     const p = PROVIDERS[a.providerId]
     return {

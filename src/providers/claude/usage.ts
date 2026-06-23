@@ -18,7 +18,7 @@ const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> 
   'claude-fable-5': { i: 10e-6, o: 50e-6, cc: 12.5e-6, cr: 1e-6 },
 }
 const PRICE_KEYS = Object.keys(PRICING).sort((a, b) => b.length - a.length)
-const FALLBACK = PRICING['claude-opus-4']
+const ZERO_PRICE = { i: 0, o: 0, cc: 0, cr: 0 }
 
 export function claudeConfigDirs(homeDir?: string): string[] {
   if (homeDir) {
@@ -55,12 +55,13 @@ export async function detectClaude(homeDir?: string): Promise<boolean> {
 }
 
 function priceFor(model: string) {
+  const m = model.toLowerCase().trim()
   for (const key of PRICE_KEYS) {
-    if (!model.startsWith(key)) continue
-    const rest = model.slice(key.length)
+    if (!m.startsWith(key)) continue
+    const rest = m.slice(key.length)
     if (rest === '' || rest[0] === '-') return PRICING[key]
   }
-  return FALLBACK
+  return ZERO_PRICE
 }
 
 interface UsageTokens {
