@@ -1,7 +1,7 @@
 import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react'
 import type { WebProviderInfo, WebSnapshot } from '@shared'
 import { exploreRows, type Derived, type Filters, type Granularity } from '../lib/derive'
-import { Segmented } from './ui'
+import { Segmented } from './ui/controls'
 import { Search, X } from './icons'
 import { KpiStrip, ProviderCards } from './charts/cards'
 import { CalendarHeatmap } from './charts/calendar'

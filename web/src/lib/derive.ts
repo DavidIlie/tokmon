@@ -1,31 +1,11 @@
-import type { WebSnapshot, WebAccount, TableRow } from '@shared'
+import type { WebSnapshot, WebAccount } from '@shared'
 import { modelColor } from './colors'
-import { DAY, fmtDay, parseDay, weekStartStr } from './date'
+import { sumTokens } from './format'
+import type { Filters } from './derive.filters'
+import { selectAccounts, selectCardAccounts, latestDayOf, rangeStartOf } from './derive.filters'
 
-export type PeriodKey = '7d' | '30d' | '90d' | 'mtd' | 'all'
-export type Granularity = 'daily' | 'weekly' | 'monthly'
-
-export interface Filters {
-  providers: string[]
-  models: string[]
-  account: string
-  period: PeriodKey
-}
-
-export const DEFAULT_FILTERS: Filters = {
-  providers: [],
-  models: [],
-  account: 'all',
-  period: 'all',
-}
-
-export const PERIODS: { key: PeriodKey; label: string }[] = [
-  { key: '7d', label: '7 days' },
-  { key: '30d', label: '30 days' },
-  { key: '90d', label: '90 days' },
-  { key: 'mtd', label: 'month' },
-  { key: 'all', label: 'all time' },
-]
+export * from './derive.filters'
+export { exploreRows } from './derive.explore'
 
 
 export interface Totals {
@@ -91,66 +71,6 @@ export interface Derived {
 
 const emptyTotals = (): Totals => ({ cost: 0, tokens: 0, cacheSavings: 0, calls: 0 })
 
-function activeProviderFilter(snap: WebSnapshot, f: Filters): Set<string> | null {
-  if (!f.providers.length) return null
-  const usable = new Set<string>(snap.accounts.filter(a => a.hasUsage).map(a => a.providerId))
-  const eff = f.providers.filter(p => usable.has(p))
-  return eff.length ? new Set(eff) : null
-}
-
-function selectAccounts(snap: WebSnapshot, f: Filters): WebAccount[] {
-  const provFilter = activeProviderFilter(snap, f)
-  return snap.accounts.filter(a => {
-    if (!a.hasUsage) return false
-    if (f.account !== 'all' && a.id !== f.account) return false
-    if (provFilter && !provFilter.has(a.providerId)) return false
-    return true
-  })
-}
-
-export function hasBillingSignal(a: WebAccount): boolean {
-  return !!(a.hasBilling && (
-    a.billing?.metrics?.length || a.billing?.plan || a.billing?.error ||
-    a.billing?.activity?.series?.length || a.billing?.modelSpend?.length
-  ))
-}
-
-function selectCardAccounts(snap: WebSnapshot, f: Filters): WebAccount[] {
-  const provFilter = activeProviderFilter(snap, f)
-  return snap.accounts.filter(a => {
-    if (!a.hasUsage && !hasBillingSignal(a)) return false
-    if (f.account !== 'all' && a.id !== f.account) return false
-    if (provFilter && !provFilter.has(a.providerId)) return false
-    return true
-  })
-}
-
-function latestDayOf(accounts: WebAccount[]): string | null {
-  let latest: string | null = null
-  for (const a of accounts) {
-    for (const r of a.table?.daily ?? []) {
-      if (!latest || r.label > latest) latest = r.label
-    }
-  }
-  return latest
-}
-
-function rangeStartOf(period: PeriodKey, latest: string | null): string | null {
-  if (!latest || period === 'all') return null
-  if (period === 'mtd') return new Date().toISOString().slice(0, 7) + '-01'
-  const days = period === '7d' ? 7 : period === '90d' ? 90 : 30
-  return fmtDay(parseDay(latest) - (days - 1) * DAY)
-}
-
-function granRangeStart(period: PeriodKey, gran: Granularity, latest: string | null): string | null {
-  if (!latest || period === 'all') return null
-  const periodStart = rangeStartOf(period, latest)
-  if (gran === 'daily') return periodStart
-  const floorDays = gran === 'monthly' ? 365 : 84
-  const floorStart = fmtDay(parseDay(latest) - (floorDays - 1) * DAY)
-  return periodStart && periodStart < floorStart ? periodStart : floorStart
-}
-
 function summaryTotals(a: WebAccount, which: 'today' | 'week' | 'month'): Totals {
   const s = a.dashboard?.[which]
   if (!s) return emptyTotals()
@@ -214,7 +134,7 @@ function accumulateDayRow(
   for (const m of row.breakdown) {
     acc.modelOptionSet.add(m.name)
     if (modelSet && !modelSet.has(m.name)) continue
-    const tok = m.input + m.output + m.cacheCreate + m.cacheRead
+    const tok = sumTokens(m)
     rCost += m.cost; rTok += tok; rSav += m.cacheSavings; rCalls += m.count
 
     acc.tokenComposition.input += m.input
@@ -315,7 +235,7 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
       let dd = dayDetail.get(row.label)
       if (!dd) { dd = { tokens: 0, calls: 0, cacheSavings: 0, models: new Map() }; dayDetail.set(row.label, dd) }
       for (const m of bd) {
-        dd.tokens += m.input + m.output + m.cacheCreate + m.cacheRead
+        dd.tokens += sumTokens(m)
         dd.calls += m.count
         dd.cacheSavings += m.cacheSavings
         dd.models.set(m.name, (dd.models.get(m.name) ?? 0) + m.cost)
@@ -347,60 +267,4 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
     modelOptions: [...acc.modelOptionSet].sort(),
     latestDay, rangeStart,
   }
-}
-
-function sumBreakdown(rows: TableRow['breakdown']) {
-  return rows.reduce((agg, m) => {
-    agg.input += m.input; agg.output += m.output; agg.cacheCreate += m.cacheCreate
-    agg.cacheRead += m.cacheRead; agg.cacheSavings += m.cacheSavings; agg.cost += m.cost; agg.count += m.count
-    return agg
-  }, { input: 0, output: 0, cacheCreate: 0, cacheRead: 0, cacheSavings: 0, cost: 0, count: 0 })
-}
-
-export function exploreRows(snap: WebSnapshot | null, f: Filters, gran: Granularity): TableRow[] {
-  if (!snap) return []
-  const accounts = selectAccounts(snap, f)
-  const latest = latestDayOf(accounts)
-  const dailyCut = granRangeStart(f.period, gran, latest)
-  const cutoff = !dailyCut ? null
-    : gran === 'monthly' ? dailyCut.slice(0, 7)
-      : gran === 'weekly' ? weekStartStr(dailyCut)
-        : dailyCut
-  const modelSet = f.models.length ? new Set(f.models) : null
-
-  const byLabel = new Map<string, TableRow>()
-  for (const a of accounts) {
-    for (const row of a.table?.[gran] ?? []) {
-      if (cutoff && row.label < cutoff) continue
-      const bd = modelSet ? row.breakdown.filter(m => modelSet.has(m.name)) : row.breakdown
-      if (modelSet && bd.length === 0) continue
-      const ex = byLabel.get(row.label)
-      const sums = sumBreakdown(bd)
-      if (!ex) {
-        byLabel.set(row.label, {
-          label: row.label,
-          models: bd.map(m => m.name).sort(),
-          ...sums,
-          total: sums.input + sums.output + sums.cacheCreate + sums.cacheRead,
-          breakdown: bd.map(m => ({ ...m })),
-        })
-      } else {
-        ex.input += sums.input; ex.output += sums.output; ex.cacheCreate += sums.cacheCreate
-        ex.cacheRead += sums.cacheRead; ex.cacheSavings += sums.cacheSavings
-        ex.total += sums.input + sums.output + sums.cacheCreate + sums.cacheRead
-        ex.cost += sums.cost; ex.count += sums.count
-        const map = new Map(ex.breakdown.map(m => [m.name, m]))
-        for (const m of bd) {
-          const e = map.get(m.name)
-          if (e) {
-            e.input += m.input; e.output += m.output; e.cacheCreate += m.cacheCreate
-            e.cacheRead += m.cacheRead; e.cacheSavings += m.cacheSavings; e.cost += m.cost; e.count += m.count
-          } else map.set(m.name, { ...m })
-        }
-        ex.breakdown = [...map.values()].sort((p, q) => q.cost - p.cost)
-        ex.models = ex.breakdown.map(m => m.name)
-      }
-    }
-  }
-  return [...byLabel.values()]
 }

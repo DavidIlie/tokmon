@@ -4,8 +4,7 @@ import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
-import { startOfMonth, startOfWeek, monthsAgoStart } from '../../tz'
-import { type Entry, summarize, tabulate, SPARK_DAYS, loadCachedEntries, safeNum } from '../usage-core'
+import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, finitePositive, dashboardSince, tableSince } from '../usage-core'
 
 export function piSessionsDir(homeDir?: string): string {
   return join(homeDir ?? homedir(), '.pi', 'agent', 'sessions')
@@ -13,10 +12,6 @@ export function piSessionsDir(homeDir?: string): string {
 
 export async function detectPi(homeDir?: string): Promise<boolean> {
   try { await access(piSessionsDir(homeDir)); return true } catch { return false }
-}
-
-function pos(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0
 }
 
 async function parseFile(path: string): Promise<Entry[]> {
@@ -39,9 +34,9 @@ async function parseFile(path: string): Promise<Entry[]> {
       const cacheCreate = safeNum(u.cacheWrite)
       if (input + output + cacheRead + cacheCreate === 0) continue
       const c = u.cost ?? {}
-      const costInput = pos(c.input)
+      const costInput = finitePositive(c.input)
       const cacheSavings = input > 0 && cacheRead > 0
-        ? Math.max(0, cacheRead * (costInput / input) - pos(c.cacheRead))
+        ? Math.max(0, cacheRead * (costInput / input) - finitePositive(c.cacheRead))
         : 0
       const model = (typeof msg.responseModel === 'string' && msg.responseModel)
         || (typeof msg.model === 'string' && msg.model)
@@ -49,7 +44,7 @@ async function parseFile(path: string): Promise<Entry[]> {
       entries.push({
         ts,
         model,
-        cost: pos(c.total),
+        cost: finitePositive(c.total),
         input,
         output,
         cacheCreate,
@@ -89,11 +84,9 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
 }
 
 export async function piDashboard(tz: string, homeDir?: string): Promise<DashboardData> {
-  const now = Date.now()
-  const since = Math.min(startOfMonth(now, tz), startOfWeek(now, tz), now - SPARK_DAYS * 86_400_000)
-  return summarize(await loadEntries(since, homeDir), tz)
+  return summarize(await loadEntries(dashboardSince(tz), homeDir), tz)
 }
 
 export async function piTable(tz: string, homeDir?: string): Promise<TableData> {
-  return tabulate(await loadEntries(monthsAgoStart(Date.now(), 6, tz), homeDir), tz)
+  return tabulate(await loadEntries(tableSince(tz), homeDir), tz)
 }

@@ -2,7 +2,9 @@ import { useState } from 'react'
 import type { Derived } from '../../lib/derive'
 import { fmtCost, fmtNum, fmtPct, fmtTokens } from '../../lib/format'
 import { shortModel } from '../../lib/colors'
-import { EmptyHint, Panel, Segmented, Sparkline } from '../ui'
+import { Panel } from '../ui/panel'
+import { EmptyHint, Sparkline } from '../ui/primitives'
+import { Segmented } from '../ui/controls'
 
 type SortKey = 'cost' | 'tokens' | 'calls'
 

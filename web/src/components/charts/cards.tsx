@@ -2,7 +2,8 @@ import type { Metric, WebAccount } from '@shared'
 import type { Derived } from '../../lib/derive'
 import { fmtCost, fmtNum, fmtTokens } from '../../lib/format'
 import { providerHex, shortModel } from '../../lib/colors'
-import { Panel, Sparkline } from '../ui'
+import { Panel } from '../ui/panel'
+import { Sparkline } from '../ui/primitives'
 
 export function KpiStrip({ derived, periodLabel }: { derived: Derived; periodLabel: string }) {
   const t = derived.totals

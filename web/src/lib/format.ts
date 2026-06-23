@@ -36,6 +36,10 @@ export function fmtNum(n: number): string {
   return Math.round(n).toLocaleString('en-US')
 }
 
+export function sumTokens(t: { input: number; output: number; cacheCreate: number; cacheRead: number }): number {
+  return t.input + t.output + t.cacheCreate + t.cacheRead
+}
+
 export function fmtCount(n: number): string {
   if (!Number.isFinite(n)) return '0'
   const a = Math.abs(n)

@@ -5,6 +5,8 @@ import { resetIn } from '../../format'
 import { envDir } from '../../config'
 import { readJson } from '../../http'
 import type { Account, BillingResult, Metric } from '../types'
+import { dollars, finite, percentMetric } from '../_shared/metric'
+import { msToIso } from '../_shared/time'
 import { cursorActivity } from './activity'
 import { cursorModelSpend } from './composer'
 import { runSqlite, sqliteStatusMessage, type SqliteStatus } from './sqlite'
@@ -80,11 +82,6 @@ async function connectPost(url: string, token: string): Promise<any | null> {
   }
 }
 
-const finite = (value: unknown, fallback = 0): number =>
-  typeof value === 'number' && Number.isFinite(value) ? value : fallback
-
-const dollars = (cents: number): number => finite(cents) / 100
-
 export async function cursorBilling(account: Account): Promise<BillingResult> {
   const [core, activity, spend] = await Promise.all([
     cursorBillingCore(account),
@@ -138,8 +135,8 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
   const metrics: Metric[] = []
   const rawEnd = usage.billingCycleEnd
   const endMs = typeof rawEnd === 'string' && rawEnd.trim() ? Number(rawEnd) : NaN
-  const resets = Number.isFinite(endMs) && endMs > 0 && endMs <= 8.64e15
-    ? resetIn(new Date(endMs).toISOString()) : null
+  const iso = msToIso(endMs)
+  const resets = iso && endMs > 0 ? resetIn(iso) : null
 
   if (
     typeof pu.totalPercentUsed === 'number'
@@ -147,14 +144,7 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
     && typeof pu.limit === 'number'
     && Number.isFinite(pu.limit)
   ) {
-    metrics.push({
-      label: 'Usage',
-      used: pu.totalPercentUsed,
-      limit: 100,
-      format: { kind: 'percent' },
-      resetsAt: resets,
-      primary: true,
-    })
+    metrics.push(percentMetric('Usage', pu.totalPercentUsed, resets, true))
     const remaining = typeof pu.remaining === 'number' && Number.isFinite(pu.remaining) ? pu.remaining : 0
     const spentCents = typeof pu.totalSpend === 'number' && Number.isFinite(pu.totalSpend)
       ? pu.totalSpend

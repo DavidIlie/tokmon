@@ -7,11 +7,11 @@ import { resetIn } from '../../format'
 import { envDir } from '../../config'
 import { readJson } from '../../http'
 import type { Account, BillingResult, Metric } from '../types'
+import { readMacKeychainRaw, unwrapGoKeyringBase64 } from '../_shared/keychain'
 
 const execFile = promisify(execFileCb)
 const USAGE_URL = 'https://api.github.com/copilot_internal/user'
 const GH_KEYCHAIN_SERVICE = 'gh:github.com'
-const GO_KEYRING_PREFIX = 'go-keyring-base64:'
 
 interface TokenSource {
   token: string
@@ -120,20 +120,8 @@ async function loadTokenFromHosts(homeDir?: string): Promise<TokenSource | null>
 }
 
 async function readMacKeychainService(service: string): Promise<string | null> {
-  if (process.platform !== 'darwin') return null
-  try {
-    const { stdout } = await execFile('security', [
-      'find-generic-password', '-s', service, '-w',
-    ], { timeout: 5000 })
-    const raw = stdout.trim()
-    if (!raw) return null
-    if (raw.startsWith(GO_KEYRING_PREFIX)) {
-      return Buffer.from(raw.slice(GO_KEYRING_PREFIX.length), 'base64').toString('utf-8')
-    }
-    return raw
-  } catch {
-    return null
-  }
+  const raw = await readMacKeychainRaw(service)
+  return raw ? unwrapGoKeyringBase64(raw) : null
 }
 
 async function loadTokenFromGhKeychain(): Promise<TokenSource | null> {

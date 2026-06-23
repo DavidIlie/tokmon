@@ -1,7 +1,7 @@
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { UsageSummary, TableRow, ModelDetail, DashboardData, TableData } from '../types'
-import { dayKey, monthKey, weekKey, startOfDay, startOfMonth, startOfWeek } from '../tz'
+import { dayKey, monthKey, weekKey, startOfDay, startOfMonth, startOfWeek, monthsAgoStart } from '../tz'
 import { cacheDir } from '../config'
 
 export const SPARK_DAYS = 14
@@ -133,20 +133,29 @@ export function safeNum(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0
 }
 
-function finiteNonNegative(v: unknown): number {
+export function dashboardSince(tz: string): number {
+  const now = Date.now()
+  return Math.min(startOfMonth(now, tz), startOfWeek(now, tz), now - SPARK_DAYS * DAY_MS)
+}
+
+export function tableSince(tz: string): number {
+  return monthsAgoStart(Date.now(), 6, tz)
+}
+
+export function finitePositive(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0
 }
 
 function cleanEntry(e: Entry): Entry {
   return {
     ...e,
-    ts: finiteNonNegative(e.ts),
-    cost: finiteNonNegative(e.cost),
-    input: finiteNonNegative(e.input),
-    output: finiteNonNegative(e.output),
-    cacheCreate: finiteNonNegative(e.cacheCreate),
-    cacheRead: finiteNonNegative(e.cacheRead),
-    cacheSavings: finiteNonNegative(e.cacheSavings),
+    ts: finitePositive(e.ts),
+    cost: finitePositive(e.cost),
+    input: finitePositive(e.input),
+    output: finitePositive(e.output),
+    cacheCreate: finitePositive(e.cacheCreate),
+    cacheRead: finitePositive(e.cacheRead),
+    cacheSavings: finitePositive(e.cacheSavings),
   }
 }
 

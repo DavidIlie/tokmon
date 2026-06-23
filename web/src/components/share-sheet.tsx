@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { copyNode, downloadNode, shareFilename } from '../lib/share'
 import { Check, Copy, Download, X } from './icons'
-import { Segmented } from './ui'
+import { Segmented } from './ui/controls'
 import { SummaryCard } from './summary-card'
 import { CaptureFrame } from './capture-frame'
 import type { ShareSource } from './share-provider'

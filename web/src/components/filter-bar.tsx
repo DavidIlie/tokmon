@@ -2,7 +2,7 @@ import type { WebSnapshot } from '@shared'
 import { PERIODS, type Derived, type Filters } from '../lib/derive'
 import { shortModel } from '../lib/colors'
 import { X } from './icons'
-import { Dropdown, Menu, MenuItem, Segmented } from './ui'
+import { Dropdown, Menu, MenuItem, Segmented } from './ui/controls'
 
 export function FilterBar({ snapshot, derived, filters, setFilters }: {
   snapshot: WebSnapshot | null

@@ -1,17 +1,12 @@
+import { isValidTimezone } from './config-schema'
+
+export { isValidTimezone } from './config-schema'
+
 export function systemTimezone(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
   } catch {
     return 'UTC'
-  }
-}
-
-export function isValidTimezone(tz: string): boolean {
-  try {
-    new Intl.DateTimeFormat('en-CA', { timeZone: tz })
-    return true
-  } catch {
-    return false
   }
 }
 

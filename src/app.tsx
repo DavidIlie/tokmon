@@ -1,7 +1,5 @@
-import { spawn } from 'node:child_process'
-import { appendFileSync } from 'node:fs'
-import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react'
-import { Box, Text, Transform, useInput, useStdout, useApp } from 'ink'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { Box, Text, useInput, useStdout, useApp } from 'ink'
 import { useMouse } from '@zenobius/ink-mouse'
 import { fetchPeak, type PeakStatus } from './peak'
 import {
@@ -13,126 +11,44 @@ import {
 import { reconcileDaemonConfig } from './config-sync'
 import { buildAccounts, accountsByProvider } from './accounts'
 import { PROVIDERS, PROVIDER_ORDER, detectProviders, type Account, type ProviderId } from './providers'
-import { coalesceTables } from './providers/usage-core'
-import type { TableData, TableRow } from './types'
-import { resolveTimezone, isValidTimezone, systemTimezone } from './tz'
+import type { TableData } from './types'
+import { resolveTimezone } from './tz'
 import { loadSeedSnapshot } from './client/seed-cache'
 import { glyphs } from './glyphs'
 import * as fmt from './format'
 import type { AccountStats } from './stats'
 import type { WebServerController } from './web/server'
-import { ClickableBox, LinkBox, Spinner, TabBar, PeakBadge, truncateName, dispatchLinkClicks } from './ui/shared'
+import { Spinner, TabBar, PeakBadge, dispatchLinkClicks } from './ui/shared'
 import { DashboardView, chooseLayout, TotalsRow } from './ui/dashboard'
 import { TableProviderBar, ControlBar, TokenTable, CursorSpendTable } from './ui/table'
 import { cursorModelSpend, type CursorModelSpend } from './providers/cursor/composer'
 import { Onboarding, type OnboardItem } from './ui/onboarding'
 import { LoadingView, accountReady, statsReadyInput, type ReadyInput } from './ui/loading'
 import {
-  SettingsView, PROVIDER_ROWS_START, ACCOUNT_ROWS_START, COLOR_PALETTE, FORM_FIELDS,
+  SettingsView, ACCOUNT_ROWS_START, COLOR_PALETTE, FORM_FIELDS,
   type AccountForm,
 } from './ui/settings'
+import { deriveSlots, findActiveSlot, computeChrome } from './ui/app-layout.logic'
+import { ResizingView } from './ui/resizing'
+import { AccountStrip } from './ui/account-strip'
+import { Footer } from './ui/footer'
+import { TinyFallback } from './ui/tiny-fallback'
 import { useDaemon } from './client/use-daemon'
 import { toStatsMap, toCursorRows, pickTable } from './client/snapshot-adapter'
+import {
+  TABS, VIEWS, SORTS, CURSOR_SORTS,
+  type Slot,
+  acctKey, clampCaret, spliceInsert, applyStartup,
+  upsert, fetchScopeTable, sortLabel, sortRows, filterTokenRows, filterCursorRows, sortCursorRows,
+} from './app.logic'
+import { openUrl, IS_TTY } from './ui/terminal'
+import { handleKey } from './ui/keybindings'
 
-const TABS = ['Dashboard', 'Table'] as const
-const VIEWS = ['Daily', 'Weekly', 'Monthly'] as const
-const SORTS = [
-  { label: 'date', dir: 'up' as const },
-  { label: 'date', dir: 'down' as const },
-  { label: 'cost', dir: 'up' as const },
-  { label: 'cost', dir: 'down' as const },
-] as const
-const CURSOR_SORTS = [
-  { label: 'cost', dir: 'down' as const },
-  { label: 'amount', dir: 'down' as const },
-  { label: 'model', dir: null },
-] as const
-const IS_TTY = process.stdin.isTTY === true
-const REPO_URL = 'https://github.com/DavidIlie/tokmon'
-const SITE_URL = 'https://davidilie.com'
-const IS_APPLE_TERMINAL = process.env.TERM_PROGRAM === 'Apple_Terminal'
-
-export function detectHyperlinks(env: NodeJS.ProcessEnv, isTTY: boolean): boolean {
-  const force = env.FORCE_HYPERLINK
-  if (force != null && force !== '') return force !== '0' && force.toLowerCase() !== 'false'
-  if (!isTTY || env.TERM === 'dumb' || env.NO_HYPERLINK) return false
-  if (env.WT_SESSION || env.ConEmuANSI === 'ON' || env.KITTY_WINDOW_ID || env.TERM === 'xterm-kitty') return true
-  if (env.KONSOLE_VERSION || env.TERMINAL_EMULATOR === 'JetBrains-JediTerm') return true
-  if (env.VTE_VERSION && Number(env.VTE_VERSION) >= 5000) return true
-  const tp = env.TERM_PROGRAM
-  if (tp) {
-    const [maj, min] = (env.TERM_PROGRAM_VERSION ?? '').split('.').map(n => Number(n) || 0)
-    if (tp === 'iTerm.app') return maj > 3 || (maj === 3 && min >= 1)
-    if (tp === 'vscode' || tp === 'WezTerm' || tp === 'ghostty' || tp === 'Hyper' || tp === 'Tabby' || tp === 'rio') return true
-  }
-  return false
-}
-const HYPERLINKS = detectHyperlinks(process.env, process.stdout.isTTY === true)
-
-function openUrl(url: string): void {
-  if (process.env.TOKMON_OPENLOG) {
-    try { appendFileSync(process.env.TOKMON_OPENLOG, url + '\n') } catch {}
-    return
-  }
-  try {
-    if (process.platform === 'darwin') spawn('open', [url], { stdio: 'ignore', detached: true }).unref()
-    else if (process.platform === 'win32') spawn('cmd', ['/c', 'start', '', url], { stdio: 'ignore', detached: true }).unref()
-    else spawn('xdg-open', [url], { stdio: 'ignore', detached: true }).unref()
-  } catch {}
-}
-
-function osc8(text: string, url: string): string {
-  if (!HYPERLINKS) return text
-  return `]8;;${url}${text}]8;;`
-}
-
+export { detectHyperlinks } from './ui/terminal'
 const DEBOUNCE_MS = 300
 const LOADER_GRACE_MS = 600
 const LOADER_MAX_MS = 8000
 const LOADER_MIN_VISIBLE_MS = 700
-
-type Slot = { id: string | null; name: string; color: string }
-
-const acctKey = (a: Account): string => `${a.id}:${a.homeDir ?? ''}`
-
-const TEXT_FIELDS = ['name', 'homeDir'] as const
-
-const clampCaret = (caret: number, len: number): number => Math.max(0, Math.min(caret, len))
-
-function spliceInsert(value: string, caret: number, text: string): { value: string; caret: number } {
-  const c = clampCaret(caret, value.length)
-  return { value: value.slice(0, c) + text + value.slice(c), caret: c + text.length }
-}
-
-function spliceBackspace(value: string, caret: number): { value: string; caret: number } {
-  const c = clampCaret(caret, value.length)
-  if (c === 0) return { value, caret: 0 }
-  return { value: value.slice(0, c - 1) + value.slice(c), caret: c - 1 }
-}
-
-function applyStartup(c: Config, cliInterval?: number): Config {
-  if (cliInterval) c = { ...c, interval: cliInterval / 1000 }
-  if (c.defaultFocus === 'all') c = { ...c, activeAccountId: null }
-  return c
-}
-
-function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true
-  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
-    for (let i = 0; i < a.length; i++) if (!deepEqual(a[i], b[i])) return false
-    return true
-  }
-  const ka = Object.keys(a as Record<string, unknown>)
-  const kb = Object.keys(b as Record<string, unknown>)
-  if (ka.length !== kb.length) return false
-  for (const k of ka) {
-    if (!Object.prototype.hasOwnProperty.call(b, k)) return false
-    if (!deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false
-  }
-  return true
-}
 
 interface TermSize { cols: number; rows: number; resizing: boolean; live: { cols: number; rows: number } }
 function useTerminalSize(settleMs = 90): TermSize {
@@ -156,14 +72,6 @@ function useTerminalSize(settleMs = 90): TermSize {
     return () => { if (t) clearTimeout(t); stdout.off('resize', onResize) }
   }, [stdout, settleMs])
   return { cols: size.cols, rows: size.rows, resizing, live }
-}
-
-function ResizingView({ cols, rows }: { cols: number; rows: number }) {
-  return (
-    <Box width={cols} height={rows} alignItems="center" justifyContent="center">
-      <Text dimColor>{glyphs().dotSel} resizing… <Text color="greenBright">{cols}</Text>×<Text color="greenBright">{rows}</Text></Text>
-    </Box>
-  )
 }
 
 export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsToken = null, mode = 'degraded' }: {
@@ -268,16 +176,11 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     return statsReadyInput(statsLocal.get(id))
   }, [connected, snapshot, statsLocal])
 
-  const slots: Slot[] = useMemo(() => accounts.length > 1
-    ? [{ id: null, name: 'All', color: 'whiteBright' }, ...accounts.map(a => ({ id: a.id, name: a.name, color: a.color }))]
-    : accounts.map(a => ({ id: a.id, name: a.name, color: a.color })),
-    [accounts])
-  const activeSlotIdx = useMemo(() => {
-    if (cfg.activeAccountId === null) return 0
-    const i = slots.findIndex(s => s.id === cfg.activeAccountId)
-    return i < 0 ? 0 : i
-  }, [slots, cfg.activeAccountId])
-  const focusId = useMemo(() => slots[activeSlotIdx]?.id ?? null, [slots, activeSlotIdx])
+  const slots: Slot[] = useMemo(() => deriveSlots(accounts), [accounts])
+  const { activeSlotIdx, focusId } = useMemo(
+    () => findActiveSlot(slots, cfg.activeAccountId),
+    [slots, cfg.activeAccountId],
+  )
   const visibleAccounts = useMemo(
     () => focusId === null ? accounts : accounts.filter(a => a.id === focusId),
     [accounts, focusId],
@@ -293,13 +196,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
 
   const allReady = accounts.length > 0 && accounts.every(a => accountReady(readyInputFor(a.id), a.providerId))
 
-  const hasStrip = slots.length > 1
-  const stripChipW = (s: Slot) => 2 + 2 + truncateName(s.name, 16).length + 2
-  const stripChars = slots.reduce((sum, s) => sum + stripChipW(s), 0)
-  const stripLines = hasStrip ? Math.max(1, Math.ceil(stripChars / Math.max(1, cols - 4 - 7))) : 0
-  const headerRows = cols < 70 ? 2 : 1
-  const CHROME = 2 + headerRows + 3 + (hasStrip ? 1 + stripLines : 0) + 2 + 2
-  const gridBudget = Math.max(1, rows - CHROME)
+  const { gridBudget } = useMemo(() => computeChrome(slots, cols, rows), [slots, cols, rows])
   const dashLayout = useMemo(() => chooseLayout(
     Math.max(56, cols - 4), gridBudget, groups.length,
     focusId !== null || cfg.dashboardLayout === 'single', cols,
@@ -809,214 +706,16 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     [tab, tableIsCursor, cursorRows, search, sort],
   )
 
-  useInput((input, key) => {
-    if (showPicker) {
-      if (input === 'q') { exit(); return }
-      const startIdx = pickerProviders.length
-      if (key.upArrow) { setOnboardCursor(c => Math.max(0, c - 1)); return }
-      if (key.downArrow) { setOnboardCursor(c => Math.min(startIdx, c + 1)); return }
-      if (input === ' ') { toggleOnboard(onboardCursor); return }
-      if (key.return) {
-        if (onboardCursor === startIdx) confirmOnboarding()
-        else toggleOnboard(onboardCursor)
-        return
-      }
-      return
-    }
-
-    if (showSettings && accountForm) {
-      if (key.escape) { setAccountForm(null); return }
-      if (key.ctrl && input === 's') { commitAccountForm(); return }
-      if (key.tab) { cycleFormField(key.shift ? -1 : 1); return }
-      if (key.upArrow) { cycleFormField(-1); return }
-      if (key.downArrow) { cycleFormField(1); return }
-      if (accountForm.field === 'provider') {
-        if (key.leftArrow) { cycleProvider(-1); return }
-        if (key.rightArrow) { cycleProvider(1); return }
-        if (key.return) { setAccountForm(f => f && { ...f, field: 'name', caret: f.name.length }); return }
-        return
-      }
-      if (accountForm.field === 'color') {
-        if (key.leftArrow) { cycleColor(-1); return }
-        if (key.rightArrow) { cycleColor(1); return }
-        if (key.return) { commitAccountForm(); return }
-        return
-      }
-      const tf = accountForm.field as 'name' | 'homeDir'
-      if (key.leftArrow) { setAccountForm(f => f && { ...f, caret: clampCaret(f.caret - 1, f[tf].length) }); return }
-      if (key.rightArrow) { setAccountForm(f => f && { ...f, caret: clampCaret(f.caret + 1, f[tf].length) }); return }
-      if (key.ctrl && input === 'a') { setAccountForm(f => f && { ...f, caret: 0 }); return }
-      if (key.ctrl && input === 'e') { setAccountForm(f => f && { ...f, caret: f[tf].length }); return }
-      if (key.return) {
-        if (tf === 'name' && accountForm.name.trim() === '') {
-          setAccountForm(f => f && { ...f, error: 'Name required', caret: f.name.length })
-          return
-        }
-        setAccountForm(f => f && { ...f, field: tf === 'name' ? 'homeDir' : 'color', caret: tf === 'name' ? f.homeDir.length : f.caret })
-        return
-      }
-      if (key.backspace || key.delete) {
-        setAccountForm(f => {
-          if (!f || (f.field !== 'name' && f.field !== 'homeDir')) return f
-          const r = spliceBackspace(f[f.field], f.caret)
-          return { ...f, [f.field]: r.value, caret: r.caret, error: null }
-        })
-        return
-      }
-      if (isPrintable(input, key)) {
-        const clean = sanitizeTyped(input)
-        if (clean) insertText(clean)
-      }
-      return
-    }
-
-    if (showSettings && tzEdit !== null) {
-      if (key.escape) { setTzEdit(null); setTzError(null); return }
-      if (key.return) {
-        const val = tzEdit.trim()
-        if (val === '' || val.toLowerCase() === 'system') {
-          updateConfig(c => ({ ...c, timezone: null })); setTzEdit(null); setTzError(null)
-        } else if (isValidTimezone(val)) {
-          updateConfig(c => ({ ...c, timezone: val })); setTzEdit(null); setTzError(null)
-        } else {
-          setTzError(`Invalid: ${val}`)
-        }
-        return
-      }
-      if (key.leftArrow) { setTzCaret(c => clampCaret(c - 1, tzEdit.length)); return }
-      if (key.rightArrow) { setTzCaret(c => clampCaret(c + 1, tzEdit.length)); return }
-      if (key.ctrl && input === 'a') { setTzCaret(0); return }
-      if (key.ctrl && input === 'e') { setTzCaret(tzEdit.length); return }
-      if (key.backspace || key.delete) {
-        const r = spliceBackspace(tzValueRef.current, tzCaretRef.current)
-        tzValueRef.current = r.value; tzCaretRef.current = r.caret
-        setTzEdit(r.value); setTzCaret(r.caret); setTzError(null)
-        return
-      }
-      if (isPrintable(input, key)) { const clean = sanitizeTyped(input); if (clean) insertText(clean) }
-      return
-    }
-
-    if (tab === 1 && searchMode) {
-      if (key.return || key.escape) { setSearchMode(false); if (key.escape) { setSearch(''); setSearchCaret(0) } return }
-      if (key.leftArrow) { setSearchCaret(c => clampCaret(c - 1, search.length)); return }
-      if (key.rightArrow) { setSearchCaret(c => clampCaret(c + 1, search.length)); return }
-      if (key.ctrl && input === 'a') { setSearchCaret(0); return }
-      if (key.ctrl && input === 'e') { setSearchCaret(search.length); return }
-      if (key.backspace || key.delete) {
-        const r = spliceBackspace(searchValueRef.current, searchCaretRef.current)
-        searchValueRef.current = r.value; searchCaretRef.current = r.caret
-        setSearch(r.value); setSearchCaret(r.caret)
-        return
-      }
-      if (isPrintable(input, key)) { const clean = sanitizeTyped(input); if (clean) insertText(clean) }
-      return
-    }
-
-    if (input === 'q') { exit(); return }
-    if (input === 'O') { openUrl(REPO_URL); return }
-    if (input === 'W' || (input === 'w' && tab !== 1 && !showSettings)) {
-      if (showLoader || !configReady) return
-      void toggleWeb(); return
-    }
-
-    if (showSettings) {
-      if (key.escape || input === 's') { setShowSettings(false); return }
-      const accIdxNav = settingsCursor - ACCOUNT_ROWS_START
-      const onAccountRow = accIdxNav >= 0 && accIdxNav < cfg.accounts.length
-      if (onAccountRow && key.shift && (key.upArrow || key.downArrow)) {
-        moveAccount(accIdxNav, key.upArrow ? -1 : 1); return
-      }
-      if (key.upArrow) { setSettingsCursor(c => Math.max(0, c - 1)); return }
-      if (key.downArrow) { setSettingsCursor(c => Math.min(totalSettingsRows - 1, c + 1)); return }
-
-      if (settingsCursor === 0) {
-        if (key.leftArrow) updateConfig(c => ({ ...c, interval: Math.max(1, c.interval - 1) }))
-        if (key.rightArrow) updateConfig(c => ({ ...c, interval: c.interval + 1 }))
-        return
-      }
-      if (settingsCursor === 1) {
-        if (key.leftArrow) updateConfig(c => ({ ...c, billingInterval: Math.max(1, c.billingInterval - 1) }))
-        if (key.rightArrow) updateConfig(c => ({ ...c, billingInterval: c.billingInterval + 1 }))
-        return
-      }
-      if (settingsCursor === 2 && (key.leftArrow || key.rightArrow || key.return)) {
-        updateConfig(c => ({ ...c, clearScreen: !c.clearScreen })); return
-      }
-      if (settingsCursor === 3) {
-        if (key.return) { const init = cfg.timezone ?? ''; setTzEdit(init); setTzCaret(init.length); setTzError(null) }
-        if (key.leftArrow || key.rightArrow) updateConfig(c => ({ ...c, timezone: c.timezone === null ? systemTimezone() : null }))
-        return
-      }
-      if (settingsCursor === 4 && (key.leftArrow || key.rightArrow || key.return)) {
-        updateConfig(c => ({ ...c, dashboardLayout: c.dashboardLayout === 'grid' ? 'single' : 'grid' }))
-        return
-      }
-      if (settingsCursor === 5 && (key.leftArrow || key.rightArrow || key.return)) {
-        updateConfig(c => ({ ...c, defaultFocus: c.defaultFocus === 'all' ? 'last' : 'all' }))
-        return
-      }
-
-      const provIdx = settingsCursor - PROVIDER_ROWS_START
-      if (provIdx >= 0 && provIdx < PROVIDER_ORDER.length) {
-        if (input === ' ' || key.return || key.leftArrow || key.rightArrow) toggleProvider(PROVIDER_ORDER[provIdx])
-        return
-      }
-
-      const accIdx = settingsCursor - ACCOUNT_ROWS_START
-      if (accIdx >= 0 && accIdx < cfg.accounts.length) {
-        const acc = cfg.accounts[accIdx]
-        if (key.return) { openEditAccount(acc); return }
-        if (input === 'd' || input === 'x') { deleteAccount(acc.id); return }
-        if (input === ' ') { updateConfig(c => ({ ...c, activeAccountId: acc.id })); return }
-        return
-      }
-      if (accIdx === cfg.accounts.length && key.return) { openAddAccount() }
-      return
-    }
-
-    if (input === 's') { setShowSettings(true); setSettingsCursor(0); return }
-    if (input === 'a') { cycleAccount(1); return }
-    if (input === 'A') { cycleAccount(-1); return }
-    if (key.tab) { setTab(t => (t + 1) % TABS.length); resetView(); return }
-    if (input && /^[0-9]$/.test(input) && slots.length > 1) {
-      const target = slots[parseInt(input, 10)]
-      if (target) { updateConfig(c => ({ ...c, activeAccountId: target.id })); resetView() }
-      return
-    }
-    if (tab === 0) {
-      if (dashPaginated) {
-        if (input === ']' || key.downArrow || key.pageDown) { setDashPage(p => Math.min(dashPageCount - 1, p + 1)); return }
-        if (input === '[' || key.upArrow || key.pageUp) { setDashPage(p => Math.max(0, p - 1)); return }
-      }
-      if (key.upArrow || key.downArrow || key.pageUp || key.pageDown || input === 'G' || input === 'g') return
-    }
-
-    if (tab === 1) {
-      if (input === 'p') { cycleTableProvider(1); return }
-      if (input === 'P') { cycleTableProvider(-1); return }
-      if (input === '/') { setSearchMode(true); setSearchCaret(search.length); return }
-      if (key.escape) { if (search) { setSearch(''); setSearchCaret(0) } else setExpanded(-1); return }
-      if (input === 'o') { setSort(s => (s + 1) % SORTS_FOR.length); resetView(); return }
-      if (!tableIsCursor) {
-        if (input === 'd') { setView(0); resetView(); return }
-        if (input === 'w') { setView(1); resetView(); return }
-        if (input === 'm') { setView(2); resetView(); return }
-        if (key.leftArrow) { setView(v => (v - 1 + VIEWS.length) % VIEWS.length); resetView(); return }
-        if (key.rightArrow) { setView(v => (v + 1) % VIEWS.length); resetView(); return }
-        if (key.return) { setExpanded(e => e === cursor ? -1 : cursor); return }
-      }
-    } else {
-      if (key.leftArrow || key.rightArrow) { setTab(t => (t + 1) % TABS.length); resetView(); return }
-    }
-
-    if (tab === 1 && !tableIsCursor) {
-      if (key.upArrow) { setCursor(c => Math.max(0, c - 1)); return }
-      if (key.downArrow) { setCursor(c => clampRow(c + 1)); return }
-      if (key.pageDown || input === 'G') { setCursor(c => clampRow(input === 'G' ? rowCountRef.current - 1 : c + Math.max(1, rows - 12))); return }
-      if (key.pageUp || input === 'g') { setCursor(c => input === 'g' ? 0 : Math.max(0, c - Math.max(1, rows - 12))); return }
-    }
-  }, { isActive: IS_TTY })
+  useInput((input, key) => handleKey(input, key, {
+    showPicker, pickerProviders, onboardCursor, setOnboardCursor, toggleOnboard, confirmOnboarding, exit,
+    showSettings, accountForm, setAccountForm, commitAccountForm, cycleFormField, cycleProvider, cycleColor,
+    isPrintable, insertText, tzEdit, setTzEdit, setTzError, updateConfig, setTzCaret, tzValueRef, tzCaretRef,
+    tab, searchMode, setSearchMode, search, setSearch, setSearchCaret, searchValueRef, searchCaretRef,
+    showLoader, configReady, toggleWeb, settingsCursor, setShowSettings, cfg, totalSettingsRows, moveAccount,
+    setSettingsCursor, toggleProvider, openEditAccount, deleteAccount, openAddAccount, cycleAccount, setTab,
+    resetView, slots, dashPaginated, dashPageCount, setDashPage, cycleTableProvider, setExpanded, setSort,
+    SORTS_FOR, tableIsCursor, setView, cursor, rowCountRef, rows, setCursor, clampRow,
+  }), { isActive: IS_TTY })
 
   if (error) return <Box padding={1}><Text color="red">{error}</Text></Box>
   if (!config) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
@@ -1138,161 +837,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       )}
 
       {(tab === 0 || showSettings) && <Footer hasAccounts={slots.length > 1} paginated={tab === 0 && dashPaginated} cols={cols} />}
-    </Box>
-  )
-}
-
-function upsert(prev: Map<string, AccountStats>, account: Account, patch: Partial<AccountStats>): Map<string, AccountStats> {
-  const next = new Map(prev)
-  const cur = next.get(account.id) ?? { account, dashboard: null, billing: null }
-  next.set(account.id, { ...cur, account, ...patch })
-  return next
-}
-
-async function fetchScopeTable(scope: Account[], tz: string): Promise<TableData> {
-  const tables = await Promise.all(scope.map(async (acc) => {
-    const provider = PROVIDERS[acc.providerId]
-    if (!provider.fetchTable) return null
-    try { return await provider.fetchTable(acc, tz) } catch { return null }
-  }))
-  const valid = tables.filter((t): t is TableData => t !== null)
-  return coalesceTables(valid)
-}
-
-function sortLabel(entry: { label: string; dir: 'up' | 'down' | null }): string {
-  if (entry.dir === 'up') return `${entry.label} ${glyphs().arrowU}`
-  if (entry.dir === 'down') return `${entry.label} ${glyphs().arrowD}`
-  return entry.label
-}
-
-function sortRows(rows: TableRow[], sortIdx: number): TableRow[] {
-  const sorted = [...rows]
-  switch (sortIdx % SORTS.length) {
-    case 0: return sorted.sort((a, b) => a.label.localeCompare(b.label))
-    case 1: return sorted.sort((a, b) => b.label.localeCompare(a.label))
-    case 2: return sorted.sort((a, b) => a.cost - b.cost)
-    case 3: return sorted.sort((a, b) => b.cost - a.cost)
-    default: return sorted
-  }
-}
-
-function filterTokenRows(rows: TableRow[], q: string): TableRow[] {
-  if (!q) return rows
-  const s = q.toLowerCase()
-  return rows.filter(r => r.label.toLowerCase().includes(s) || r.models.some(m => m.toLowerCase().includes(s)))
-}
-
-function filterCursorRows(rows: CursorModelSpend[], q: string): CursorModelSpend[] {
-  if (!q) return rows
-  const s = q.toLowerCase()
-  return rows.filter(r => r.name.toLowerCase().includes(s))
-}
-
-function sortCursorRows(rows: CursorModelSpend[], sortIdx: number): CursorModelSpend[] {
-  const out = [...rows]
-  switch (sortIdx % CURSOR_SORTS.length) {
-    case 1: return out.sort((a, b) => b.requests - a.requests)
-    case 2: return out.sort((a, b) => a.name.localeCompare(b.name))
-    default: return out.sort((a, b) => b.usd - a.usd)
-  }
-}
-
-const AccountStrip = memo(function AccountStrip({ slots, activeIdx, onSelect }: { slots: Slot[]; activeIdx: number; onSelect: (i: number) => void }) {
-  return (
-    <Box flexWrap="wrap">
-      {slots.map((s, i) => {
-        const active = i === activeIdx
-        const dot = s.id === null ? glyphs().dotAll : glyphs().dot
-        const label = truncateName(s.name, 16)
-        return (
-          <ClickableBox key={s.id ?? '__all__'} onClick={() => onSelect(i)} marginRight={2}>
-            <Text dimColor={!active}>{i}</Text>
-            <Text>{' '}</Text>
-            <Text color={s.color} bold={active} dimColor={!active}>{dot}</Text>
-            <Text>{' '}</Text>
-            {active ? <Text bold color={s.color}>{label}</Text> : <Text dimColor>{label}</Text>}
-          </ClickableBox>
-        )
-      })}
-    </Box>
-  )
-})
-
-const Footer = memo(function Footer({ hasAccounts, paginated, cols }: { hasAccounts: boolean; paginated: boolean; cols: number }) {
-  const inner = cols - 4
-  const BASE = 'by David Ilie (davidilie.com)  ·  O=repo  W=web  s=settings  q=quit'.length
-  const optHint = (glyphs().shift === '⇧' ? '⌥' : 'opt') + '-click links  '
-  const OPT = IS_APPLE_TERMINAL ? optHint.length : 0
-  const JUMP = '0-9=jump  a/A=cycle  '.length
-  const PAGE = 'scroll=page  '.length
-  const showOpt = IS_APPLE_TERMINAL && inner >= BASE + OPT
-  const showJump = hasAccounts && inner >= BASE + (showOpt ? OPT : 0) + JUMP + (paginated ? PAGE : 0)
-  const showPage = paginated && inner >= BASE + (showOpt ? OPT : 0) + (showJump ? JUMP : 0) + PAGE
-  return (
-    <Box marginTop={1} flexWrap="nowrap">
-      <Text dimColor>by </Text>
-      <LinkBox onClick={() => openUrl(REPO_URL)}>
-        <Transform transform={(s) => osc8(s, REPO_URL)}><Text underline>David Ilie</Text></Transform>
-      </LinkBox>
-      <Text dimColor> (</Text>
-      <LinkBox onClick={() => openUrl(SITE_URL)}>
-        <Transform transform={(s) => osc8(s, SITE_URL)}><Text color="cyan" underline>davidilie.com</Text></Transform>
-      </LinkBox>
-      <Text dimColor>)  {glyphs().middot}  O=repo  W=web  s=settings  </Text>
-      {showOpt && <Text dimColor>{optHint}</Text>}
-      {showJump && <Text dimColor>0-9=jump  a/A=cycle  </Text>}
-      {showPage && <Text dimColor>scroll=page  </Text>}
-      <Text dimColor>q=quit</Text>
-    </Box>
-  )
-})
-
-function TinyFallback({ groups, stats, rows, cols }: {
-  groups: { provider: ProviderId; accounts: Account[] }[]
-  stats: Map<string, AccountStats>
-  rows: number
-  cols: number
-}) {
-  const maxLines = Math.max(1, rows - 4)
-  const visible = groups.slice(0, maxLines)
-  const hidden = groups.length - visible.length
-  const w = Math.max(8, cols - 2)
-  return (
-    <Box flexDirection="column" paddingX={1} height={rows} overflow="hidden">
-      <Text bold color="greenBright">{glyphs().dotSel} tokmon</Text>
-      {groups.length === 0 ? (
-        <Text dimColor>No providers {glyphs().emDash} s=settings</Text>
-      ) : (
-        visible.map(g => <TinyRow key={g.provider} provider={g.provider} accounts={g.accounts} stats={stats} width={w} />)
-      )}
-      {hidden > 0 && <Text dimColor>+{hidden} more (enlarge terminal)</Text>}
-      <Box flexGrow={1} />
-      <Text dimColor>s=settings  q=quit</Text>
-    </Box>
-  )
-}
-
-function TinyRow({ provider, accounts, stats, width }: {
-  provider: ProviderId
-  accounts: Account[]
-  stats: Map<string, AccountStats>
-  width: number
-}) {
-  const meta = PROVIDERS[provider]
-  const dashboards = accounts.map(a => stats.get(a.id)?.dashboard).filter(Boolean)
-  const billings = accounts.map(a => stats.get(a.id)?.billing).filter(Boolean)
-  const todayCost = dashboards.reduce((sum, d) => sum + (d?.today.cost ?? 0), 0)
-  const pctMetric = billings.flatMap(b => b?.metrics ?? []).find(m => m.format.kind === 'percent')
-  const detail = meta.hasUsage
-    ? `${fmt.currency(todayCost)} today`
-    : (pctMetric ? `${Math.round(pctMetric.used)}%` : 'billing')
-  const name = truncateName(meta.name, Math.max(4, width - 18))
-  return (
-    <Box width={width}>
-      <Text color={meta.color}>{glyphs().dot} </Text>
-      <Text bold color={meta.color}>{name}</Text>
-      <Box flexGrow={1} />
-      <Text dimColor>{detail}</Text>
     </Box>
   )
 }

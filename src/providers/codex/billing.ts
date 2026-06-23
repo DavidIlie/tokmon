@@ -1,15 +1,15 @@
-import { execFile as execFileCb } from 'node:child_process'
 import { readFile, readdir, stat as fsStat } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import { resetIn } from '../../format'
 import { readJson } from '../../http'
 import type { Account, BillingResult, Metric } from '../types'
+import { percentMetric } from '../_shared/metric'
+import { msToIso } from '../_shared/time'
+import { readMacKeychainRaw } from '../_shared/keychain'
 import { codexHomes } from './usage'
 
-const execFile = promisify(execFileCb)
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
 const CREDIT_USD_RATE = 0.04
 
@@ -29,10 +29,9 @@ async function readAuthFile(home: string): Promise<CodexAuth | null> {
 
 async function readKeychainAuth(): Promise<CodexAuth | null> {
   try {
-    const { stdout } = await execFile('security', [
-      'find-generic-password', '-s', 'Codex Auth', '-w',
-    ], { timeout: 5000 })
-    const auth = JSON.parse(stdout.trim())
+    const raw = await readMacKeychainRaw('Codex Auth')
+    if (!raw) return null
+    const auth = JSON.parse(raw)
     const accessToken = auth?.tokens?.access_token
     if (!accessToken) return null
     return { accessToken, accountId: auth?.tokens?.account_id }
@@ -58,28 +57,13 @@ function planLabel(planType: unknown): string | null {
   return planType.charAt(0).toUpperCase() + planType.slice(1)
 }
 
-function isoOrNull(ms: number): string | null {
-  return Number.isFinite(ms) && Math.abs(ms) <= 8.64e15 ? new Date(ms).toISOString() : null
-}
-
 function resetFrom(window: any): string | null {
   if (!window) return null
   let iso: string | null = null
-  if (typeof window.reset_at === 'number') iso = isoOrNull(window.reset_at * 1000)
-  else if (typeof window.resets_at === 'number') iso = isoOrNull(window.resets_at * 1000)
-  else if (typeof window.reset_after_seconds === 'number') iso = isoOrNull(Date.now() + window.reset_after_seconds * 1000)
+  if (typeof window.reset_at === 'number') iso = msToIso(window.reset_at * 1000)
+  else if (typeof window.resets_at === 'number') iso = msToIso(window.resets_at * 1000)
+  else if (typeof window.reset_after_seconds === 'number') iso = msToIso(Date.now() + window.reset_after_seconds * 1000)
   return iso ? resetIn(iso) : null
-}
-
-function percentMetric(label: string, used: number, resets: string | null, primary?: boolean): Metric {
-  return {
-    label,
-    used: Number.isFinite(used) ? used : 0,
-    limit: 100,
-    format: { kind: 'percent' },
-    resetsAt: resets,
-    ...(primary === undefined ? {} : { primary }),
-  }
 }
 
 async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {

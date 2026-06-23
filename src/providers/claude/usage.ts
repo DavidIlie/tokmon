@@ -4,9 +4,8 @@ import { createInterface } from 'node:readline'
 import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
-import { startOfMonth, startOfWeek, monthsAgoStart } from '../../tz'
 import { envDir } from '../../config'
-import { type Entry, summarize, tabulate, SPARK_DAYS, loadCachedEntries, safeNum } from '../usage-core'
+import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince } from '../usage-core'
 
 const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> = {
   'claude-opus-4-1': { i: 15e-6, o: 75e-6, cc: 18.75e-6, cr: 1.5e-6 },
@@ -152,13 +151,11 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
 }
 
 export async function claudeDashboard(tz: string, homeDir?: string): Promise<DashboardData> {
-  const now = Date.now()
-  const since = Math.min(startOfMonth(now, tz), startOfWeek(now, tz), now - SPARK_DAYS * 86_400_000)
-  const entries = await loadEntries(since, homeDir)
+  const entries = await loadEntries(dashboardSince(tz), homeDir)
   return summarize(entries, tz)
 }
 
 export async function claudeTable(tz: string, homeDir?: string): Promise<TableData> {
-  const entries = await loadEntries(monthsAgoStart(Date.now(), 6, tz), homeDir)
+  const entries = await loadEntries(tableSince(tz), homeDir)
   return tabulate(entries, tz)
 }

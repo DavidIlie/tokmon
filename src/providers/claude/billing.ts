@@ -1,15 +1,13 @@
-import { execFile as execFileCb } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { promisify } from 'node:util'
 import { resetIn } from '../../format'
 import { readJson } from '../../http'
 import { expandHome } from '../../config'
 import type { Account, BillingResult, Metric } from '../types'
+import { finite, percentMetric } from '../_shared/metric'
+import { readMacKeychainRaw } from '../_shared/keychain'
 import { claudeConfigDirs } from './usage'
-
-const execFile = promisify(execFileCb)
 
 interface OAuthResponse {
   five_hour?: { utilization: number; resets_at: string }
@@ -56,14 +54,8 @@ async function readCredentialsFile(homeDir?: string): Promise<ClaudeAuth | null>
 }
 
 async function readMacKeychain(): Promise<ClaudeAuth | null> {
-  try {
-    const { stdout } = await execFile('security', [
-      'find-generic-password', '-s', 'Claude Code-credentials', '-w',
-    ], { timeout: 5000 })
-    return parseAuth(stdout.trim())
-  } catch {
-    return null
-  }
+  const raw = await readMacKeychainRaw('Claude Code-credentials')
+  return raw ? parseAuth(raw) : null
 }
 
 async function getAuth(homeDir?: string): Promise<ClaudeAuth | null> {
@@ -92,17 +84,8 @@ function planLabel(auth: ClaudeAuth): string | null {
   return tier ? `${base} ${tier[1]}x` : base
 }
 
-const finite = (value: unknown, fallback = 0): number =>
-  typeof value === 'number' && Number.isFinite(value) ? value : fallback
-
-const pct = (used: number, resets?: string | null, primary?: boolean): Metric => ({
-  label: '',
-  used: finite(used),
-  limit: 100,
-  format: { kind: 'percent' },
-  resetsAt: resets ?? null,
-  ...(primary === undefined ? {} : { primary }),
-})
+const pct = (used: number, resets?: string | null, primary?: boolean): Metric =>
+  percentMetric('', used, resets ?? null, primary)
 
 export async function claudeBilling(account: Account): Promise<BillingResult> {
   const auth = await getAuth(account.homeDir)

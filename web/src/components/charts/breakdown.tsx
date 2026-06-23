@@ -1,26 +1,18 @@
 import { useState } from 'react'
 import { Bar, BarChart, Cell, LabelList, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts'
 import type { Derived } from '../../lib/derive'
-import { fmtCost, fmtCostAxis, fmtPct, fmtTokens } from '../../lib/format'
+import { fmtCost, fmtCostAxis, fmtPct, fmtTokens, sumTokens } from '../../lib/format'
 import { shortModel, TOKEN_BUCKET } from '../../lib/colors'
-import { AXIS, ChartShell, GRID, makeTooltip, useEnterOnce, useMediaQuery } from '../chart'
-import { EmptyHint, Panel } from '../ui'
+import { AXIS, ChartShell, GRID, singleTip, useEnterOnce, useMediaQuery } from '../chart'
+import { Panel } from '../ui/panel'
+import { EmptyHint } from '../ui/primitives'
 
 const BAR_FILL = { fill: 'var(--color-bg-2)' }
 const BAR_LABEL = { fill: 'var(--color-fg-dim)', fontSize: 10, fontFamily: 'var(--font-mono)' } as const
 
-const modelTip = makeTooltip(
-  p => [{ label: 'cost', value: fmtCost(p[0]?.value ?? 0), color: p[0]?.color }],
-  { title: l => shortModel(l) },
-)
-const tokensTip = makeTooltip(
-  p => [{ label: 'tokens', value: fmtTokens(p[0]?.value ?? 0), color: p[0]?.color }],
-  { title: l => shortModel(l) },
-)
-const cacheTip = makeTooltip(
-  p => [{ label: 'saved', value: fmtCost(p[0]?.value ?? 0), color: p[0]?.color }],
-  { title: l => shortModel(l) },
-)
+const modelTip = singleTip('cost', fmtCost, p => p[0]?.color, { title: l => shortModel(l) })
+const tokensTip = singleTip('tokens', fmtTokens, p => p[0]?.color, { title: l => shortModel(l) })
+const cacheTip = singleTip('saved', fmtCost, p => p[0]?.color, { title: l => shortModel(l) })
 
 export function CostByModel({ derived, height = 280, limit = 10, metric = 'cost', periodLabel }: {
   derived: Derived
@@ -149,7 +141,7 @@ export function ProviderDonut({ derived, height = 280, periodLabel }: { derived:
 
 export function TokenComposition({ derived, periodLabel }: { derived: Derived; periodLabel?: string }) {
   const c = derived.tokenComposition
-  const total = c.input + c.output + c.cacheCreate + c.cacheRead
+  const total = sumTokens(c)
   const rows = [
     { key: 'cacheRead', label: 'cache read', value: c.cacheRead, color: TOKEN_BUCKET.cacheRead },
     { key: 'input', label: 'input', value: c.input, color: TOKEN_BUCKET.input },

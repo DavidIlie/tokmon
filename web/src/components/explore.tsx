@@ -5,9 +5,9 @@ import {
   getFilteredRowModel, getSortedRowModel, useReactTable,
   type ColumnDef, type ExpandedState, type SortingState,
 } from '@tanstack/react-table'
-import { fmtCost, fmtCount, fmtDayLabel, fmtNum, fmtTokens } from '../lib/format'
+import { fmtCost, fmtCount, fmtDayLabel, fmtNum, fmtTokens, sumTokens } from '../lib/format'
 import { modelColor, shortModel } from '../lib/colors'
-import { Panel } from './ui'
+import { Panel } from './ui/panel'
 
 type Meta = { align?: 'right'; hiddenSm?: boolean }
 const col = createColumnHelper<TableRow>()
@@ -107,7 +107,7 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
                   ))}
                 </tr>
                 {row.getIsExpanded() && row.original.breakdown.map(m => {
-                  const tok = m.input + m.output + m.cacheCreate + m.cacheRead
+                  const tok = sumTokens(m)
                   return (
                     <tr key={m.name} className="border-b border-line-faint bg-bg-0/40 text-[11px]">
                       <td className="py-1.5 pr-3 pl-5 text-fg-dim" colSpan={2}>

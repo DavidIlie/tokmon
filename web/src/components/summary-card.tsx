@@ -2,7 +2,7 @@ import { forwardRef } from 'react'
 import type { Derived } from '../lib/derive'
 import { fmtCost, fmtNum, fmtPct, fmtTokens } from '../lib/format'
 import { shortModel } from '../lib/colors'
-import { Sparkline } from './ui'
+import { Sparkline } from './ui/primitives'
 import { Watermark } from './watermark'
 
 const scopeLabel = (p: string) => (p === 'all time' ? 'all time' : `last ${p}`)

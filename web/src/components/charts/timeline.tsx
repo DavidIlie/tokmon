@@ -2,8 +2,10 @@ import { useState } from 'react'
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Derived } from '../../lib/derive'
 import { fmtCost, fmtCostAxis, fmtDayLabel } from '../../lib/format'
-import { AXIS, ChartShell, CURSOR, GRID, makeTooltip, useEnterOnce } from '../chart'
-import { EmptyHint, Panel, Segmented } from '../ui'
+import { AXIS, ChartShell, CURSOR, GRID, makeTooltip, singleTip, useEnterOnce } from '../chart'
+import { Panel } from '../ui/panel'
+import { EmptyHint } from '../ui/primitives'
+import { Segmented } from '../ui/controls'
 
 type Scale = 'linear' | 'log'
 type Mode = 'combined' | 'byProvider'
@@ -26,7 +28,7 @@ const costTip = makeTooltip(payload => {
   if (rows.length > 1) rows.push({ label: 'total', value: fmtCost(total), color: 'var(--color-fg-bright)' })
   return rows
 })
-const totalTip = makeTooltip(p => [{ label: 'total', value: fmtCost(p[0]?.value ?? 0), color: 'var(--color-cost)' }])
+const totalTip = singleTip('total', fmtCost, 'var(--color-cost)')
 
 export function CostTimeline({ derived, title = 'cost over time', height = 260, periodLabel, heightClass }: {
   derived: Derived
@@ -106,7 +108,7 @@ export function CostTimeline({ derived, title = 'cost over time', height = 260, 
   )
 }
 
-const cumTip = makeTooltip(p => [{ label: 'cumulative', value: fmtCost(p[0]?.value ?? 0), color: 'var(--color-cost)' }])
+const cumTip = singleTip('cumulative', fmtCost, 'var(--color-cost)')
 
 export function CumulativeSpend({ derived, height = 220, periodLabel }: { derived: Derived; height?: number; periodLabel?: string }) {
   const enter = useEnterOnce()
@@ -130,7 +132,7 @@ export function CumulativeSpend({ derived, height = 220, periodLabel }: { derive
   )
 }
 
-const saveTip = makeTooltip(p => [{ label: 'cache saved', value: fmtCost(p[0]?.value ?? 0), color: 'var(--color-positive)' }])
+const saveTip = singleTip('cache saved', fmtCost, 'var(--color-positive)')
 
 export function CacheSavings({ derived, height = 220, periodLabel }: { derived: Derived; height?: number; periodLabel?: string }) {
   const enter = useEnterOnce()

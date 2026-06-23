@@ -4,9 +4,8 @@ import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
-import { startOfMonth, startOfWeek, monthsAgoStart } from '../../tz'
 import { envDir } from '../../config'
-import { type Entry, summarize, tabulate, SPARK_DAYS, loadCachedEntries, safeNum } from '../usage-core'
+import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince } from '../usage-core'
 
 const PRICING: Record<string, { in: number; cr: number; out: number }> = {
   'gpt-5-codex': { in: 1.25e-6, cr: 0.125e-6, out: 10e-6 },
@@ -172,13 +171,11 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
 }
 
 export async function codexDashboard(tz: string, homeDir?: string): Promise<DashboardData> {
-  const now = Date.now()
-  const since = Math.min(startOfMonth(now, tz), startOfWeek(now, tz), now - SPARK_DAYS * 86_400_000)
-  const entries = await loadEntries(since, homeDir)
+  const entries = await loadEntries(dashboardSince(tz), homeDir)
   return summarize(entries, tz)
 }
 
 export async function codexTable(tz: string, homeDir?: string): Promise<TableData> {
-  const entries = await loadEntries(monthsAgoStart(Date.now(), 6, tz), homeDir)
+  const entries = await loadEntries(tableSince(tz), homeDir)
   return tabulate(entries, tz)
 }

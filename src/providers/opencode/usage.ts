@@ -2,8 +2,7 @@ import { access } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
-import { startOfMonth, startOfWeek, monthsAgoStart } from '../../tz'
-import { type Entry, summarize, tabulate, SPARK_DAYS } from '../usage-core'
+import { type Entry, summarize, tabulate, finitePositive, dashboardSince, tableSince } from '../usage-core'
 import { runSqlite } from '../cursor/sqlite'
 
 export function opencodeDbPaths(homeDir?: string): string[] {
@@ -30,8 +29,6 @@ export async function detectOpencode(homeDir?: string): Promise<boolean> {
   return (await findDb(homeDir)) !== null
 }
 
-const pos = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0)
-
 async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   const db = await findDb(homeDir)
   if (!db) return []
@@ -46,17 +43,17 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   if (res.status !== 'ok') return []
   const entries: Entry[] = []
   for (const row of res.rows) {
-    const ts = pos(row.ts)
+    const ts = finitePositive(row.ts)
     if (!ts) continue
-    const input = pos(row.input)
-    const output = pos(row.output)
-    const cacheRead = pos(row.cacheRead)
-    const cacheCreate = pos(row.cacheWrite)
+    const input = finitePositive(row.input)
+    const output = finitePositive(row.output)
+    const cacheRead = finitePositive(row.cacheRead)
+    const cacheCreate = finitePositive(row.cacheWrite)
     if (input + output + cacheRead + cacheCreate === 0) continue
     entries.push({
       ts,
       model: typeof row.model === 'string' && row.model ? row.model : 'unknown',
-      cost: pos(row.cost),
+      cost: finitePositive(row.cost),
       input,
       output,
       cacheCreate,
@@ -68,11 +65,9 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
 }
 
 export async function opencodeDashboard(tz: string, homeDir?: string): Promise<DashboardData> {
-  const now = Date.now()
-  const since = Math.min(startOfMonth(now, tz), startOfWeek(now, tz), now - SPARK_DAYS * 86_400_000)
-  return summarize(await loadEntries(since, homeDir), tz)
+  return summarize(await loadEntries(dashboardSince(tz), homeDir), tz)
 }
 
 export async function opencodeTable(tz: string, homeDir?: string): Promise<TableData> {
-  return tabulate(await loadEntries(monthsAgoStart(Date.now(), 6, tz), homeDir), tz)
+  return tabulate(await loadEntries(tableSince(tz), homeDir), tz)
 }

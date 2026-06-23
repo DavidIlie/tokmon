@@ -50,9 +50,11 @@ type TipPayloadItem = {
   payload?: Record<string, unknown>
 }
 
+type TooltipOptions = { title?: (label: string) => string }
+
 export function makeTooltip(
   rows: (payload: ReadonlyArray<TipPayloadItem>, label: string) => TipRow[],
-  opts: { title?: (label: string) => string } = {},
+  opts: TooltipOptions = {},
 ) {
   return function TerminalTooltip(props: { active?: boolean; payload?: unknown; label?: string | number }) {
     const { active, payload, label } = props as {
@@ -81,6 +83,19 @@ export function makeTooltip(
       </div>
     )
   }
+}
+
+export function singleTip(
+  label: string,
+  fmt: (n: number) => string,
+  color?: string | ((payload: ReadonlyArray<TipPayloadItem>) => string | undefined),
+  opts?: TooltipOptions,
+) {
+  return makeTooltip(p => [{
+    label,
+    value: fmt(p[0]?.value ?? 0),
+    color: typeof color === 'function' ? color(p) : color,
+  }], opts)
 }
 
 export function ChartShell({ height = 240, heightClass, children }: {
