@@ -34,5 +34,9 @@ export function reconcileDaemonConfig(
     return { config: previous, pendingLocalConfig: null }
   }
 
+  if (previous?.onboarded === true && daemonConfig.onboarded === false) {
+    return { config: previous, pendingLocalConfig: null }
+  }
+
   return { config: daemonConfig, pendingLocalConfig: null }
 }

@@ -13,12 +13,20 @@ export interface AccountDraft {
   color: string
 }
 
-export function newDraft(cfg: Config): AccountDraft {
+export interface AccountDraftDefaults {
+  providerId?: ProviderId
+  name?: string
+  homeDir?: string
+  color?: string
+}
+
+export function newDraft(cfg: Config, defaults: AccountDraftDefaults = {}): AccountDraft {
   return {
     mode: 'add', editingId: null,
-    providerId: PROVIDER_ORDER[0],
-    name: '', homeDir: '~',
-    color: pickAccentColor(cfg.accounts),
+    providerId: defaults.providerId ?? PROVIDER_ORDER[0],
+    name: defaults.name ?? '',
+    homeDir: defaults.homeDir ?? '~',
+    color: defaults.color ?? pickAccentColor(cfg.accounts),
   }
 }
 

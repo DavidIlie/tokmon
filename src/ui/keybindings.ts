@@ -1,6 +1,6 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { PROVIDERS, PROVIDER_ORDER, type ProviderId } from '../providers'
-import { sanitizeTyped, type Config, type Account as StoredAccount } from '../config'
+import { sanitizeTyped, type Config, type Account as StoredAccount, type TrackedAccountRow } from '../config'
 import { isValidTimezone, systemTimezone } from '../tz'
 import { TABS, VIEWS, type Slot, clampCaret, spliceBackspace } from '../app.logic'
 import { ACCOUNT_ROWS_START, PROVIDER_ROWS_START, type AccountForm } from './settings'
@@ -65,11 +65,13 @@ export interface KeyContext {
   settingsCursor: number
   setShowSettings: Dispatch<SetStateAction<boolean>>
   cfg: Config
+  trackedAccountRows: TrackedAccountRow[]
   totalSettingsRows: number
   moveAccount: (idx: number, dir: -1 | 1) => void
   setSettingsCursor: Dispatch<SetStateAction<number>>
   toggleProvider: (pid: ProviderId) => void
   openEditAccount: (acc: StoredAccount) => void
+  openConfigureAccount: (row: TrackedAccountRow) => void
   deleteAccount: (id: string) => void
   openAddAccount: () => void
 
@@ -100,8 +102,8 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
     showSettings, accountForm, setAccountForm, commitAccountForm, cycleFormField, cycleProvider, cycleColor,
     isPrintable, insertText, tzEdit, setTzEdit, setTzError, updateConfig, setTzCaret, tzValueRef, tzCaretRef,
     tab, searchMode, setSearchMode, search, setSearch, setSearchCaret, searchValueRef, searchCaretRef,
-    showLoader, configReady, toggleWeb, settingsCursor, setShowSettings, cfg, totalSettingsRows, moveAccount,
-    setSettingsCursor, toggleProvider, openEditAccount, deleteAccount, openAddAccount, cycleAccount, setTab,
+    showLoader, configReady, toggleWeb, settingsCursor, setShowSettings, cfg, trackedAccountRows, totalSettingsRows, moveAccount,
+    setSettingsCursor, toggleProvider, openEditAccount, openConfigureAccount, deleteAccount, openAddAccount, cycleAccount, setTab,
     resetView, slots, dashPaginated, dashPageCount, setDashPage, cycleTableProvider, setExpanded, setSort,
     SORTS_FOR, tableIsCursor, setView, cursor, rowCountRef, rows, setCursor, clampRow,
   } = ctx
@@ -219,9 +221,10 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
   if (showSettings) {
     if (key.escape || input === 's') { setShowSettings(false); return }
     const accIdxNav = settingsCursor - ACCOUNT_ROWS_START
-    const onAccountRow = accIdxNav >= 0 && accIdxNav < cfg.accounts.length
-    if (onAccountRow && key.shift && (key.upArrow || key.downArrow)) {
-      moveAccount(accIdxNav, key.upArrow ? -1 : 1); return
+    const onAccountRow = accIdxNav >= 0 && accIdxNav < trackedAccountRows.length
+    const selectedAccountRow = onAccountRow ? trackedAccountRows[accIdxNav] : null
+    if (selectedAccountRow?.source === 'configured' && selectedAccountRow.explicitIndex !== undefined && key.shift && (key.upArrow || key.downArrow)) {
+      moveAccount(selectedAccountRow.explicitIndex, key.upArrow ? -1 : 1); return
     }
     if (key.upArrow) { setSettingsCursor(c => Math.max(0, c - 1)); return }
     if (key.downArrow) { setSettingsCursor(c => Math.min(totalSettingsRows - 1, c + 1)); return }
@@ -260,14 +263,22 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
     }
 
     const accIdx = settingsCursor - ACCOUNT_ROWS_START
-    if (accIdx >= 0 && accIdx < cfg.accounts.length) {
-      const acc = cfg.accounts[accIdx]
-      if (key.return) { openEditAccount(acc); return }
-      if (input === 'd' || input === 'x') { deleteAccount(acc.id); return }
-      if (input === ' ') { updateConfig(c => ({ ...c, activeAccountId: acc.id })); return }
+    if (accIdx >= 0 && accIdx < trackedAccountRows.length) {
+      const row = trackedAccountRows[accIdx]
+      if (key.return) {
+        if (row.source === 'configured') {
+          const acc = cfg.accounts.find(a => a.id === row.explicitId)
+          if (acc) openEditAccount(acc)
+        } else {
+          openConfigureAccount(row)
+        }
+        return
+      }
+      if (row.source === 'configured' && row.explicitId && (input === 'd' || input === 'x')) { deleteAccount(row.explicitId); return }
+      if (input === ' ') { updateConfig(c => ({ ...c, activeAccountId: row.id })); return }
       return
     }
-    if (accIdx === cfg.accounts.length && key.return) { openAddAccount() }
+    if (accIdx === trackedAccountRows.length && key.return) { openAddAccount() }
     return
   }
 

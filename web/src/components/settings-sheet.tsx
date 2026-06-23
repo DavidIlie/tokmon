@@ -86,6 +86,12 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
               <AccountsSection
                 draft={draft} patch={patch}
                 onEdit={a => setAcctEditor(toDraft(a))}
+                onConfigure={row => setAcctEditor(newDraft(draft, {
+                  providerId: row.providerId,
+                  name: row.name,
+                  homeDir: row.homeDir,
+                  color: row.color,
+                }))}
                 onAdd={() => setAcctEditor(newDraft(draft))}
               />
             </>

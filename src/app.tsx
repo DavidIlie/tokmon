@@ -5,8 +5,8 @@ import { fetchPeak, type PeakStatus } from './peak'
 import {
   loadConfig, saveConfigSync,
   generateAccountId, pickAccentColor,
-  DEFAULTS, normalizeConfig, sanitizeTyped,
-  type Config, type Account as StoredAccount,
+  DEFAULTS, normalizeConfig, sanitizeTyped, getTrackedAccountRows,
+  type Config, type Account as StoredAccount, type TrackedAccountRow,
 } from './config'
 import { reconcileDaemonConfig } from './config-sync'
 import { buildAccounts, accountsByProvider } from './accounts'
@@ -136,6 +136,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const configReady = config !== null
 
   const accounts = useMemo(() => buildAccounts(cfg, detected), [cfg, detected])
+  const trackedAccountRows = useMemo(() => getTrackedAccountRows(cfg, detected), [cfg, detected])
   const accountsRef = useRef<Account[]>([])
   accountsRef.current = accounts
   const rowCountRef = useRef(0)
@@ -581,14 +582,17 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     setCursor(0); setExpanded(-1); setSearch(''); setSearchCaret(0); setSearchMode(false)
   }, [tableProvs, effTableProvider])
 
-  function openAddAccount(): void {
-    const providerId = (detected[0] ?? 'claude') as ProviderId
+  function openAddAccount(defaults?: Pick<TrackedAccountRow, 'providerId' | 'name' | 'homeDir' | 'color'>): void {
+    const providerId = defaults?.providerId ?? ((detected[0] ?? 'claude') as ProviderId)
     setAccountForm({
       mode: 'add', field: 'provider', providerId,
-      name: '', homeDir: '~', color: pickAccentColor(cfg.accounts),
-      caret: 0,
+      name: defaults?.name ?? '', homeDir: defaults?.homeDir ?? '~', color: defaults?.color ?? pickAccentColor(cfg.accounts),
+      caret: defaults?.name?.length ?? 0,
       editingId: null, error: null,
     })
+  }
+  function openConfigureAccount(row: TrackedAccountRow): void {
+    openAddAccount(row)
   }
   function openEditAccount(acc: StoredAccount): void {
     setAccountForm({
@@ -661,7 +665,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     setSettingsCursor(c => Math.max(ACCOUNT_ROWS_START, Math.min(ACCOUNT_ROWS_START + cfg.accounts.length - 1, c + dir)))
   }
 
-  const totalSettingsRows = ACCOUNT_ROWS_START + cfg.accounts.length + 1
+  const totalSettingsRows = ACCOUNT_ROWS_START + trackedAccountRows.length + 1
 
   async function toggleWeb(): Promise<void> {
     if (connected) {
@@ -711,8 +715,8 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     showSettings, accountForm, setAccountForm, commitAccountForm, cycleFormField, cycleProvider, cycleColor,
     isPrintable, insertText, tzEdit, setTzEdit, setTzError, updateConfig, setTzCaret, tzValueRef, tzCaretRef,
     tab, searchMode, setSearchMode, search, setSearch, setSearchCaret, searchValueRef, searchCaretRef,
-    showLoader, configReady, toggleWeb, settingsCursor, setShowSettings, cfg, totalSettingsRows, moveAccount,
-    setSettingsCursor, toggleProvider, openEditAccount, deleteAccount, openAddAccount, cycleAccount, setTab,
+    showLoader, configReady, toggleWeb, settingsCursor, setShowSettings, cfg, trackedAccountRows, totalSettingsRows, moveAccount,
+    setSettingsCursor, toggleProvider, openEditAccount, openConfigureAccount, deleteAccount, openAddAccount, cycleAccount, setTab,
     resetView, slots, dashPaginated, dashPageCount, setDashPage, cycleTableProvider, setExpanded, setSort,
     SORTS_FOR, tableIsCursor, setView, cursor, rowCountRef, rows, setCursor, clampRow,
   }), { isActive: IS_TTY })
@@ -783,6 +787,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
           resolvedTz={tz}
           accountForm={accountForm}
           activeAccountId={cfg.activeAccountId}
+          trackedAccounts={trackedAccountRows}
         />
       ) : (
         <>

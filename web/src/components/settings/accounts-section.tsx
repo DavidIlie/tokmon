@@ -1,16 +1,17 @@
-import { PROVIDER_META, type Account, type Config } from '@shared'
+import { getTrackedAccountRows, PROVIDER_META, type Account, type Config, type TrackedAccountRow } from '@shared'
 import { namedColorHex } from '../../lib/colors'
 import { ChevronUp, ChevronDown, Pencil, Plus, Trash } from '../icons'
 import { FOCUS } from './use-dialog-trap'
 import { Section, IconBtn } from './primitives'
 
-export function AccountsSection({ draft, patch, onEdit, onAdd }: {
+export function AccountsSection({ draft, patch, onEdit, onConfigure, onAdd }: {
   draft: Config
   patch: (fn: (c: Config) => Config) => void
   onEdit: (a: Account) => void
+  onConfigure: (row: TrackedAccountRow) => void
   onAdd: () => void
 }) {
-  const accounts = draft.accounts
+  const accounts = getTrackedAccountRows(draft)
 
   const setActive = (id: string | null) => patch(c => ({ ...c, activeAccountId: id }))
   const remove = (id: string) => patch(c => ({
@@ -39,12 +40,13 @@ export function AccountsSection({ draft, patch, onEdit, onAdd }: {
         </p>
       ) : (
         <ul className="flex flex-col gap-1.5" role="radiogroup" aria-label="Active account">
-          {accounts.map((acc, i) => {
+          {accounts.map(acc => {
             const meta = PROVIDER_META[acc.providerId]
             const hex = namedColorHex(acc.color || meta.color)
             const active = acc.id === draft.activeAccountId
+            const configured = acc.source === 'configured'
             return (
-              <li key={acc.id} className="flex items-center gap-2.5 rounded border border-line bg-bg-2/60 px-2.5 py-2">
+              <li key={`${acc.source}:${acc.id}`} className="flex items-center gap-2.5 rounded border border-line bg-bg-2/60 px-2.5 py-2">
                 <button
                   type="button"
                   role="radio"
@@ -62,14 +64,23 @@ export function AccountsSection({ draft, patch, onEdit, onAdd }: {
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm text-fg-bright">{acc.name}</span>
                     <span className="shrink-0 rounded bg-bg-3 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fg-dim">{meta.name}</span>
+                    <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fg-faint">
+                      {acc.source === 'auto' ? 'auto' : 'configured'}
+                    </span>
                   </div>
                   <div className="truncate font-mono text-[11px] text-fg-faint">{acc.homeDir}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5">
-                  <IconBtn label="Move up" disabled={i === 0} onClick={() => move(i, -1)}><ChevronUp className="size-3.5" /></IconBtn>
-                  <IconBtn label="Move down" disabled={i === accounts.length - 1} onClick={() => move(i, 1)}><ChevronDown className="size-3.5" /></IconBtn>
-                  <IconBtn label="Edit account" onClick={() => onEdit(acc)}><Pencil className="size-3.5" /></IconBtn>
-                  <IconBtn label="Delete account" danger onClick={() => remove(acc.id)}><Trash className="size-3.5" /></IconBtn>
+                  {configured && acc.explicitIndex !== undefined ? (
+                    <>
+                      <IconBtn label="Move up" disabled={acc.explicitIndex === 0} onClick={() => move(acc.explicitIndex!, -1)}><ChevronUp className="size-3.5" /></IconBtn>
+                      <IconBtn label="Move down" disabled={acc.explicitIndex === draft.accounts.length - 1} onClick={() => move(acc.explicitIndex!, 1)}><ChevronDown className="size-3.5" /></IconBtn>
+                      <IconBtn label="Edit account" onClick={() => onEdit(acc)}><Pencil className="size-3.5" /></IconBtn>
+                      <IconBtn label="Delete account" danger onClick={() => remove(acc.id)}><Trash className="size-3.5" /></IconBtn>
+                    </>
+                  ) : (
+                    <IconBtn label="Configure account" onClick={() => onConfigure(acc)}><Pencil className="size-3.5" /></IconBtn>
+                  )}
                 </div>
               </li>
             )

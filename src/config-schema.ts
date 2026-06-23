@@ -25,6 +25,19 @@ export interface Config {
   knownProviders: ProviderId[]
 }
 
+export type TrackedAccountSource = 'auto' | 'configured'
+
+export interface TrackedAccountRow {
+  id: string
+  providerId: ProviderId
+  name: string
+  homeDir: string
+  color: string
+  source: TrackedAccountSource
+  explicitId?: string
+  explicitIndex?: number
+}
+
 export const DEFAULTS: Config = {
   interval: 2,
   billingInterval: 5,
@@ -62,6 +75,47 @@ export const PROVIDER_META: Record<ProviderId, { name: string; color: string }> 
   opencode: { name: 'opencode', color: 'yellow' },
   antigravity: { name: 'Antigravity', color: 'red' },
   gemini: { name: 'Gemini', color: 'greenBright' },
+}
+
+export function getTrackedAccountRows(
+  config: Config,
+  trackedProviders: readonly ProviderId[] = PROVIDER_ORDER.filter(pid => !config.disabledProviders.includes(pid)),
+): TrackedAccountRow[] {
+  const tracked = new Set(trackedProviders)
+  const configuredProviders = new Set<ProviderId>()
+  const rows: TrackedAccountRow[] = []
+
+  config.accounts.forEach((account, explicitIndex) => {
+    const meta = PROVIDER_META[account.providerId]
+    configuredProviders.add(account.providerId)
+    rows.push({
+      id: account.id,
+      providerId: account.providerId,
+      name: account.name,
+      homeDir: account.homeDir || '~',
+      color: account.color || meta.color,
+      source: 'configured',
+      explicitId: account.id,
+      explicitIndex,
+    })
+  })
+
+  for (const providerId of PROVIDER_ORDER) {
+    if (config.disabledProviders.includes(providerId)) continue
+    if (configuredProviders.has(providerId)) continue
+    if (!tracked.has(providerId)) continue
+    const meta = PROVIDER_META[providerId]
+    rows.push({
+      id: providerId,
+      providerId,
+      name: meta.name,
+      homeDir: '~',
+      color: meta.color,
+      source: 'auto',
+    })
+  }
+
+  return rows
 }
 
 export function clampNum(v: unknown, fallback: number, min: number): number {

@@ -15,7 +15,7 @@ export type {
   ProviderId,
 } from '../providers/types'
 
-export type { Config, Account } from '../config-schema'
+export type { Config, Account, TrackedAccountRow, TrackedAccountSource } from '../config-schema'
 export {
   normalizeConfig,
   generateAccountId,
@@ -25,6 +25,7 @@ export {
   COLOR_PALETTE,
   PROVIDER_META,
   PROVIDER_ORDER,
+  getTrackedAccountRows,
   sanitizeTyped,
 } from '../config-schema'
 

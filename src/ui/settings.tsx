@@ -1,7 +1,7 @@
 import { memo } from 'react'
 import { Box, Text } from 'ink'
 import { glyphs } from '../glyphs'
-import { configLocation, generateAccountId, COLOR_PALETTE, type Config, type Account } from '../config'
+import { configLocation, generateAccountId, COLOR_PALETTE, type Config, type Account, type TrackedAccountRow } from '../config'
 import { PROVIDER_ORDER, PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
 import { truncateName } from './shared'
@@ -29,7 +29,7 @@ export const FORM_FIELDS: FormField[] = ['provider', 'name', 'homeDir', 'color']
 export { COLOR_PALETTE } from '../config'
 
 export const SettingsView = memo(function SettingsView({
-  config, cursor, tzEdit, tzCaret, tzError, resolvedTz, accountForm, activeAccountId,
+  config, cursor, tzEdit, tzCaret, tzError, resolvedTz, accountForm, activeAccountId, trackedAccounts,
 }: {
   config: Config
   cursor: number
@@ -39,6 +39,7 @@ export const SettingsView = memo(function SettingsView({
   resolvedTz: string
   accountForm: AccountForm | null
   activeAccountId: string | null
+  trackedAccounts: TrackedAccountRow[]
 }) {
   if (accountForm) return <AccountFormView form={accountForm} accounts={config.accounts} />
 
@@ -99,27 +100,28 @@ export const SettingsView = memo(function SettingsView({
 
       <Box height={1} />
       <Text bold dimColor>Accounts</Text>
-      {config.accounts.length === 0 && (
-        <Text dimColor>  none configured {glyphs().emDash} enabled providers track automatically</Text>
+      {trackedAccounts.length === 0 && (
+        <Text dimColor>  none tracked {glyphs().emDash} enable a provider or add an account</Text>
       )}
-      {config.accounts.map((acc, i) => {
+      {trackedAccounts.map((acc, i) => {
         const idx = ACCOUNT_ROWS_START + i
         const selected = cursor === idx
         const isActive = acc.id === activeAccountId
         const provider = PROVIDERS[acc.providerId]
         return (
-          <Box key={acc.id}>
+          <Box key={`${acc.source}:${acc.id}`}>
             <Text color={selected ? 'green' : undefined}>{selected ? glyphs().caretR : ' '} </Text>
             <Text color={acc.color || provider.color}>{isActive ? glyphs().dot : glyphs().radioOff} </Text>
             <Box width={16}><Text bold>{truncateName(acc.name, 15)}</Text></Box>
             <Box width={9}><Text color={provider.color}>{provider.name}</Text></Box>
+            <Box width={12}><Text dimColor>{acc.source === 'auto' ? 'auto tracking' : 'configured'}</Text></Box>
             <Text dimColor>{truncateName(acc.homeDir, 24)}</Text>
           </Box>
         )
       })}
       <Box>
-        <Text color={cursor === ACCOUNT_ROWS_START + config.accounts.length ? 'green' : undefined}>
-          {cursor === ACCOUNT_ROWS_START + config.accounts.length ? glyphs().caretR : ' '}{' '}
+        <Text color={cursor === ACCOUNT_ROWS_START + trackedAccounts.length ? 'green' : undefined}>
+          {cursor === ACCOUNT_ROWS_START + trackedAccounts.length ? glyphs().caretR : ' '}{' '}
         </Text>
         <Text color="greenBright">+ </Text>
         <Text>Add account</Text>
@@ -130,9 +132,13 @@ export const SettingsView = memo(function SettingsView({
         <Text dimColor>type IANA name (e.g. Europe/London) {glyphs().middot} empty = System {glyphs().middot} Enter save {glyphs().middot} Esc cancel</Text>
       ) : cursor >= PROVIDER_ROWS_START && cursor < ACCOUNT_ROWS_START ? (
         <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  space toggle provider  {glyphs().middot}  s/Esc close</Text>
-      ) : cursor >= ACCOUNT_ROWS_START && cursor < ACCOUNT_ROWS_START + config.accounts.length ? (
-        <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  {glyphs().shift}{glyphs().arrowU}{glyphs().arrowD} reorder  {glyphs().middot}  Enter edit  {glyphs().middot}  space activate  {glyphs().middot}  d delete  {glyphs().middot}  s/Esc close</Text>
-      ) : cursor === ACCOUNT_ROWS_START + config.accounts.length ? (
+      ) : cursor >= ACCOUNT_ROWS_START && cursor < ACCOUNT_ROWS_START + trackedAccounts.length ? (
+        trackedAccounts[cursor - ACCOUNT_ROWS_START]?.source === 'auto' ? (
+          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter configure  {glyphs().middot}  space activate  {glyphs().middot}  s/Esc close</Text>
+        ) : (
+          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  {glyphs().shift}{glyphs().arrowU}{glyphs().arrowD} reorder  {glyphs().middot}  Enter edit  {glyphs().middot}  space activate  {glyphs().middot}  d delete  {glyphs().middot}  s/Esc close</Text>
+        )
+      ) : cursor === ACCOUNT_ROWS_START + trackedAccounts.length ? (
         <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter add account  {glyphs().middot}  s/Esc close</Text>
       ) : (
         <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().arrowL}{glyphs().arrowR} adjust  Enter edit  s/Esc close</Text>

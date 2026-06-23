@@ -6,12 +6,14 @@ import { DEFAULTS, normalizeConfig, type Config, type Account } from './config-s
 
 // Re-export the browser-safe schema so existing importers keep working unchanged.
 export type { Config, Account } from './config-schema'
+export type { TrackedAccountRow, TrackedAccountSource } from './config-schema'
 export {
   DEFAULTS,
   ACCENT_COLORS,
   PROVIDER_IDS,
   COLOR_PALETTE,
   PROVIDER_META,
+  getTrackedAccountRows,
   clampNum,
   normalizeConfig,
   slugify,
