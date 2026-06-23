@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { promisify } from 'node:util'
 import { resetIn } from '../../format'
 import { readJson } from '../../http'
+import { expandHome } from '../../config'
 import type { Account, BillingResult, Metric } from '../types'
 import { claudeConfigDirs } from './usage'
 
@@ -66,17 +67,18 @@ async function readMacKeychain(): Promise<ClaudeAuth | null> {
 }
 
 async function getAuth(homeDir?: string): Promise<ClaudeAuth | null> {
-  const isDefault = !homeDir || homeDir === homedir()
+  const expandedHomeDir = homeDir ? expandHome(homeDir) : undefined
+  const isDefault = !expandedHomeDir || expandedHomeDir === homedir()
   // macOS default account: keychain ("Claude Code-credentials") first; custom-homeDir accounts use .credentials.json first.
   if (isDefault) {
     if (process.platform === 'darwin') {
       const auth = await readMacKeychain()
       if (auth) return auth
     }
-    return readCredentialsFile(homeDir)
+    return readCredentialsFile(undefined)
   }
   // Non-default: file first, but fall back to keychain — Claude Code sometimes stores creds only there even for custom dirs.
-  const fileAuth = await readCredentialsFile(homeDir)
+  const fileAuth = await readCredentialsFile(expandedHomeDir)
   if (fileAuth) return fileAuth
   if (process.platform === 'darwin') return readMacKeychain()
   return null

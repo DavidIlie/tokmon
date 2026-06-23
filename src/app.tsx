@@ -5,11 +5,12 @@ import { Box, Text, Transform, useInput, useStdout, useApp } from 'ink'
 import { useMouse } from '@zenobius/ink-mouse'
 import { fetchPeak, type PeakStatus } from './peak'
 import {
-  loadConfig, saveConfig,
+  loadConfig, saveConfigSync,
   generateAccountId, pickAccentColor,
-  DEFAULTS, sanitizeTyped,
+  DEFAULTS, normalizeConfig, sanitizeTyped,
   type Config, type Account as StoredAccount,
 } from './config'
+import { reconcileDaemonConfig } from './config-sync'
 import { buildAccounts, accountsByProvider } from './accounts'
 import { PROVIDERS, PROVIDER_ORDER, detectProviders, type Account, type ProviderId } from './providers'
 import { coalesceTables } from './providers/usage-core'
@@ -236,6 +237,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const seededRef = useRef(false)
   const pasteBufRef = useRef<string | null>(null)
   const pasteCarryRef = useRef<string>('')
+  const pendingLocalConfigRef = useRef<Config | null>(null)
   const insertPasteRef = useRef<(text: string) => void>(() => {})
   const tzValueRef = useRef('')
   const tzCaretRef = useRef(0)
@@ -600,9 +602,18 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
 
   const updateConfig = useCallback((fn: (prev: Config) => Config): void => {
     setConfig(prev => {
-      const next = fn(prev ?? DEFAULTS)
-      if (connected) { void daemon.setConfig(next).catch(() => {}) }
-      else void saveConfig(next)
+      const next = normalizeConfig(fn(prev ?? DEFAULTS) as unknown as Record<string, unknown>)
+      pendingLocalConfigRef.current = connected ? next : null
+      saveConfigSync(next)
+      if (connected) {
+        void daemon.setConfig(next)
+          .then(saved => {
+            if (pendingLocalConfigRef.current && reconcileDaemonConfig(next, saved, pendingLocalConfigRef.current).pendingLocalConfig === null) {
+              pendingLocalConfigRef.current = null
+            }
+          })
+          .catch(() => {})
+      }
       return next
     })
   }, [connected, daemon])
@@ -611,8 +622,9 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   useEffect(() => {
     if (!connected || !daemonConfig) return
     setConfig(prev => {
-      if (prev && deepEqual(prev, daemonConfig)) return prev
-      return daemonConfig
+      const reconciled = reconcileDaemonConfig(prev, daemonConfig, pendingLocalConfigRef.current)
+      pendingLocalConfigRef.current = reconciled.pendingLocalConfig
+      return reconciled.config
     })
   }, [connected, daemonConfig])
 

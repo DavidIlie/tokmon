@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises'
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { DEFAULTS, normalizeConfig, type Config, type Account } from './config-schema'
@@ -64,18 +65,33 @@ export async function loadConfig(): Promise<Config> {
 
 let saveQueue: Promise<void> = Promise.resolve()
 
+function configJson(config: Config): string {
+  return JSON.stringify(config, null, 2) + '\n'
+}
+
 export function saveConfig(config: Config): Promise<void> {
   saveQueue = saveQueue.then(async () => {
     try {
       const dir = configDir()
       await mkdir(dir, { recursive: true })
       const tmp = join(dir, `config.json.${process.pid}.tmp`)
-      await writeFile(tmp, JSON.stringify(config, null, 2) + '\n')
+      await writeFile(tmp, configJson(config))
       await rename(tmp, configLocation())
     } catch {
     }
   })
   return saveQueue
+}
+
+export function saveConfigSync(config: Config): void {
+  try {
+    const dir = configDir()
+    mkdirSync(dir, { recursive: true })
+    const tmp = join(dir, `config.json.${process.pid}.tmp`)
+    writeFileSync(tmp, configJson(config))
+    renameSync(tmp, configLocation())
+  } catch {
+  }
 }
 
 export function expandHome(p: string): string {
