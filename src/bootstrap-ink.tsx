@@ -43,7 +43,6 @@ export async function bootstrapInk({ interval, config, daemon, mode }: Bootstrap
   )
 
   await waitUntilExit()
-  // The open WS keeps the event loop alive for seconds; exit promptly instead of waiting for teardown.
   daemon.stop()
   if (isTTY) restoreInputModes()
   if (altScreen) leaveAltScreen()

@@ -276,8 +276,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     : []
   const showPicker = needsOnboarding || newProviders.length > 0
   const minVisibleHold = loaderShownAt !== null && Date.now() - loaderShownAt < LOADER_MIN_VISIBLE_MS
-  // Render read uses the state mirror (not the ref) so flipping the latch
-  // re-renders and the loader actually disappears (P15).
   const showLoader = configReady && !showPicker && !showSettings && !TOO_SMALL
     && accounts.length > 0 && (!allReady || graceHold || minVisibleHold)
     && (debouncePassed || loaderShownAt !== null) && !loaderDoneState
@@ -487,10 +485,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     return true
   }, [])
 
-  // True when stdin input should be ignored by Ink's useInput text branches
-  // because handlePasteData already owns it: a paste is in flight, or this chunk
-  // carries a (possibly ESC-stripped) bracketed-paste marker. Prevents the
-  // double-insert / leaked `[200~` that would otherwise land in focused fields.
   const isPasteInput = useCallback((input: string): boolean => {
     if (pasteBufRef.current !== null) return true
     return input.includes('[200~') || input.includes('[201~')
@@ -500,7 +494,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   useEffect(() => {
     if (!IS_TTY) return
     mouse.enable()
-    // ink-mouse also enables motion tracking (1003/1002) which floods stdin; drop those, keep click (1000) + SGR (1006).
     if (process.stdout.isTTY) {
       try { process.stdout.write('\x1b[?1003l\x1b[?1002l\x1b[?1015l') } catch {}
     }
@@ -744,8 +737,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   if (error) return <Box padding={1}><Text color="red">{error}</Text></Box>
   if (!config) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
 
-  // While a drag-resize is in flight, render a minimal overlay sized to the LIVE terminal
-  // (the layout below uses the debounced size, which is briefly stale mid-drag).
   if (resizing) return <ResizingView cols={live.cols} rows={live.rows} />
 
   if (showPicker) {

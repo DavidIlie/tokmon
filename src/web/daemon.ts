@@ -18,7 +18,6 @@ function parseDaemonArgs(args: string[]): DaemonArgs {
     else if (a === '--no-open') { open = false }
     else if (a === '--help' || a === '-h') { help = true }
   }
-  // --port 0 = OS-assigned ephemeral port for the TUI's private daemon.
   if (port !== undefined && (!Number.isFinite(port) || port < 0 || port > 65535)) port = undefined
   return { port, open, help }
 }

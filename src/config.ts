@@ -4,7 +4,6 @@ import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { DEFAULTS, normalizeConfig, type Config, type Account } from './config-schema'
 
-// Re-export the browser-safe schema so existing importers keep working unchanged.
 export type { Config, Account } from './config-schema'
 export type { TrackedAccountRow, TrackedAccountSource } from './config-schema'
 export {

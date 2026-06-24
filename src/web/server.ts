@@ -166,7 +166,6 @@ function delay(ms: number): Promise<void> {
 
 function listenWithFallback(server: Server, startPort: number): Promise<number> {
   return new Promise((resolve, reject) => {
-    // port 0 = OS-assigned ephemeral port; read back from address() with no EADDRINUSE walk.
     if (startPort === 0) {
       server.once('error', reject)
       server.listen(0, HOST, () => {
