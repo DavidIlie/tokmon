@@ -6,9 +6,7 @@ import { Section, IconBtn } from './primitives'
 
 function accountFromSnapshot(row: TrackedAccountRow, snapshot: WebSnapshot | null): WebAccount | null {
   if (!snapshot) return null
-  return snapshot.accounts.find(account => account.id === row.id)
-    ?? (row.source === 'auto' ? snapshot.accounts.find(account => account.providerId === row.providerId) : null)
-    ?? null
+  return snapshot.accounts.find(account => account.id === row.id) ?? null
 }
 
 export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, onAdd }: {
@@ -19,7 +17,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
   onConfigure: (row: TrackedAccountRow) => void
   onAdd: () => void
 }) {
-  const accounts = getTrackedAccountRows(draft)
+  const accounts = getTrackedAccountRows(draft, undefined, snapshot?.accounts ?? undefined)
 
   const setActive = (id: string | null) => patch(c => ({ ...c, activeAccountId: id }))
   const remove = (id: string) => patch(c => ({

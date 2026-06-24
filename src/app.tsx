@@ -137,7 +137,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const configReady = config !== null
 
   const accounts = useMemo(() => buildAccounts(cfg, detected), [cfg, detected])
-  const trackedAccountRows = useMemo(() => getTrackedAccountRows(cfg, detected), [cfg, detected])
+  const trackedAccountRows = useMemo(() => getTrackedAccountRows(cfg, detected, accounts), [cfg, detected, accounts])
   const settingsRowCount = settingsTab === 'general'
     ? GENERAL_ROWS
     : settingsTab === 'providers'

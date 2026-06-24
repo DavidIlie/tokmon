@@ -38,6 +38,14 @@ export interface TrackedAccountRow {
   explicitIndex?: number
 }
 
+export interface TrackedAccountCandidate {
+  id: string
+  providerId: ProviderId
+  name: string
+  homeDir?: string | null
+  color?: string | null
+}
+
 export const DEFAULTS: Config = {
   interval: 2,
   billingInterval: 5,
@@ -80,15 +88,29 @@ export const PROVIDER_META: Record<ProviderId, { name: string; color: string }> 
 export function getTrackedAccountRows(
   config: Config,
   trackedProviders: readonly ProviderId[] = PROVIDER_ORDER.filter(pid => !config.disabledProviders.includes(pid)),
+  autoAccounts?: readonly TrackedAccountCandidate[],
 ): TrackedAccountRow[] {
   const tracked = new Set(trackedProviders)
-  const configuredProviders = new Set<ProviderId>()
+  const configuredIds = new Set<string>()
+  const configuredKeys = new Set<string>()
+  const rowIds = new Set<string>()
+  const rowKeys = new Set<string>()
   const rows: TrackedAccountRow[] = []
+
+  const keyFor = (providerId: ProviderId, homeDir?: string | null) =>
+    `${providerId}:${homeDir && homeDir !== '~' ? homeDir : '~'}`
+
+  const rememberRow = (row: TrackedAccountRow): void => {
+    rowIds.add(row.id)
+    rowKeys.add(keyFor(row.providerId, row.homeDir))
+    rows.push(row)
+  }
 
   config.accounts.forEach((account, explicitIndex) => {
     const meta = PROVIDER_META[account.providerId]
-    configuredProviders.add(account.providerId)
-    rows.push({
+    configuredIds.add(account.id)
+    configuredKeys.add(keyFor(account.providerId, account.homeDir))
+    rememberRow({
       id: account.id,
       providerId: account.providerId,
       name: account.name,
@@ -100,12 +122,30 @@ export function getTrackedAccountRows(
     })
   })
 
+  if (autoAccounts) {
+    for (const account of autoAccounts) {
+      if (config.disabledProviders.includes(account.providerId)) continue
+      const key = keyFor(account.providerId, account.homeDir)
+      if (configuredIds.has(account.id) || configuredKeys.has(key) || rowIds.has(account.id) || rowKeys.has(key)) continue
+      const meta = PROVIDER_META[account.providerId]
+      rememberRow({
+        id: account.id,
+        providerId: account.providerId,
+        name: account.name,
+        homeDir: account.homeDir || '~',
+        color: account.color || meta.color,
+        source: 'auto',
+      })
+    }
+  }
+
   for (const providerId of PROVIDER_ORDER) {
     if (config.disabledProviders.includes(providerId)) continue
-    if (configuredProviders.has(providerId)) continue
     if (!tracked.has(providerId)) continue
+    const key = keyFor(providerId, '~')
+    if (configuredIds.has(providerId) || configuredKeys.has(key) || rowIds.has(providerId) || rowKeys.has(key)) continue
     const meta = PROVIDER_META[providerId]
-    rows.push({
+    rememberRow({
       id: providerId,
       providerId,
       name: meta.name,

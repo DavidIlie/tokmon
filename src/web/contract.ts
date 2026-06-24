@@ -16,6 +16,7 @@ export type {
 } from '../providers/types'
 
 export type { Config, Account, TrackedAccountRow, TrackedAccountSource } from '../config-schema'
+export type { TrackedAccountCandidate } from '../config-schema'
 export {
   formatAgo,
   formatCount,
@@ -68,6 +69,7 @@ export interface WebAccount {
   providerId: ProviderId
   name: string
   color: string
+  homeDir: string | null
   hasUsage: boolean
   hasBilling: boolean
   email?: string | null

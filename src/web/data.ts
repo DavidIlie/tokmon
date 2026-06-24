@@ -70,6 +70,7 @@ export function assembleSnapshot(opts: {
       providerId: r.account.providerId,
       name: r.account.name,
       color: r.color,
+      homeDir: r.account.homeDir ?? null,
       hasUsage: r.hasUsage,
       hasBilling: r.hasBilling,
       email: billing?.email ?? null,
