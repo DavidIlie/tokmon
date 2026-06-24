@@ -25,8 +25,8 @@ import { cursorModelSpend, type CursorModelSpend } from './providers/cursor/comp
 import { Onboarding, type OnboardItem } from './ui/onboarding'
 import { LoadingView, accountReady, statsReadyInput, type ReadyInput } from './ui/loading'
 import {
-  SettingsView, ACCOUNT_ROWS_START, COLOR_PALETTE, FORM_FIELDS,
-  type AccountForm, type AccountIdentity,
+  SettingsView, COLOR_PALETTE, FORM_FIELDS, GENERAL_ROWS,
+  type AccountForm, type AccountIdentity, type SettingsTab,
 } from './ui/settings'
 import { deriveSlots, findActiveSlot, computeChrome } from './ui/app-layout.logic'
 import { ResizingView } from './ui/resizing'
@@ -103,6 +103,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const [searchMode, setSearchMode] = useState(false)
   const [cursorRowsLocal, setCursorRows] = useState<CursorModelSpend[] | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general')
   const [settingsCursor, setSettingsCursor] = useState(0)
   const [tzEdit, setTzEdit] = useState<string | null>(null)
   const [tzError, setTzError] = useState<string | null>(null)
@@ -137,6 +138,11 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
 
   const accounts = useMemo(() => buildAccounts(cfg, detected), [cfg, detected])
   const trackedAccountRows = useMemo(() => getTrackedAccountRows(cfg, detected), [cfg, detected])
+  const settingsRowCount = settingsTab === 'general'
+    ? GENERAL_ROWS
+    : settingsTab === 'providers'
+      ? PROVIDER_ORDER.length
+      : trackedAccountRows.length + 1
   const accountsRef = useRef<Account[]>([])
   accountsRef.current = accounts
   const rowCountRef = useRef(0)
@@ -430,6 +436,9 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   useEffect(() => { setCursor(0); setExpanded(-1) }, [search])
 
   useEffect(() => { setDashPage(p => Math.min(p, dashPageCount - 1)) }, [dashPageCount])
+  useEffect(() => {
+    setSettingsCursor(c => Math.max(-1, Math.min(c, settingsRowCount - 1)))
+  }, [settingsRowCount])
 
   const resetView = useCallback(() => { setCursor(0); setExpanded(-1) }, [])
   const clampRow = (n: number) => Math.max(0, Math.min(rowCountRef.current - 1, n))
@@ -675,10 +684,8 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       ;[next[idx], next[target]] = [next[target], next[idx]]
       return { ...c, accounts: next }
     })
-    setSettingsCursor(c => Math.max(ACCOUNT_ROWS_START, Math.min(ACCOUNT_ROWS_START + cfg.accounts.length - 1, c + dir)))
+    setSettingsCursor(c => Math.max(0, Math.min(trackedAccountRows.length - 1, c + dir)))
   }
-
-  const totalSettingsRows = ACCOUNT_ROWS_START + trackedAccountRows.length + 1
 
   async function toggleWeb(): Promise<void> {
     if (connected) {
@@ -728,7 +735,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     showSettings, accountForm, setAccountForm, commitAccountForm, cycleFormField, cycleProvider, cycleColor,
     isPrintable, insertText, tzEdit, setTzEdit, setTzError, updateConfig, setTzCaret, tzValueRef, tzCaretRef,
     tab, searchMode, setSearchMode, search, setSearch, setSearchCaret, searchValueRef, searchCaretRef,
-    showLoader, configReady, toggleWeb, settingsCursor, setShowSettings, cfg, trackedAccountRows, totalSettingsRows, moveAccount,
+    showLoader, configReady, toggleWeb, settingsCursor, settingsTab, setSettingsTab, setShowSettings, cfg, trackedAccountRows, moveAccount,
     setSettingsCursor, toggleProvider, openEditAccount, openConfigureAccount, deleteAccount, openAddAccount, cycleAccount, setTab,
     resetView, slots, dashPaginated, dashPageCount, setDashPage, cycleTableProvider, setExpanded, setSort,
     SORTS_FOR, tableIsCursor, setView, cursor, rowCountRef, rows, setCursor, clampRow,
@@ -794,6 +801,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
         <SettingsView
           config={cfg}
           cursor={settingsCursor}
+          activeTab={settingsTab}
           tzEdit={tzEdit}
           tzCaret={tzCaret}
           tzError={tzError}

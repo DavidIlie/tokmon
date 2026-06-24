@@ -7,8 +7,14 @@ import type { ProviderId } from '../providers/types'
 import { truncateName } from './shared'
 
 export const GENERAL_ROWS = 6
-export const PROVIDER_ROWS_START = GENERAL_ROWS
-export const ACCOUNT_ROWS_START = GENERAL_ROWS + PROVIDER_ORDER.length
+
+export const SETTINGS_TABS = ['general', 'providers', 'accounts'] as const
+export type SettingsTab = typeof SETTINGS_TABS[number]
+const SETTINGS_TAB_LABELS: Record<SettingsTab, string> = {
+  general: 'General',
+  providers: 'Providers',
+  accounts: 'Accounts',
+}
 
 export type FormField = 'provider' | 'name' | 'homeDir' | 'color'
 
@@ -35,10 +41,11 @@ export const FORM_FIELDS: FormField[] = ['provider', 'name', 'homeDir', 'color']
 export { COLOR_PALETTE } from '../config'
 
 export const SettingsView = memo(function SettingsView({
-  config, cursor, tzEdit, tzCaret, tzError, resolvedTz, accountForm, activeAccountId, trackedAccounts, accountIdentities,
+  config, cursor, activeTab, tzEdit, tzCaret, tzError, resolvedTz, accountForm, activeAccountId, trackedAccounts, accountIdentities,
 }: {
   config: Config
   cursor: number
+  activeTab: SettingsTab
   tzEdit: string | null
   tzCaret: number
   tzError: string | null
@@ -52,111 +59,144 @@ export const SettingsView = memo(function SettingsView({
 
   const editingTz = tzEdit !== null
   const tzDisplay = config.timezone === null ? `System (${resolvedTz})` : config.timezone
+  const tabFocused = cursor < 0
 
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text bold>Settings</Text>
       <Text dimColor>{configLocation()}</Text>
       <Box height={1} />
-      <Text bold dimColor>General</Text>
-      <Row cursor={cursor} idx={0} label="Refresh interval">
-        <Text dimColor>{glyphs().caretL} </Text><Text bold color="yellow">{config.interval}s</Text><Text dimColor> {glyphs().caretR}</Text>
-      </Row>
-      <Row cursor={cursor} idx={1} label="Billing poll">
-        <Text dimColor>{glyphs().caretL} </Text><Text bold color="yellow">{config.billingInterval}m</Text><Text dimColor> {glyphs().caretR}</Text>
-      </Row>
-      <Row cursor={cursor} idx={2} label="Clear screen">
-        <Text bold color={config.clearScreen ? 'green' : 'red'}>{config.clearScreen ? 'on' : 'off'}</Text>
-      </Row>
-      <Row cursor={cursor} idx={3} label="Timezone">
-        {editingTz ? (
-          <><Text dimColor>[</Text><CaretText value={tzEdit ?? ''} caret={tzCaret} color="cyan" /><Text dimColor>]</Text></>
-        ) : (
-          <Text bold color="yellow">{tzDisplay}</Text>
-        )}
-      </Row>
-      {cursor === 3 && tzError && <Text color="red">  {tzError}</Text>}
-      <Row cursor={cursor} idx={4} label="Dashboard">
-        <Text dimColor>{glyphs().caretL} </Text>
-        <Text bold color="yellow">{config.dashboardLayout === 'grid' ? 'grid (all)' : 'single (cycle)'}</Text>
-        <Text dimColor> {glyphs().caretR}</Text>
-      </Row>
-      <Row cursor={cursor} idx={5} label="Default focus">
-        <Text dimColor>{glyphs().caretL} </Text>
-        <Text bold color="yellow">{config.defaultFocus === 'all' ? 'All' : 'Last account'}</Text>
-        <Text dimColor> {glyphs().caretR}</Text>
-      </Row>
-
+      <SettingsTabBar active={activeTab} focused={tabFocused} />
       <Box height={1} />
-      <Text bold dimColor>Providers</Text>
-      {PROVIDER_ORDER.map((pid, i) => {
-        const idx = PROVIDER_ROWS_START + i
-        const selected = cursor === idx
-        const enabled = !config.disabledProviders.includes(pid)
-        const p = PROVIDERS[pid]
-        return (
-          <Box key={pid}>
-            <Text color={selected ? 'green' : undefined}>{selected ? glyphs().caretR : ' '} </Text>
-            <Text bold={enabled} color={enabled ? p.color : undefined} dimColor={!enabled}>{enabled ? `[${glyphs().check}]` : '[ ]'}</Text>
-            <Text color={p.color}> {glyphs().dot} </Text>
-            <Box width={9}><Text bold={selected}>{p.name}</Text></Box>
-            <Text dimColor>{enabled ? 'tracking' : 'off'}</Text>
-          </Box>
-        )
-      })}
 
-      <Box height={1} />
-      <Text bold dimColor>Accounts</Text>
-      {trackedAccounts.length === 0 && (
-        <Text dimColor>  none tracked {glyphs().emDash} enable a provider or add an account</Text>
+      {activeTab === 'general' && (
+        <>
+          <Text bold dimColor>General</Text>
+          <Row cursor={cursor} idx={0} label="Refresh interval">
+            <Text dimColor>{glyphs().caretL} </Text><Text bold color="yellow">{config.interval}s</Text><Text dimColor> {glyphs().caretR}</Text>
+          </Row>
+          <Row cursor={cursor} idx={1} label="Billing poll">
+            <Text dimColor>{glyphs().caretL} </Text><Text bold color="yellow">{config.billingInterval}m</Text><Text dimColor> {glyphs().caretR}</Text>
+          </Row>
+          <Row cursor={cursor} idx={2} label="Clear screen">
+            <Text bold color={config.clearScreen ? 'green' : 'red'}>{config.clearScreen ? 'on' : 'off'}</Text>
+          </Row>
+          <Row cursor={cursor} idx={3} label="Timezone">
+            {editingTz ? (
+              <><Text dimColor>[</Text><CaretText value={tzEdit ?? ''} caret={tzCaret} color="cyan" /><Text dimColor>]</Text></>
+            ) : (
+              <Text bold color="yellow">{tzDisplay}</Text>
+            )}
+          </Row>
+          {cursor === 3 && tzError && <Text color="red">  {tzError}</Text>}
+          <Row cursor={cursor} idx={4} label="Dashboard">
+            <Text dimColor>{glyphs().caretL} </Text>
+            <Text bold color="yellow">{config.dashboardLayout === 'grid' ? 'grid (all)' : 'single (cycle)'}</Text>
+            <Text dimColor> {glyphs().caretR}</Text>
+          </Row>
+          <Row cursor={cursor} idx={5} label="Default focus">
+            <Text dimColor>{glyphs().caretL} </Text>
+            <Text bold color="yellow">{config.defaultFocus === 'all' ? 'All' : 'Last account'}</Text>
+            <Text dimColor> {glyphs().caretR}</Text>
+          </Row>
+        </>
       )}
-      {trackedAccounts.map((acc, i) => {
-        const idx = ACCOUNT_ROWS_START + i
-        const selected = cursor === idx
-        const isActive = acc.id === activeAccountId
-        const provider = PROVIDERS[acc.providerId]
-        const identity = accountIdentities.get(acc.id)
-        const identityLabel = identity?.email || identity?.displayName || acc.name
-        const plan = identity?.plan ?? null
-        return (
-          <Box key={`${acc.source}:${acc.id}`}>
-            <Text color={selected ? 'green' : undefined}>{selected ? glyphs().caretR : ' '} </Text>
-            <Text color={acc.color || provider.color}>{isActive ? glyphs().dot : glyphs().radioOff} </Text>
-            <Box width={28}><Text bold>{truncateName(identityLabel, 27)}</Text></Box>
-            <Box width={9}><Text color={provider.color}>{provider.name}</Text></Box>
-            <Box width={18}><Text dimColor>{plan ? truncateName(plan, 17) : ''}</Text></Box>
-            <Box width={12}><Text dimColor>{acc.source === 'auto' ? 'auto tracking' : 'configured'}</Text></Box>
-            <Text dimColor>{truncateName(acc.homeDir, 24)}</Text>
+
+      {activeTab === 'providers' && (
+        <>
+          <Text bold dimColor>Providers</Text>
+          {PROVIDER_ORDER.map((pid, i) => {
+            const selected = cursor === i
+            const enabled = !config.disabledProviders.includes(pid)
+            const p = PROVIDERS[pid]
+            return (
+              <Box key={pid}>
+                <Text color={selected ? 'green' : undefined}>{selected ? glyphs().caretR : ' '} </Text>
+                <Text bold={enabled} color={enabled ? p.color : undefined} dimColor={!enabled}>{enabled ? `[${glyphs().check}]` : '[ ]'}</Text>
+                <Text color={p.color}> {glyphs().dot} </Text>
+                <Box width={9}><Text bold={selected}>{p.name}</Text></Box>
+                <Text dimColor>{enabled ? 'tracking' : 'off'}</Text>
+              </Box>
+            )
+          })}
+        </>
+      )}
+
+      {activeTab === 'accounts' && (
+        <>
+          <Text bold dimColor>Accounts</Text>
+          {trackedAccounts.length === 0 && (
+            <Text dimColor>  none tracked {glyphs().emDash} enable a provider or add an account</Text>
+          )}
+          {trackedAccounts.map((acc, i) => {
+            const selected = cursor === i
+            const isActive = acc.id === activeAccountId
+            const provider = PROVIDERS[acc.providerId]
+            const identity = accountIdentities.get(acc.id)
+            const identityLabel = identity?.email || identity?.displayName || acc.name
+            const plan = identity?.plan ?? null
+            return (
+              <Box key={`${acc.source}:${acc.id}`}>
+                <Text color={selected ? 'green' : undefined}>{selected ? glyphs().caretR : ' '} </Text>
+                <Text color={acc.color || provider.color}>{isActive ? glyphs().dot : glyphs().radioOff} </Text>
+                <Box width={28}><Text bold>{truncateName(identityLabel, 27)}</Text></Box>
+                <Box width={9}><Text color={provider.color}>{provider.name}</Text></Box>
+                <Box width={18}><Text dimColor>{plan ? truncateName(plan, 17) : ''}</Text></Box>
+                <Box width={12}><Text dimColor>{acc.source === 'auto' ? 'auto tracking' : 'configured'}</Text></Box>
+                <Text dimColor>{truncateName(acc.homeDir, 24)}</Text>
+              </Box>
+            )
+          })}
+          <Box>
+            <Text color={cursor === trackedAccounts.length ? 'green' : undefined}>
+              {cursor === trackedAccounts.length ? glyphs().caretR : ' '}{' '}
+            </Text>
+            <Text color="greenBright">+ </Text>
+            <Text>Add account</Text>
           </Box>
-        )
-      })}
-      <Box>
-        <Text color={cursor === ACCOUNT_ROWS_START + trackedAccounts.length ? 'green' : undefined}>
-          {cursor === ACCOUNT_ROWS_START + trackedAccounts.length ? glyphs().caretR : ' '}{' '}
-        </Text>
-        <Text color="greenBright">+ </Text>
-        <Text>Add account</Text>
-      </Box>
+        </>
+      )}
 
       <Box height={1} />
-      {editingTz ? (
+      {tabFocused ? (
+        <Text dimColor>{glyphs().arrowL}{glyphs().arrowR}/tab switch section  {glyphs().middot}  {glyphs().arrowD} rows  {glyphs().middot}  s/Esc close</Text>
+      ) : editingTz ? (
         <Text dimColor>type IANA name (e.g. Europe/London) {glyphs().middot} empty = System {glyphs().middot} Enter save {glyphs().middot} Esc cancel</Text>
-      ) : cursor >= PROVIDER_ROWS_START && cursor < ACCOUNT_ROWS_START ? (
+      ) : activeTab === 'providers' ? (
         <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  space toggle provider  {glyphs().middot}  s/Esc close</Text>
-      ) : cursor >= ACCOUNT_ROWS_START && cursor < ACCOUNT_ROWS_START + trackedAccounts.length ? (
-        trackedAccounts[cursor - ACCOUNT_ROWS_START]?.source === 'auto' ? (
+      ) : activeTab === 'accounts' && cursor >= 0 && cursor < trackedAccounts.length ? (
+        trackedAccounts[cursor]?.source === 'auto' ? (
           <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter configure  {glyphs().middot}  space activate  {glyphs().middot}  s/Esc close</Text>
         ) : (
           <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  {glyphs().shift}{glyphs().arrowU}{glyphs().arrowD} reorder  {glyphs().middot}  Enter edit  {glyphs().middot}  space activate  {glyphs().middot}  d delete  {glyphs().middot}  s/Esc close</Text>
         )
-      ) : cursor === ACCOUNT_ROWS_START + trackedAccounts.length ? (
+      ) : activeTab === 'accounts' && cursor === trackedAccounts.length ? (
         <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter add account  {glyphs().middot}  s/Esc close</Text>
       ) : (
-        <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().arrowL}{glyphs().arrowR} adjust  Enter edit  s/Esc close</Text>
+        <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().arrowL}{glyphs().arrowR} adjust  Enter edit  tab switch section  s/Esc close</Text>
       )}
     </Box>
   )
 })
+
+function SettingsTabBar({ active, focused }: { active: SettingsTab; focused: boolean }) {
+  return (
+    <Box>
+      <Text color={focused ? 'green' : undefined}>{focused ? glyphs().caretR : ' '} </Text>
+      {SETTINGS_TABS.map((tab, i) => {
+        const selected = tab === active
+        return (
+          <Box key={tab} marginRight={1}>
+            {selected
+              ? <Text bold inverse> {SETTINGS_TAB_LABELS[tab]} </Text>
+              : <Text dimColor> {SETTINGS_TAB_LABELS[tab]} </Text>}
+            {i < SETTINGS_TABS.length - 1 && <Text dimColor> </Text>}
+          </Box>
+        )
+      })}
+    </Box>
+  )
+}
 
 export function CaretText({ value, caret, color }: { value: string; caret: number; color?: string }) {
   const c = Math.max(0, Math.min(caret, value.length))

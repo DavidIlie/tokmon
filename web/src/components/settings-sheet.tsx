@@ -8,6 +8,15 @@ import { GeneralSection } from './settings/general-section'
 import { ProvidersSection } from './settings/providers-section'
 import { AccountsSection } from './settings/accounts-section'
 import { AccountEditor } from './settings/account-editor'
+import { Segmented } from './ui/controls'
+
+type SettingsTab = 'general' | 'providers' | 'accounts'
+
+const SETTINGS_TABS: { value: SettingsTab; label: string }[] = [
+  { value: 'general', label: 'General' },
+  { value: 'providers', label: 'Providers' },
+  { value: 'accounts', label: 'Accounts' },
+]
 
 export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snapshot: WebSnapshot | null }) {
   const panelRef = useRef<HTMLDivElement>(null)
@@ -17,6 +26,7 @@ export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snap
   const [saveError, setSaveError] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [acctEditor, setAcctEditor] = useState<AccountDraft | null>(null)
+  const [tab, setTab] = useState<SettingsTab>('general')
 
   useEffect(() => {
     let alive = true
@@ -81,19 +91,32 @@ export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snap
             <div className="py-10 text-center text-sm text-fg-dim">loading config…</div>
           ) : (
             <>
-              <GeneralSection draft={draft} patch={patch} />
-              <ProvidersSection draft={draft} patch={patch} />
-              <AccountsSection
-                draft={draft} patch={patch} snapshot={snapshot}
-                onEdit={a => setAcctEditor(toDraft(a))}
-                onConfigure={row => setAcctEditor(newDraft(draft, {
-                  providerId: row.providerId,
-                  name: row.name,
-                  homeDir: row.homeDir,
-                  color: row.color,
-                }))}
-                onAdd={() => setAcctEditor(newDraft(draft))}
-              />
+              <div className="mb-4 flex items-center justify-between gap-3 border-b border-line pb-3">
+                <Segmented<SettingsTab>
+                  size="xs"
+                  ariaLabel="settings section"
+                  options={SETTINGS_TABS}
+                  value={tab}
+                  onChange={setTab}
+                  containerClassName="flex items-center overflow-hidden rounded border border-line bg-bg-1"
+                  btnClassName="px-3 py-1.5 text-[11px] transition"
+                />
+              </div>
+              {tab === 'general' && <GeneralSection draft={draft} patch={patch} />}
+              {tab === 'providers' && <ProvidersSection draft={draft} patch={patch} />}
+              {tab === 'accounts' && (
+                <AccountsSection
+                  draft={draft} patch={patch} snapshot={snapshot}
+                  onEdit={a => setAcctEditor(toDraft(a))}
+                  onConfigure={row => setAcctEditor(newDraft(draft, {
+                    providerId: row.providerId,
+                    name: row.name,
+                    homeDir: row.homeDir,
+                    color: row.color,
+                  }))}
+                  onAdd={() => setAcctEditor(newDraft(draft))}
+                />
+              )}
             </>
           )}
         </div>

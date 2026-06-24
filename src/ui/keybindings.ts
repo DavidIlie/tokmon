@@ -1,9 +1,9 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
-import { PROVIDERS, PROVIDER_ORDER, type ProviderId } from '../providers'
+import { PROVIDER_ORDER, type ProviderId } from '../providers'
 import { sanitizeTyped, type Config, type Account as StoredAccount, type TrackedAccountRow } from '../config'
 import { isValidTimezone, systemTimezone } from '../tz'
 import { TABS, VIEWS, type Slot, clampCaret, spliceBackspace } from '../app.logic'
-import { ACCOUNT_ROWS_START, PROVIDER_ROWS_START, type AccountForm } from './settings'
+import { GENERAL_ROWS, SETTINGS_TABS, type AccountForm, type SettingsTab } from './settings'
 import { openUrl, REPO_URL } from './terminal'
 
 export interface InputKey {
@@ -63,10 +63,11 @@ export interface KeyContext {
   configReady: boolean
   toggleWeb: () => Promise<void>
   settingsCursor: number
+  settingsTab: SettingsTab
+  setSettingsTab: Dispatch<SetStateAction<SettingsTab>>
   setShowSettings: Dispatch<SetStateAction<boolean>>
   cfg: Config
   trackedAccountRows: TrackedAccountRow[]
-  totalSettingsRows: number
   moveAccount: (idx: number, dir: -1 | 1) => void
   setSettingsCursor: Dispatch<SetStateAction<number>>
   toggleProvider: (pid: ProviderId) => void
@@ -102,7 +103,7 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
     showSettings, accountForm, setAccountForm, commitAccountForm, cycleFormField, cycleProvider, cycleColor,
     isPrintable, insertText, tzEdit, setTzEdit, setTzError, updateConfig, setTzCaret, tzValueRef, tzCaretRef,
     tab, searchMode, setSearchMode, search, setSearch, setSearchCaret, searchValueRef, searchCaretRef,
-    showLoader, configReady, toggleWeb, settingsCursor, setShowSettings, cfg, trackedAccountRows, totalSettingsRows, moveAccount,
+    showLoader, configReady, toggleWeb, settingsCursor, settingsTab, setSettingsTab, setShowSettings, cfg, trackedAccountRows, moveAccount,
     setSettingsCursor, toggleProvider, openEditAccount, openConfigureAccount, deleteAccount, openAddAccount, cycleAccount, setTab,
     resetView, slots, dashPaginated, dashPageCount, setDashPage, cycleTableProvider, setExpanded, setSort,
     SORTS_FOR, tableIsCursor, setView, cursor, rowCountRef, rows, setCursor, clampRow,
@@ -220,51 +221,80 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
 
   if (showSettings) {
     if (key.escape || input === 's') { setShowSettings(false); return }
-    const accIdxNav = settingsCursor - ACCOUNT_ROWS_START
-    const onAccountRow = accIdxNav >= 0 && accIdxNav < trackedAccountRows.length
-    const selectedAccountRow = onAccountRow ? trackedAccountRows[accIdxNav] : null
+
+    const switchSettingsTab = (dir: 1 | -1) => {
+      const idx = SETTINGS_TABS.indexOf(settingsTab)
+      setSettingsTab(SETTINGS_TABS[(idx + dir + SETTINGS_TABS.length) % SETTINGS_TABS.length])
+      setSettingsCursor(-1)
+      setTzEdit(null)
+      setTzError(null)
+    }
+    const rowCount = settingsTab === 'general'
+      ? GENERAL_ROWS
+      : settingsTab === 'providers'
+        ? PROVIDER_ORDER.length
+        : trackedAccountRows.length + 1
+
+    if (key.tab) { switchSettingsTab(key.shift ? -1 : 1); return }
+    if (input === '[') { switchSettingsTab(-1); return }
+    if (input === ']') { switchSettingsTab(1); return }
+
+    if (settingsCursor < 0) {
+      if (key.leftArrow) { switchSettingsTab(-1); return }
+      if (key.rightArrow) { switchSettingsTab(1); return }
+      if (key.downArrow || key.return) { setSettingsCursor(0); return }
+      if (key.upArrow) { setSettingsCursor(Math.max(0, rowCount - 1)); return }
+      return
+    }
+
+    const selectedAccountRow = settingsTab === 'accounts' && settingsCursor >= 0 && settingsCursor < trackedAccountRows.length
+      ? trackedAccountRows[settingsCursor]
+      : null
     if (selectedAccountRow?.source === 'configured' && selectedAccountRow.explicitIndex !== undefined && key.shift && (key.upArrow || key.downArrow)) {
       moveAccount(selectedAccountRow.explicitIndex, key.upArrow ? -1 : 1); return
     }
-    if (key.upArrow) { setSettingsCursor(c => Math.max(0, c - 1)); return }
-    if (key.downArrow) { setSettingsCursor(c => Math.min(totalSettingsRows - 1, c + 1)); return }
+    if (key.upArrow) { setSettingsCursor(c => Math.max(-1, c - 1)); return }
+    if (key.downArrow) { setSettingsCursor(c => Math.min(rowCount - 1, c + 1)); return }
 
-    if (settingsCursor === 0) {
-      if (key.leftArrow) updateConfig(c => ({ ...c, interval: Math.max(1, c.interval - 1) }))
-      if (key.rightArrow) updateConfig(c => ({ ...c, interval: c.interval + 1 }))
-      return
-    }
-    if (settingsCursor === 1) {
-      if (key.leftArrow) updateConfig(c => ({ ...c, billingInterval: Math.max(1, c.billingInterval - 1) }))
-      if (key.rightArrow) updateConfig(c => ({ ...c, billingInterval: c.billingInterval + 1 }))
-      return
-    }
-    if (settingsCursor === 2 && (key.leftArrow || key.rightArrow || key.return)) {
-      updateConfig(c => ({ ...c, clearScreen: !c.clearScreen })); return
-    }
-    if (settingsCursor === 3) {
-      if (key.return) { const init = cfg.timezone ?? ''; setTzEdit(init); setTzCaret(init.length); setTzError(null) }
-      if (key.leftArrow || key.rightArrow) updateConfig(c => ({ ...c, timezone: c.timezone === null ? systemTimezone() : null }))
-      return
-    }
-    if (settingsCursor === 4 && (key.leftArrow || key.rightArrow || key.return)) {
-      updateConfig(c => ({ ...c, dashboardLayout: c.dashboardLayout === 'grid' ? 'single' : 'grid' }))
-      return
-    }
-    if (settingsCursor === 5 && (key.leftArrow || key.rightArrow || key.return)) {
-      updateConfig(c => ({ ...c, defaultFocus: c.defaultFocus === 'all' ? 'last' : 'all' }))
-      return
-    }
-
-    const provIdx = settingsCursor - PROVIDER_ROWS_START
-    if (provIdx >= 0 && provIdx < PROVIDER_ORDER.length) {
-      if (input === ' ' || key.return || key.leftArrow || key.rightArrow) toggleProvider(PROVIDER_ORDER[provIdx])
+    if (settingsTab === 'general') {
+      if (settingsCursor === 0) {
+        if (key.leftArrow) updateConfig(c => ({ ...c, interval: Math.max(1, c.interval - 1) }))
+        if (key.rightArrow) updateConfig(c => ({ ...c, interval: c.interval + 1 }))
+        return
+      }
+      if (settingsCursor === 1) {
+        if (key.leftArrow) updateConfig(c => ({ ...c, billingInterval: Math.max(1, c.billingInterval - 1) }))
+        if (key.rightArrow) updateConfig(c => ({ ...c, billingInterval: c.billingInterval + 1 }))
+        return
+      }
+      if (settingsCursor === 2 && (key.leftArrow || key.rightArrow || key.return)) {
+        updateConfig(c => ({ ...c, clearScreen: !c.clearScreen })); return
+      }
+      if (settingsCursor === 3) {
+        if (key.return) { const init = cfg.timezone ?? ''; setTzEdit(init); setTzCaret(init.length); setTzError(null) }
+        if (key.leftArrow || key.rightArrow) updateConfig(c => ({ ...c, timezone: c.timezone === null ? systemTimezone() : null }))
+        return
+      }
+      if (settingsCursor === 4 && (key.leftArrow || key.rightArrow || key.return)) {
+        updateConfig(c => ({ ...c, dashboardLayout: c.dashboardLayout === 'grid' ? 'single' : 'grid' }))
+        return
+      }
+      if (settingsCursor === 5 && (key.leftArrow || key.rightArrow || key.return)) {
+        updateConfig(c => ({ ...c, defaultFocus: c.defaultFocus === 'all' ? 'last' : 'all' }))
+        return
+      }
       return
     }
 
-    const accIdx = settingsCursor - ACCOUNT_ROWS_START
-    if (accIdx >= 0 && accIdx < trackedAccountRows.length) {
-      const row = trackedAccountRows[accIdx]
+    if (settingsTab === 'providers') {
+      if (settingsCursor >= 0 && settingsCursor < PROVIDER_ORDER.length && (input === ' ' || key.return || key.leftArrow || key.rightArrow)) {
+        toggleProvider(PROVIDER_ORDER[settingsCursor])
+      }
+      return
+    }
+
+    if (settingsTab === 'accounts' && settingsCursor >= 0 && settingsCursor < trackedAccountRows.length) {
+      const row = trackedAccountRows[settingsCursor]
       if (key.return) {
         if (row.source === 'configured') {
           const acc = cfg.accounts.find(a => a.id === row.explicitId)
@@ -278,11 +308,11 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
       if (input === ' ') { updateConfig(c => ({ ...c, activeAccountId: row.id })); return }
       return
     }
-    if (accIdx === trackedAccountRows.length && key.return) { openAddAccount() }
+    if (settingsTab === 'accounts' && settingsCursor === trackedAccountRows.length && key.return) { openAddAccount() }
     return
   }
 
-  if (input === 's') { setShowSettings(true); setSettingsCursor(0); return }
+  if (input === 's') { setSettingsTab('general'); setShowSettings(true); setSettingsCursor(-1); return }
   if (input === 'a') { cycleAccount(1); return }
   if (input === 'A') { cycleAccount(-1); return }
   if (key.tab) { setTab(t => (t + 1) % TABS.length); resetView(); return }
