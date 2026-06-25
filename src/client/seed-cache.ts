@@ -1,13 +1,10 @@
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { cacheDir } from '../config'
+import { snapshotCacheFile } from '../config'
 import type { DashboardData } from '../types'
 import type { BillingResult } from '../providers/types'
 import type { WebSnapshot } from '../web/contract'
 
 export type SeedSnapshot = Record<string, { dashboard: DashboardData | null; billing: BillingResult | null }>
-
-const snapshotCacheFile = (): string => join(cacheDir(), 'web-snapshot.json')
 
 export async function loadSeedSnapshot(): Promise<SeedSnapshot> {
   try {

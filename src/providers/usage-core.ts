@@ -3,6 +3,9 @@ import { join } from 'node:path'
 import type { UsageSummary, TableRow, ModelDetail, DashboardData, TableData } from '../types'
 import { dayKey, monthKey, weekKey, startOfDay, startOfMonth, startOfWeek, monthsAgoStart } from '../tz'
 import { cacheDir } from '../config'
+import { finitePositive, safeNum } from './_shared/metric'
+
+export { finitePositive, safeNum } from './_shared/metric'
 
 export const SPARK_DAYS = 14
 const DAY_MS = 86_400_000
@@ -129,10 +132,6 @@ export async function loadCachedEntries(
   return dedupe(chunks.flat().filter(e => e.ts >= since))
 }
 
-export function safeNum(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0
-}
-
 export function dashboardSince(tz: string): number {
   const now = Date.now()
   return Math.min(startOfMonth(now, tz), startOfWeek(now, tz), now - SPARK_DAYS * DAY_MS)
@@ -140,10 +139,6 @@ export function dashboardSince(tz: string): number {
 
 export function tableSince(tz: string): number {
   return monthsAgoStart(Date.now(), 6, tz)
-}
-
-export function finitePositive(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0
 }
 
 function cleanEntry(e: Entry): Entry {

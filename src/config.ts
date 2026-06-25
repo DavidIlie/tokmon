@@ -47,6 +47,10 @@ export function cacheDir(): string {
   return join(envDir('XDG_CACHE_HOME') ?? join(homedir(), '.cache'), 'tokmon')
 }
 
+export function snapshotCacheFile(): string {
+  return join(cacheDir(), 'web-snapshot.json')
+}
+
 export async function loadConfig(): Promise<Config> {
   let raw: string
   try {

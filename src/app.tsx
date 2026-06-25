@@ -44,7 +44,6 @@ import {
 import { openUrl, IS_TTY } from './ui/terminal'
 import { handleKey } from './ui/keybindings'
 
-export { detectHyperlinks } from './ui/terminal'
 const DEBOUNCE_MS = 300
 const LOADER_GRACE_MS = 600
 const LOADER_MAX_MS = 8000

@@ -11,7 +11,7 @@ export interface DaemonLock {
   startedAt: number
 }
 
-export const lockfilePath = (): string => join(cacheDir(), 'daemon.json')
+const lockfilePath = (): string => join(cacheDir(), 'daemon.json')
 
 export function readLock(): DaemonLock | null {
   try {

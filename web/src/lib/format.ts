@@ -8,4 +8,4 @@ export {
   formatAgo as fmtAgo,
   formatDayLabel as fmtDayLabel,
   sumTokens,
-} from '@shared'
+} from '../../../src/shared/format'

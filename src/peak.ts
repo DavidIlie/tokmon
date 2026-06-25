@@ -28,10 +28,15 @@ export async function fetchPeak(): Promise<PeakStatus | null> {
     else if (data.isOffPeak === true || data.status === 'off_peak' || data.status === 'off-peak') state = 'off-peak'
     else return null
 
+    const minutesUntilChange =
+      typeof data.minutesUntilChange === 'number' && Number.isFinite(data.minutesUntilChange)
+        ? data.minutesUntilChange
+        : null
+
     return {
       state,
       label: state === 'peak' ? 'Peak' : state === 'weekend' ? 'Weekend' : 'Off-Peak',
-      minutesUntilChange: typeof data.minutesUntilChange === 'number' ? data.minutesUntilChange : null,
+      minutesUntilChange,
     }
   } catch {
     return null

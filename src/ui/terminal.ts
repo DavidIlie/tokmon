@@ -6,7 +6,7 @@ export const REPO_URL = 'https://github.com/DavidIlie/tokmon'
 export const SITE_URL = 'https://davidilie.com'
 export const IS_APPLE_TERMINAL = process.env.TERM_PROGRAM === 'Apple_Terminal'
 
-export function detectHyperlinks(env: NodeJS.ProcessEnv, isTTY: boolean): boolean {
+function detectHyperlinks(env: NodeJS.ProcessEnv, isTTY: boolean): boolean {
   const force = env.FORCE_HYPERLINK
   if (force != null && force !== '') return force !== '0' && force.toLowerCase() !== 'false'
   if (!isTTY || env.TERM === 'dumb' || env.NO_HYPERLINK) return false

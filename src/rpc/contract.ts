@@ -1,9 +1,9 @@
-import { Schema, SchemaGetter } from 'effect'
+import { Schema } from 'effect'
 import * as Rpc from 'effect/unstable/rpc/Rpc'
 import * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import type { Config } from '../config-schema'
-import type { ProviderId, WebSnapshot } from '../web/contract'
-import { toJsonSafe } from '../json-safe'
+import { PROVIDER_IDS } from '../providers/types'
+import type { WebSnapshot } from '../web/contract'
 
 export const TOKMON_WS_PATH = '/ws'
 
@@ -26,17 +26,6 @@ export const RefreshScopeSchema = Schema.Literals([
 
 export type RefreshScope = typeof RefreshScopeSchema.Type
 
-const PROVIDER_IDS = [
-  'claude',
-  'codex',
-  'cursor',
-  'copilot',
-  'pi',
-  'opencode',
-  'antigravity',
-  'gemini',
-] as const satisfies readonly ProviderId[]
-
 export const ProviderIdSchema = Schema.Literals(PROVIDER_IDS)
 
 export const AccountSchema = Schema.Struct({
@@ -51,11 +40,7 @@ type RuntimeSchema<T> = Schema.Codec<T, T, never, never> & {
   readonly '~type.make.in': T
 }
 
-const jsonSafePassthrough = <T>() =>
-  Schema.Unknown.pipe(Schema.encode({
-    decode: SchemaGetter.transform((value: unknown) => value),
-    encode: SchemaGetter.transform((value: unknown) => toJsonSafe(value)),
-  })) as unknown as RuntimeSchema<T>
+const jsonSafePassthrough = <T>() => Schema.Unknown as unknown as RuntimeSchema<T>
 
 export const ConfigSchema = (Schema.Struct({
   interval: Schema.Number,

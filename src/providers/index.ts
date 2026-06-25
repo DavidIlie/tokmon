@@ -1,4 +1,4 @@
-import type { Provider, ProviderId } from './types'
+import { PROVIDER_IDS, type Provider, type ProviderId } from './types'
 import { claudeProvider } from './claude'
 import { codexProvider } from './codex'
 import { cursorProvider } from './cursor'
@@ -10,9 +10,8 @@ import { geminiProvider } from './gemini'
 import { installSignals } from './detect'
 
 export * from './types'
-export { installSignals } from './detect'
 
-export const PROVIDER_ORDER: ProviderId[] = ['claude', 'codex', 'cursor', 'copilot', 'pi', 'opencode', 'antigravity', 'gemini']
+export const PROVIDER_ORDER: ProviderId[] = [...PROVIDER_IDS]
 
 export const PROVIDERS: Record<ProviderId, Provider> = {
   claude: claudeProvider,
@@ -24,12 +23,6 @@ export const PROVIDERS: Record<ProviderId, Provider> = {
   antigravity: antigravityProvider,
   gemini: geminiProvider,
 }
-
-export function getProvider(id: ProviderId): Provider {
-  return PROVIDERS[id]
-}
-
-export const ALL_PROVIDERS: Provider[] = PROVIDER_ORDER.map(id => PROVIDERS[id])
 
 export async function detectProviders(): Promise<ProviderId[]> {
   const found = await Promise.all(

@@ -6,4 +6,4 @@ export {
   namedColorHex,
   providerHex,
   shortModel,
-} from '@shared'
+} from '../../../src/shared/colors'

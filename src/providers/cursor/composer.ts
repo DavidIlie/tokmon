@@ -2,6 +2,7 @@ import { cursorStateDb } from './billing'
 import { runSqlite } from './sqlite'
 import { dayKey, monthKey, weekKey } from '../../tz'
 import type { ModelDetail, TableData, TableRow } from '../../types'
+import { finitePositiveCoerced as finiteNonNegative } from '../_shared/metric'
 
 export interface CursorModelSpend {
   name: string
@@ -11,11 +12,6 @@ export interface CursorModelSpend {
 export interface CursorSpend {
   total: number
   models: CursorModelSpend[]
-}
-
-const finiteNonNegative = (value: unknown): number => {
-  const n = Number(value)
-  return Number.isFinite(n) && n > 0 ? n : 0
 }
 
 export async function cursorModelSpend(homeDir?: string): Promise<CursorSpend | null> {

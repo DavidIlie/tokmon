@@ -1,6 +1,8 @@
 import type { DashboardData, TableData } from '../types'
 
-export type ProviderId = 'claude' | 'codex' | 'cursor' | 'pi' | 'opencode' | 'copilot' | 'antigravity' | 'gemini'
+export const PROVIDER_IDS = ['claude', 'codex', 'cursor', 'copilot', 'pi', 'opencode', 'antigravity', 'gemini'] as const
+
+export type ProviderId = typeof PROVIDER_IDS[number]
 
 export interface Account {
   id: string

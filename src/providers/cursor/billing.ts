@@ -5,7 +5,7 @@ import { resetIn } from '../../format'
 import { envDir } from '../../config'
 import { readJson } from '../../http'
 import type { Account, BillingResult, Metric } from '../types'
-import { dollars, finite, percentMetric } from '../_shared/metric'
+import { dollars, finite, finiteNumber, percentMetric } from '../_shared/metric'
 import { msToIso } from '../_shared/time'
 import { cursorActivity } from './activity'
 import { cursorModelSpend } from './composer'
@@ -37,9 +37,6 @@ interface UsageResponse {
   spendLimitUsage?: SpendLimitUsage
   enabled?: boolean
 }
-
-const finiteNumber = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value)
 
 export function cursorStateDb(homeDir?: string): string {
   const base = homeDir ?? homedir()

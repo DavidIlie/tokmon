@@ -1,6 +1,8 @@
 // Node-free module: no node:fs/os/path imports (required for Vite SPA build compatibility).
 
-import type { ProviderId } from './providers/types'
+import { PROVIDER_IDS, type ProviderId } from './providers/types'
+
+export { PROVIDER_IDS } from './providers/types'
 
 export interface Account {
   id: string
@@ -65,9 +67,7 @@ const LEGACY_KNOWN: ProviderId[] = ['claude', 'codex', 'cursor']
 
 export const ACCENT_COLORS = ['cyan', 'magenta', 'green', 'yellow', 'blue', 'red'] as const
 
-export const PROVIDER_ORDER: ProviderId[] = ['claude', 'codex', 'cursor', 'copilot', 'pi', 'opencode', 'antigravity', 'gemini']
-
-export const PROVIDER_IDS: ProviderId[] = [...PROVIDER_ORDER]
+export const PROVIDER_ORDER: ProviderId[] = [...PROVIDER_IDS]
 
 export const COLOR_PALETTE = [
   'cyan', 'magenta', 'green', 'yellow', 'blue', 'red',

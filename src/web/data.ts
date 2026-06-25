@@ -4,8 +4,7 @@ import { resolveTimezone } from '../tz'
 import type { Config } from '../config'
 import type { Account, BillingResult } from '../providers/types'
 import type { DashboardData, TableData } from '../types'
-import { toJsonSafe } from '../json-safe'
-import { colorHex, namedHex } from './colors'
+import { colorHex, namedHex } from '../shared/colors'
 import type {
   WebSnapshot, WebAccount, WebProviderInfo, AccountFetchState, PeakStatus,
 } from './contract'
@@ -97,7 +96,7 @@ export function assembleSnapshot(opts: {
     })
   }
 
-  return toJsonSafe({
+  return {
     version: opts.version,
     generatedAt: Date.now(),
     tz: opts.tz,
@@ -106,7 +105,7 @@ export function assembleSnapshot(opts: {
     accounts,
     seeded: opts.seeded ?? false,
     peak: opts.peak ?? null,
-  })
+  }
 }
 
 export function tzFor(config: Config): string {

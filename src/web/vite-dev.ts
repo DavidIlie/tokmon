@@ -17,7 +17,7 @@ export function isDevMode(): boolean {
   return import.meta.url.includes('/src/')
 }
 
-export function findWebSource(): string | null {
+function findWebSource(): string | null {
   for (const rel of ['../../web/', '../web/', './web/']) {
     try {
       const dir = fileURLToPath(new URL(rel, import.meta.url))

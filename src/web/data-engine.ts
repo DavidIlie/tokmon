@@ -1,8 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
-import { join } from 'node:path'
 import type { DashboardData, TableData } from '../types'
 import type { BillingResult } from '../providers/types'
-import { cacheDir } from '../config'
+import { cacheDir, snapshotCacheFile } from '../config'
 import { fetchPeak } from '../peak'
 import {
   assembleSnapshot, fetchAccountBilling, fetchAccountSummary, fetchAccountTable,
@@ -16,7 +15,6 @@ const PEAK_INTERVAL_MS = 300_000
 const IDLE_PAUSE_MS = 60_000
 const SNAPSHOT_CACHE_THROTTLE_MS = 20_000
 const REVEAL_THROTTLE_MS = 500
-const snapshotCacheFile = () => join(cacheDir(), 'web-snapshot.json')
 
 export type RefreshScope = 'all' | 'summary' | 'table' | 'billing' | 'peak'
 
@@ -111,7 +109,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     lastPersist = Date.now()
     try {
       mkdirSync(cacheDir(), { recursive: true, mode: 0o700 }) // 0o700: owner-only usage data
-      const tmp = join(cacheDir(), `web-snapshot.json.${process.pid}.tmp`)
+      const tmp = `${snapshotCacheFile()}.${process.pid}.tmp`
       writeFileSync(tmp, JSON.stringify(current), { mode: 0o600 })
       renameSync(tmp, snapshotCacheFile())
     } catch {}
