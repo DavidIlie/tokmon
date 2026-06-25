@@ -8,9 +8,54 @@ function geminiCredsPath(homeDir?: string): string {
   return join(homeDir ?? homedir(), '.gemini', 'oauth_creds.json')
 }
 
-function hasGeminiApiKey(): boolean {
+function geminiDir(homeDir?: string): string {
+  return join(homeDir ?? homedir(), '.gemini')
+}
+
+type GeminiAuthMethod = 'api-key' | 'vertex' | 'none'
+
+function authTypeFromSettings(settings: any): GeminiAuthMethod {
+  const raw = settings?.security?.auth?.selectedType ?? settings?.selectedAuthType
+  if (typeof raw !== 'string') return 'none'
+  const value = raw.trim().toLowerCase()
+  if (!value) return 'none'
+  if (value.includes('vertex') || value.includes('use_vertex_ai')) return 'vertex'
+  if (value.includes('gemini-api-key') || value.includes('api-key') || value.includes('use_gemini')) return 'api-key'
+  return 'none'
+}
+
+async function authMethodFromSettings(homeDir?: string): Promise<GeminiAuthMethod> {
+  try {
+    const raw = await readFile(join(geminiDir(homeDir), 'settings.json'), 'utf8')
+    return authTypeFromSettings(JSON.parse(raw))
+  } catch {
+    return 'none'
+  }
+}
+
+async function hasGeminiApiKeyFile(homeDir?: string): Promise<boolean> {
+  try { await access(join(geminiDir(homeDir), 'api_key')); return true } catch {}
+  try {
+    const env = await readFile(join(geminiDir(homeDir), '.env'), 'utf8')
+    return /^\s*GEMINI_API_KEY\s*=/m.test(env)
+  } catch {
+    return false
+  }
+}
+
+function hasGeminiApiKeyEnv(): boolean {
   return ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENAI_API_KEY']
     .some(name => typeof process.env[name] === 'string' && process.env[name]!.trim() !== '')
+}
+
+async function noOAuthAuthMessage(homeDir?: string): Promise<string> {
+  const settingsMethod = await authMethodFromSettings(homeDir)
+  if (settingsMethod === 'api-key') return 'API key auth — quota needs Google login (run gemini)'
+  if (settingsMethod === 'vertex') return 'Vertex AI auth — quota needs Google login (run gemini)'
+  if (await hasGeminiApiKeyFile(homeDir) || hasGeminiApiKeyEnv()) {
+    return 'API key auth — quota needs Google login (run gemini)'
+  }
+  return 'Not signed in — run gemini and log in with Google'
 }
 
 export async function detectGemini(homeDir?: string): Promise<boolean> {
@@ -71,9 +116,7 @@ export async function geminiBilling(account: Account): Promise<BillingResult> {
       return {
         plan: null,
         metrics: [],
-        error: hasGeminiApiKey()
-          ? 'API key auth — quota needs Google login (run gemini)'
-          : 'Not signed in — run gemini and log in with Google',
+        error: await noOAuthAuthMessage(account.homeDir),
         ...identity,
       }
     }
