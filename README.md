@@ -96,25 +96,25 @@ It binds to `127.0.0.1` only and reads the same data read-only — nothing leave
 
 KPIs with inline sparklines, provider cards with live rate-limit bars, and a cost-over-time chart that spans your full history by default. Toggle **merged** (one combined total) vs **split** (a line per provider), **all-time** vs the selected period, and linear vs log.
 
-![tokmon web dashboard — overview](docs/web/overview.png)
+![tokmon web dashboard — overview](assets/web/overview.png)
 
 ### Analytics
 
 A full-width, all-time daily-spend calendar — hover any day for a per-model spend breakdown — with at-a-glance stats (busiest day, daily average, top weekday, current streak), alongside cost-by-model, an interactive provider split, token composition, cache savings, and cumulative spend.
 
-![tokmon web dashboard — analytics](docs/web/analytics.png)
+![tokmon web dashboard — analytics](assets/web/analytics.png)
 
 ### Models
 
 A leaderboard sortable by cost / tokens / calls, each row showing a per-model trend sparkline, cost-per-call, tokens, and calls — over tokens-by-model and cache-savings-by-model charts.
 
-![tokmon web dashboard — models](docs/web/models.png)
+![tokmon web dashboard — models](assets/web/models.png)
 
 ### Explore
 
 The full daily / weekly / monthly table — searchable, sortable on every column, with expandable per-model breakdowns.
 
-![tokmon web dashboard — explore](docs/web/explore.png)
+![tokmon web dashboard — explore](assets/web/explore.png)
 
 The dashboard is a prebuilt static bundle shipped in the package — no build step, fully offline.
 
@@ -219,12 +219,23 @@ tokmon runs entirely on your machine and reads everything **read-only**:
 
 ## How It Works
 
-- Parses local CLI session logs and aggregates cost/token usage per day, week, and month.
-- A persistent parse cache keyed by file **mtime + size** makes repeat launches near-instant; edited or deleted files are re-read automatically.
-- Dashboard summaries and table history load independently, so the UI stays responsive on large histories.
-- Rate limits and spend are fetched from each provider's API on the billing poll interval.
+tokmon runs a small local **daemon** that does all the data collection. The terminal UI and the web dashboard are both thin clients of it, talking over a loopback-only WebSocket — so a single process does the work and the TUI and web always show the same numbers. The daemon starts automatically with the TUI (and standalone via `tokmon serve`), and idle-pauses when nothing is watching.
 
-Cross-platform: macOS, Linux, Windows.
+**Usage & cost**
+- Parses each tool's local session logs — Claude / Codex / pi `JSONL`, Cursor / opencode `SQLite` — and aggregates cost and token usage per day, week, and month.
+- Cost is an API-equivalent estimate from each model's published pricing, counting cached input at the discounted cache-read rate (not the full input rate, not free).
+- A persistent parse cache keyed by file **mtime + size** makes repeat launches near-instant; edited or deleted files are re-read automatically.
+
+**Accounts**
+- Each enabled provider is detected automatically, and its real account identity — email and plan — is read from local auth (e.g. Claude `~/.claude.json`, the Codex `id_token`, Cursor's state DB). Extra accounts, like additional Claude homes, are auto-discovered too.
+
+**Limits & billing**
+- Rate limits and remaining spend/quota come from each provider's own official API, refreshed on the billing poll interval.
+
+**Responsiveness**
+- Dashboard summaries and table history load independently and refresh on separate intervals, so the UI stays responsive even on large histories.
+
+Cross-platform: macOS, Linux, Windows. Everything is local and read-only — see [Privacy](#privacy).
 
 ## Requirements
 
