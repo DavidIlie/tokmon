@@ -18,7 +18,7 @@ const ZERO_PRICE = { in: 0, cr: 0, out: 0 }
 const PRICE_KEYS = Object.keys(PRICING).sort((a, b) => b.length - a.length)
 
 export function codexHomes(homeDir?: string): string[] {
-  if (homeDir) return [join(homeDir, '.codex')]
+  if (homeDir) return [...new Set([join(homeDir, '.codex'), homeDir])]
   const homes: string[] = []
   const codexHome = envDir('CODEX_HOME')
   if (codexHome) homes.push(codexHome)

@@ -18,6 +18,11 @@ interface ClaudeIdentity {
   displayName?: string
 }
 
+interface CodexIdentity {
+  email?: string
+  displayName?: string
+}
+
 function accountKey(providerId: ProviderId, homeDir?: string): string {
   return `${providerId}:${homeDir ? resolve(expandHome(homeDir)) : homedir()}`
 }
@@ -61,7 +66,7 @@ function hasClaudeState(homeDir: string): boolean {
     || existsSync(join(homeDir, '.config', 'claude', 'projects'))
 }
 
-function candidateAlternateHomes(): string[] {
+function candidateAlternateHomes(prefix: string): string[] {
   const home = homedir()
   let entries: string[]
   try {
@@ -70,8 +75,9 @@ function candidateAlternateHomes(): string[] {
     return []
   }
   const out: string[] = []
+  const pattern = new RegExp(`^\\.${prefix}[_-]`)
   for (const name of entries) {
-    if (!/^\.claude[_-]/.test(name)) continue
+    if (!pattern.test(name)) continue
     const path = join(home, name)
     try {
       if (!statSync(path).isDirectory()) continue
@@ -89,10 +95,64 @@ function labelForClaudeHome(homeDir: string): string {
   return raw ? `Claude ${raw}` : 'Claude'
 }
 
+function decodeBase64UrlJson(segment: string): any | null {
+  try {
+    const normalized = segment.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4)
+    return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'))
+  } catch {
+    return null
+  }
+}
+
+function codexAuthPaths(homeDir: string): string[] {
+  return [join(homeDir, '.codex', 'auth.json'), join(homeDir, 'auth.json')]
+}
+
+function readCodexIdentity(homeDir: string): CodexIdentity {
+  for (const path of codexAuthPaths(homeDir)) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, 'utf-8'))
+      const idToken = parsed?.tokens?.id_token
+      if (typeof idToken !== 'string' || !idToken.includes('.')) continue
+      const payload = decodeBase64UrlJson(idToken.split('.')[1])
+      if (!payload || typeof payload !== 'object') continue
+      return {
+        email: typeof payload?.email === 'string' && payload.email.trim() ? payload.email.trim() : undefined,
+        displayName: typeof payload?.name === 'string' && payload.name.trim()
+          ? payload.name.trim()
+          : typeof payload?.given_name === 'string' && payload.given_name.trim()
+            ? payload.given_name.trim()
+            : undefined,
+      }
+    } catch {}
+  }
+  return {}
+}
+
+function hasCodexAuth(homeDir: string): boolean {
+  for (const path of codexAuthPaths(homeDir)) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, 'utf-8'))
+      const accessToken = parsed?.tokens?.access_token
+      if (typeof accessToken === 'string' && accessToken.trim()) return true
+    } catch {}
+  }
+  return false
+}
+
+function labelForCodexHome(homeDir: string): string {
+  const identity = readCodexIdentity(homeDir)
+  if (identity.email) return `Codex ${identity.email}`
+  if (identity.displayName) return `Codex ${identity.displayName}`
+  const raw = basename(homeDir).replace(/^\.codex[_-]?/, '').replace(/[_-]+/g, ' ').trim()
+  return raw ? `Codex ${raw}` : 'Codex'
+}
+
 function discoverClaudeAccounts(usedIds: Set<string>): DiscoveredAccount[] {
   const provider = PROVIDERS.claude
   const out: DiscoveredAccount[] = []
-  for (const homeDir of candidateAlternateHomes()) {
+  for (const homeDir of candidateAlternateHomes('claude')) {
     if (!hasClaudeState(homeDir)) continue
     const suffix = basename(homeDir).replace(/^\.claude[_-]?/, '') || basename(homeDir)
     out.push({
@@ -106,8 +166,26 @@ function discoverClaudeAccounts(usedIds: Set<string>): DiscoveredAccount[] {
   return out
 }
 
+function discoverCodexAccounts(usedIds: Set<string>): DiscoveredAccount[] {
+  const provider = PROVIDERS.codex
+  const out: DiscoveredAccount[] = []
+  for (const homeDir of candidateAlternateHomes('codex')) {
+    if (!hasCodexAuth(homeDir)) continue
+    const suffix = basename(homeDir).replace(/^\.codex[_-]?/, '') || basename(homeDir)
+    out.push({
+      id: uniqueId(`codex_${suffix}`, usedIds),
+      providerId: 'codex',
+      name: labelForCodexHome(homeDir),
+      color: provider.color,
+      homeDir,
+    })
+  }
+  return out
+}
+
 function discoverProviderAccounts(providerId: ProviderId, usedIds: Set<string>): DiscoveredAccount[] {
   if (providerId === 'claude') return discoverClaudeAccounts(usedIds)
+  if (providerId === 'codex') return discoverCodexAccounts(usedIds)
   return []
 }
 

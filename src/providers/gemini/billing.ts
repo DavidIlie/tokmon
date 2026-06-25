@@ -8,6 +8,11 @@ function geminiCredsPath(homeDir?: string): string {
   return join(homeDir ?? homedir(), '.gemini', 'oauth_creds.json')
 }
 
+function hasGeminiApiKey(): boolean {
+  return ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENAI_API_KEY']
+    .some(name => typeof process.env[name] === 'string' && process.env[name]!.trim() !== '')
+}
+
 export async function detectGemini(homeDir?: string): Promise<boolean> {
   try { await access(geminiCredsPath(homeDir)); return true } catch { return false }
 }
@@ -62,7 +67,16 @@ export async function geminiBilling(account: Account): Promise<BillingResult> {
     const identity = geminiIdentity(creds)
     const accessToken = typeof creds?.access_token === 'string' ? creds.access_token.trim() : ''
     const refreshToken = typeof creds?.refresh_token === 'string' ? creds.refresh_token.trim() : null
-    if (!creds || (!accessToken && !refreshToken)) return { plan: null, metrics: [], error: 'Not signed in — run gemini', ...identity }
+    if (!creds || (!accessToken && !refreshToken)) {
+      return {
+        plan: null,
+        metrics: [],
+        error: hasGeminiApiKey()
+          ? 'API key auth — quota needs Google login (run gemini)'
+          : 'Not signed in — run gemini and log in with Google',
+        ...identity,
+      }
+    }
     const quota = await fetchCloudCodeQuota({
       accessToken,
       refreshToken,
