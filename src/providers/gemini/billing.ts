@@ -1,8 +1,9 @@
-import { access, readFile } from 'node:fs/promises'
+import { access, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { Account, BillingResult } from '../types'
 import { cloudCodeBucketsToMetrics, fetchCloudCodeQuota } from '../cloud-code'
+import { geminiTmpDir } from './usage'
 
 function geminiCredsPath(homeDir?: string): string {
   return join(homeDir ?? homedir(), '.gemini', 'oauth_creds.json')
@@ -59,7 +60,19 @@ async function noOAuthAuthMessage(homeDir?: string): Promise<string> {
 }
 
 export async function detectGemini(homeDir?: string): Promise<boolean> {
-  try { await access(geminiCredsPath(homeDir)); return true } catch { return false }
+  let oauthOk = false
+  try { await access(geminiCredsPath(homeDir)); oauthOk = true } catch {}
+  return oauthOk || await hasGeminiChatSessions(homeDir)
+}
+
+async function hasGeminiChatSessions(homeDir?: string): Promise<boolean> {
+  let listing: string[]
+  try {
+    listing = await readdir(geminiTmpDir(homeDir), { recursive: true })
+  } catch {
+    return false
+  }
+  return listing.some(path => /(^|[\\/])chats[\\/]session-.*\.jsonl$/.test(path))
 }
 
 interface GeminiCreds {
