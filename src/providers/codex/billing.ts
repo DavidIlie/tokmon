@@ -184,7 +184,9 @@ async function snapshotBilling(homeDir?: string, auth: CodexAuth | null = null):
   if (!path) return null
   let last: any = null
   try {
-    const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity })
+    const input = createReadStream(path)
+    input.on('error', () => {})
+    const rl = createInterface({ input, crlfDelay: Infinity })
     for await (const line of rl) {
       if (!line.includes('rate_limits')) continue
       try {

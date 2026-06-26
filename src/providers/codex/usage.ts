@@ -94,58 +94,62 @@ async function parseFile(path: string): Promise<Entry[]> {
   let model = 'unknown'
   let prevTotal: CodexDelta | null = null
   let prevSig: string | null = null
-  const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity })
-  for await (const rawLine of rl) {
-    if (!rawLine.includes('token_count') && !rawLine.includes('turn_context')) continue
-    try {
-      const line = rawLine.charCodeAt(0) === 0xFEFF ? rawLine.slice(1) : rawLine
-      const obj: any = JSON.parse(line)
+  const input = createReadStream(path)
+  input.on('error', () => {})
+  const rl = createInterface({ input, crlfDelay: Infinity })
+  try {
+    for await (const rawLine of rl) {
+      if (!rawLine.includes('token_count') && !rawLine.includes('turn_context')) continue
+      try {
+        const line = rawLine.charCodeAt(0) === 0xFEFF ? rawLine.slice(1) : rawLine
+        const obj: any = JSON.parse(line)
 
-      const payloadType = obj?.payload?.type ?? obj?.type
-      if (payloadType === 'turn_context') {
-        const m = extractModel(obj)
-        if (typeof m === 'string' && m.trim()) model = m
-        continue
-      }
-      if (payloadType !== 'token_count') continue
+        const payloadType = obj?.payload?.type ?? obj?.type
+        if (payloadType === 'turn_context') {
+          const m = extractModel(obj)
+          if (typeof m === 'string' && m.trim()) model = m
+          continue
+        }
+        if (payloadType !== 'token_count') continue
 
-      const info = obj?.payload?.info
-      const total: CodexDelta | undefined = info?.total_token_usage
-      const last: CodexDelta | undefined = info?.last_token_usage
-      const sig = eventSig(last, total)
-      if (sig === prevSig) continue
-      prevSig = sig
+        const info = obj?.payload?.info
+        const total: CodexDelta | undefined = info?.total_token_usage
+        const last: CodexDelta | undefined = info?.last_token_usage
+        const sig = eventSig(last, total)
+        if (sig === prevSig) continue
+        prevSig = sig
 
-      let d: CodexDelta | undefined = last
-      if (!d && total) {
-        const reset = !!prevTotal && (total.input_tokens ?? 0) < (prevTotal.input_tokens ?? 0)
-        d = reset ? total : subtractClamped(total, prevTotal)
-      }
-      if (total) prevTotal = total
-      if (!d) continue
+        let d: CodexDelta | undefined = last
+        if (!d && total) {
+          const reset = !!prevTotal && (total.input_tokens ?? 0) < (prevTotal.input_tokens ?? 0)
+          d = reset ? total : subtractClamped(total, prevTotal)
+        }
+        if (total) prevTotal = total
+        if (!d) continue
 
-      const ts = new Date(obj.timestamp ?? obj?.payload?.timestamp ?? 0).getTime()
-      if (!Number.isFinite(ts)) continue
+        const ts = new Date(obj.timestamp ?? obj?.payload?.timestamp ?? 0).getTime()
+        if (!Number.isFinite(ts)) continue
 
-      const inputTotal = safeNum(d.input_tokens)
-      const cached = Math.min(safeNum(d.cached_input_tokens), inputTotal)
-      const input = inputTotal - cached
-      const output = safeNum(d.output_tokens)
-      if (input + output + cached === 0) continue
+        const inputTotal = safeNum(d.input_tokens)
+        const cached = Math.min(safeNum(d.cached_input_tokens), inputTotal)
+        const inputTokens = inputTotal - cached
+        const output = safeNum(d.output_tokens)
+        if (inputTokens + output + cached === 0) continue
 
-      const p = priceFor(model)
-      entries.push({
-        ts,
-        model,
-        cost: input * p.in + cached * p.cr + output * p.out,
-        input,
-        output,
-        cacheCreate: 0,
-        cacheRead: cached,
-        cacheSavings: cached * (p.in - p.cr),
-      })
-    } catch {}
-  }
+        const p = priceFor(model)
+        entries.push({
+          ts,
+          model,
+          cost: inputTokens * p.in + cached * p.cr + output * p.out,
+          input: inputTokens,
+          output,
+          cacheCreate: 0,
+          cacheRead: cached,
+          cacheSavings: cached * (p.in - p.cr),
+        })
+      } catch {}
+    }
+  } catch {}
   return entries
 }
 

@@ -85,36 +85,40 @@ function shortModel(model: string): string {
 
 async function parseFile(path: string): Promise<Entry[]> {
   const entries: Entry[] = []
-  const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity })
-  for await (const line of rl) {
-    if (!line.includes('"usage"')) continue
-    try {
-      const obj = JSON.parse(line.charCodeAt(0) === 0xFEFF ? line.slice(1) : line)
-      if (obj.type !== 'assistant' || !obj.message?.usage) continue
-      const ts = new Date(obj.timestamp ?? 0).getTime()
-      if (!Number.isFinite(ts)) continue
-      const u = obj.message.usage
-      const model = typeof obj.message.model === 'string' && obj.message.model ? obj.message.model : 'unknown'
-      const input = safeNum(u.input_tokens)
-      const output = safeNum(u.output_tokens)
-      const cacheCreate = safeNum(u.cache_creation_input_tokens)
-      const cacheRead = safeNum(u.cache_read_input_tokens)
-      if (input + output + cacheCreate + cacheRead === 0) continue
-      const p = priceFor(model)
-      const msgId = obj.message?.id
-      entries.push({
-        id: msgId ? msgId + (obj.requestId ? ':' + obj.requestId : '') : undefined,
-        ts,
-        model: shortModel(model),
-        cost: costOf(model, u),
-        input,
-        output,
-        cacheCreate,
-        cacheRead,
-        cacheSavings: cacheRead * (p.i - p.cr),
-      })
-    } catch {}
-  }
+  const input = createReadStream(path)
+  input.on('error', () => {})
+  const rl = createInterface({ input, crlfDelay: Infinity })
+  try {
+    for await (const line of rl) {
+      if (!line.includes('"usage"')) continue
+      try {
+        const obj = JSON.parse(line.charCodeAt(0) === 0xFEFF ? line.slice(1) : line)
+        if (obj.type !== 'assistant' || !obj.message?.usage) continue
+        const ts = new Date(obj.timestamp ?? 0).getTime()
+        if (!Number.isFinite(ts)) continue
+        const u = obj.message.usage
+        const model = typeof obj.message.model === 'string' && obj.message.model ? obj.message.model : 'unknown'
+        const inputTokens = safeNum(u.input_tokens)
+        const output = safeNum(u.output_tokens)
+        const cacheCreate = safeNum(u.cache_creation_input_tokens)
+        const cacheRead = safeNum(u.cache_read_input_tokens)
+        if (inputTokens + output + cacheCreate + cacheRead === 0) continue
+        const p = priceFor(model)
+        const msgId = obj.message?.id
+        entries.push({
+          id: msgId ? msgId + (obj.requestId ? ':' + obj.requestId : '') : undefined,
+          ts,
+          model: shortModel(model),
+          cost: costOf(model, u),
+          input: inputTokens,
+          output,
+          cacheCreate,
+          cacheRead,
+          cacheSavings: cacheRead * (p.i - p.cr),
+        })
+      } catch {}
+    }
+  } catch {}
   return entries
 }
 

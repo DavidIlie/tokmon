@@ -1,4 +1,6 @@
 import { execFile as execFileCb } from 'node:child_process'
+import { accessSync, constants } from 'node:fs'
+import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFile = promisify(execFileCb)
@@ -18,8 +20,8 @@ async function getNativeDb(): Promise<any> {
 }
 
 function classify(msg: string): SqliteStatus {
+  if (/database is (locked|busy)|SQLITE_(BUSY|LOCKED)|EBUSY|sharing violation|resource busy|readonly/i.test(msg)) return 'locked'
   if (/unable to open|no such file|cannot open|ENOENT/i.test(msg)) return 'missing'
-  if (/database is (locked|busy)|readonly/i.test(msg)) return 'locked'
   if (/no such (function|table|column)|unknown option/i.test(msg)) return 'old'
   return 'error'
 }
@@ -28,16 +30,46 @@ export async function runSqlite(db: string, sql: string, params: (string | numbe
   const DB = await getNativeDb()
   if (DB) {
     let handle: any
+    let nativeErr: unknown
     try {
-      handle = new DB(db, { readOnly: true, timeout: 1500 })
+      try {
+        handle = new DB(db, { readOnly: true, timeout: 1500 })
+      } catch (e) {
+        if (!(e instanceof TypeError)) throw e
+        handle = new DB(db, { readOnly: true })
+      }
       const rows = handle.prepare(sql).all(...params) as Record<string, unknown>[]
       return { status: 'ok', rows }
-    } catch {
+    } catch (e) {
+      nativeErr = e
     } finally {
       try { handle?.close() } catch {}
     }
+    if (nativeErr) {
+      return { status: classify(String((nativeErr as Error)?.message ?? nativeErr)), rows: [] }
+    }
   }
   return runSqliteCli(db, sql, params)
+}
+
+function isExec(p: string): boolean {
+  try {
+    accessSync(p, process.platform === 'win32' ? constants.F_OK : constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function resolveSqliteCli(): string | null {
+  const names = process.platform === 'win32' ? ['sqlite3.exe', 'sqlite3.cmd', 'sqlite3.bat'] : ['sqlite3']
+  for (const dir of (process.env.PATH ?? '').split(delimiter).filter(Boolean)) {
+    for (const name of names) {
+      const path = join(dir, name)
+      if (isExec(path)) return path
+    }
+  }
+  return null
 }
 
 function inlineParams(sql: string, params: (string | number)[]): string {
@@ -49,9 +81,11 @@ function inlineParams(sql: string, params: (string | number)[]): string {
 }
 
 async function runSqliteCli(db: string, sql: string, params: (string | number)[]): Promise<SqliteResult> {
+  const sqlite = resolveSqliteCli()
+  if (!sqlite) return { status: 'missing', rows: [] }
   try {
     const { stdout } = await execFile(
-      'sqlite3',
+      sqlite,
       ['-readonly', '-json', '-cmd', '.timeout 1500', db, inlineParams(sql, params)],
       { timeout: 10000, maxBuffer: 8 << 20 },
     )

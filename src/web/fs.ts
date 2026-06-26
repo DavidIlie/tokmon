@@ -1,4 +1,5 @@
 import { readdir, stat, realpath } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve as resolvePath, isAbsolute, sep } from 'node:path'
 import { expandHome } from '../config'
@@ -8,6 +9,11 @@ export interface FsListing { path: string; parent: string | null; entries: FsEnt
 
 function isContained(root: string, target: string): boolean {
   return target === root || target.startsWith(root + sep)
+}
+
+function parentFor(root: string, abs: string): string | null {
+  const parentResolved = resolvePath(abs, '..')
+  return abs === root || !isContained(root, parentResolved) ? null : parentResolved
 }
 
 export async function listHomeDirectory(rawPath: string): Promise<FsListing> {
@@ -20,10 +26,20 @@ export async function listHomeDirectory(rawPath: string): Promise<FsListing> {
   try { real = await realpath(lexical) } catch { real = lexical }
   const abs = isContained(root, real) ? real : root
 
-  const st = await stat(abs)
-  if (!st.isDirectory()) throw new Error('not a directory')
+  let st: Awaited<ReturnType<typeof stat>>
+  try {
+    st = await stat(abs)
+  } catch {
+    return { path: abs, parent: parentFor(root, abs), entries: [] }
+  }
+  if (!st.isDirectory()) return { path: abs, parent: parentFor(root, abs), entries: [] }
 
-  const dirents = await readdir(abs, { withFileTypes: true })
+  let dirents: Dirent<string>[]
+  try {
+    dirents = await readdir(abs, { withFileTypes: true })
+  } catch {
+    return { path: abs, parent: parentFor(root, abs), entries: [] }
+  }
   const entries: FsEntry[] = []
   for (const d of dirents) {
     if (d.name.startsWith('.')) continue
@@ -40,7 +56,5 @@ export async function listHomeDirectory(rawPath: string): Promise<FsListing> {
 
   entries.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1))
 
-  const parentResolved = resolvePath(abs, '..')
-  const parent = abs === root || !isContained(root, parentResolved) ? null : parentResolved
-  return { path: abs, parent, entries }
+  return { path: abs, parent: parentFor(root, abs), entries }
 }

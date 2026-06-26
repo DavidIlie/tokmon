@@ -1,4 +1,4 @@
-import { accessSync, constants } from 'node:fs'
+import { accessSync, constants, existsSync } from 'node:fs'
 import { join, delimiter, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import type { ProviderId } from './types'
@@ -30,7 +30,7 @@ function isExec(p: string): boolean {
   }
 }
 
-function onPath(names: string[]): boolean {
+export function onPath(names: string[]): boolean {
   const exts = process.platform === 'win32'
     ? (process.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM').split(';').map(e => e.toLowerCase()).concat('')
     : ['']
@@ -62,7 +62,12 @@ export function installSignals(id: ProviderId): boolean {
     case 'codex': {
       const bin = process.env.CODEX_BIN
       if (bin && isAbsolute(bin) && isExec(bin)) return true
-      return onPath(['codex'])
+      return onPath(['codex']) || anyExists([
+        lad && join(lad, 'Programs', 'OpenAI', 'Codex', 'bin', 'codex.exe'),
+        lad && join(lad, 'Programs', 'OpenAI', 'Codex', 'codex.exe'),
+        lad && join(lad, 'Programs', 'codex', 'codex.exe'),
+        pf && join(pf, 'OpenAI', 'Codex', 'bin', 'codex.exe'),
+      ]) || existsSync(join(home, '.codex', 'sessions')) || existsSync(join(home, '.codex', 'auth.json'))
     }
     case 'cursor':
       return onPath(['cursor', 'cursor-agent']) || anyExists([

@@ -1,15 +1,12 @@
-import { execFile as execFileCb } from 'node:child_process'
 import { access, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { promisify } from 'node:util'
 import { resetIn } from '../../format'
 import { envDir } from '../../config'
 import { readJson } from '../../http'
 import type { Account, BillingResult, Metric } from '../types'
 import { readMacKeychainRaw, unwrapGoKeyringBase64 } from '../_shared/keychain'
-
-const execFile = promisify(execFileCb)
+import { onPath } from '../detect'
 const USAGE_URL = 'https://api.github.com/copilot_internal/user'
 const GH_KEYCHAIN_SERVICE = 'gh:github.com'
 
@@ -66,13 +63,7 @@ export async function detectCopilot(homeDir?: string): Promise<boolean> {
     await access(ghHostsPath(homeDir))
     return true
   } catch {}
-
-  try {
-    await execFile('gh', ['--version'], { timeout: 3000 })
-    return true
-  } catch {
-    return false
-  }
+  return onPath(['gh'])
 }
 
 function unquoteYamlValue(value: string): string {

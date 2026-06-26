@@ -81,11 +81,13 @@ async function socketLayerFor(
 }
 
 function retryPolicy(options: DaemonRpcClientOptions) {
-  const attempts = options.reconnectAttempts ?? 5
   const baseDelay = options.reconnectBaseDelayMs ?? 250
-  return Schedule.addDelay(Schedule.recurs(attempts), (retryCount) =>
-    Effect.succeed(Duration.millis(Math.min(baseDelay * (retryCount + 1), 2_500))),
+  const policy = Schedule.exponential(Duration.millis(baseDelay), 1.5).pipe(
+    Schedule.either(Schedule.spaced(Duration.millis(2_500))),
   )
+  return typeof options.reconnectAttempts === 'number'
+    ? policy.pipe(Schedule.both(Schedule.recurs(options.reconnectAttempts)))
+    : policy
 }
 
 export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientOptions = {}): DaemonRpcClient {
@@ -99,13 +101,25 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
     options.onConn?.(state, error)
   }
 
+  const resetSession = (active?: Session | null) => {
+    const dead = active ?? session
+    if (active === undefined || active === session) session = null
+    sessionPromise = null
+    if (dead) void dead.runtime.dispose().catch(() => {})
+  }
+
   const makeProtocolLayer = async () => {
     const socketLayer = await socketLayerFor(url, options.transport)
     const connectionHooksLayer = Layer.succeed(
       RpcClient.ConnectionHooks,
       RpcClient.ConnectionHooks.of({
         onConnect: Effect.sync(() => { setConn('live') }),
-        onDisconnect: Effect.sync(() => { if (!closed) setConn('reconnecting') }),
+        onDisconnect: Effect.sync(() => {
+          if (!closed) {
+            setConn('reconnecting')
+            resetSession()
+          }
+        }),
       }),
     )
     return Layer.effect(
@@ -161,7 +175,10 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
         TokmonRpcClient.use((client) => effectFor(client)),
       )
     } catch (error) {
-      if (!closed) setConn('error', error)
+      if (!closed) {
+        resetSession(active)
+        setConn('error', error)
+      }
       throw error
     }
   }
@@ -173,8 +190,26 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
     if (closed) return () => {}
     let fiber: Fiber.Fiber<unknown, unknown> | null = null
     let unsubscribed = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
 
-    void (async () => {
+    const stopFiber = () => {
+      if (!fiber) return
+      const current = fiber
+      fiber = null
+      fibers.delete(current)
+      void (session?.runtime.runPromise(Fiber.interrupt(current)) ?? Effect.runPromise(Fiber.interrupt(current))).catch(() => {})
+    }
+
+    const scheduleRetry = () => {
+      if (closed || unsubscribed || retryTimer) return
+      retryTimer = setTimeout(() => {
+        retryTimer = null
+        start()
+      }, options.reconnectBaseDelayMs ?? 250)
+      retryTimer.unref?.()
+    }
+
+    const start = () => { void (async () => {
       try {
         const active = await ensureSession()
         if (closed || unsubscribed) return
@@ -189,7 +224,11 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
             ),
           ).pipe(Effect.catchCause((cause) =>
             Effect.sync(() => {
-              if (!closed && !unsubscribed) setConn('error', Cause.squash(cause))
+              if (!closed && !unsubscribed) {
+                resetSession(active)
+                setConn('error', Cause.squash(cause))
+                scheduleRetry()
+              }
             }),
           )),
         )
@@ -198,15 +237,23 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
           if (fiber) fibers.delete(fiber)
         })
       } catch (error) {
-        if (!closed && !unsubscribed) setConn('error', error)
+        if (!closed && !unsubscribed) {
+          resetSession()
+          setConn('error', error)
+          scheduleRetry()
+        }
       }
-    })()
+    })() }
+
+    start()
 
     return () => {
       unsubscribed = true
-      if (!fiber) return
-      fibers.delete(fiber)
-      void (session?.runtime.runPromise(Fiber.interrupt(fiber)) ?? Effect.runPromise(Fiber.interrupt(fiber))).catch(() => {})
+      if (retryTimer) {
+        clearTimeout(retryTimer)
+        retryTimer = null
+      }
+      stopFiber()
     }
   }
 

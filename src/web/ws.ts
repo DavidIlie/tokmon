@@ -125,13 +125,13 @@ export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<
   const handlersLayer = TokmonRpcGroup.toLayer(
     TokmonRpcGroup.of({
       [TOKMON_WS_METHODS.getConfig]: () =>
-        Effect.promise(async () => deps.state.config ?? await loadConfig()),
+        Effect.tryPromise(() => Promise.resolve(deps.state.config ?? loadConfig())),
       [TOKMON_WS_METHODS.setConfig]: (config) =>
-        Effect.promise(() => applyConfigUpdate(deps.engine, deps.state, config)),
+        Effect.tryPromise(() => applyConfigUpdate(deps.engine, deps.state, config)),
       [TOKMON_WS_METHODS.refresh]: ({ scope }) =>
         Effect.sync(() => { deps.engine.refresh(scope) }),
       [TOKMON_WS_METHODS.browseFs]: ({ path }) =>
-        Effect.promise(() => listHomeDirectory(path)),
+        Effect.tryPromise(() => listHomeDirectory(path)),
       [TOKMON_WS_METHODS.snapshot]: () => snapshotStream(deps.engine),
       [TOKMON_WS_METHODS.config]: () => configStream(deps.engine),
     }),

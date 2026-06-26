@@ -15,6 +15,16 @@ const PEAK_INTERVAL_MS = 300_000
 const IDLE_PAUSE_MS = 60_000
 const SNAPSHOT_CACHE_THROTTLE_MS = 20_000
 const REVEAL_THROTTLE_MS = 500
+const FETCH_TIMEOUT_MS = 30_000
+
+const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
+  Promise.race([
+    p,
+    new Promise<T>((_, reject) => {
+      const t = setTimeout(() => reject(new Error('fetch timeout')), ms)
+      t.unref?.()
+    }),
+  ])
 
 export type RefreshScope = 'all' | 'summary' | 'table' | 'billing' | 'peak'
 
@@ -149,7 +159,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
         if (stopped) return
         let dashboard: DashboardData | null = null
         let ok = true
-        try { dashboard = await fetchAccountSummary(r.account, tz) } catch { ok = false }
+        try { dashboard = await withTimeout(fetchAccountSummary(r.account, tz), FETCH_TIMEOUT_MS) } catch { ok = false }
         if (stopped || epoch !== configEpoch) return
         if (ok) { usageEntry(r.account.id).dashboard = dashboard; summaryState.set(r.account.id, 'ready') }
         else summaryState.set(r.account.id, 'error')
@@ -175,7 +185,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
         if (stopped) return
         let table: TableData | null = null
         let ok = true
-        try { table = await fetchAccountTable(r.account, tz) } catch { ok = false }
+        try { table = await withTimeout(fetchAccountTable(r.account, tz), FETCH_TIMEOUT_MS) } catch { ok = false }
         if (stopped || epoch !== configEpoch) return
         if (ok) { usageEntry(r.account.id).table = table; tableState.set(r.account.id, 'ready') }
         else tableState.set(r.account.id, 'error')
@@ -201,7 +211,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
         if (stopped) return
         let result: BillingResult | null = null
         let ok = true
-        try { result = await fetchAccountBilling(r.account) } catch { ok = false }
+        try { result = await withTimeout(fetchAccountBilling(r.account), FETCH_TIMEOUT_MS) } catch { ok = false }
         if (stopped || epoch !== configEpoch) return
         if (ok) { billing.set(r.account.id, result); billingState.set(r.account.id, 'ready') }
         else billingState.set(r.account.id, 'error')

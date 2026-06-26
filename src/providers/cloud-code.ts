@@ -175,22 +175,34 @@ function geminiBundleCandidates(): string[] {
   }
 
   try {
-    const which = spawnSync('command', ['-v', 'gemini'], { encoding: 'utf8', timeout: 5000 })
+    const which = process.platform === 'win32'
+      ? spawnSync('where', ['gemini'], { encoding: 'utf8', timeout: 5000 })
+      : spawnSync('sh', ['-lc', 'command -v gemini'], { encoding: 'utf8', timeout: 5000 })
     const resolved = typeof which.stdout === 'string' ? which.stdout.trim().split('\n')[0]?.trim() : ''
     if (resolved) candidates.push(resolved)
   } catch {
   }
 
   const home = homedir()
-  addBundle('/opt/homebrew/lib/node_modules')
-  addBundle('/usr/local/lib/node_modules')
-  addBundle(join(home, '.local', 'share', 'node_modules'))
-  addBundle(join(home, '.bun', 'install', 'global', 'node_modules'))
+  if (process.platform === 'win32') {
+    addBundle(join(process.env.APPDATA ?? join(home, 'AppData', 'Roaming'), 'npm', 'node_modules'))
+  } else {
+    addBundle('/opt/homebrew/lib/node_modules')
+    addBundle('/usr/local/lib/node_modules')
+    addBundle(join(home, '.local', 'share', 'node_modules'))
+    addBundle(join(home, '.bun', 'install', 'global', 'node_modules'))
+  }
 
   try {
-    const prefix = spawnSync('npm', ['config', 'get', 'prefix'], { encoding: 'utf8', timeout: 5000 })
+    const prefix = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['config', 'get', 'prefix'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      shell: process.platform === 'win32',
+    })
     const root = typeof prefix.stdout === 'string' ? prefix.stdout.trim() : ''
-    if (root && root !== 'undefined') addBundle(join(root, 'lib', 'node_modules'))
+    if (root && root !== 'undefined') {
+      addBundle(process.platform === 'win32' ? join(root, 'node_modules') : join(root, 'lib', 'node_modules'))
+    }
   } catch {
   }
 

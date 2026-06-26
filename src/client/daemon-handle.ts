@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { extname } from 'node:path'
 
-const HANDSHAKE_TIMEOUT_MS = 3000
+const HANDSHAKE_TIMEOUT_MS = process.platform === 'win32' ? 8000 : 3000
 
 export type DaemonKind = 'spawned' | 'degraded'
 
