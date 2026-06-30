@@ -8,6 +8,10 @@ import { envDir } from '../../config'
 import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince } from '../usage-core'
 
 const PRICING: Record<string, { in: number; cr: number; out: number }> = {
+  'gpt-5.5-codex': { in: 5e-6, cr: 0.5e-6, out: 30e-6 },
+  'gpt-5.5': { in: 5e-6, cr: 0.5e-6, out: 30e-6 },
+  'gpt-5.4-codex': { in: 2.5e-6, cr: 0.25e-6, out: 15e-6 },
+  'gpt-5.4': { in: 2.5e-6, cr: 0.25e-6, out: 15e-6 },
   'gpt-5-codex': { in: 1.25e-6, cr: 0.125e-6, out: 10e-6 },
   'gpt-5-mini': { in: 0.25e-6, cr: 0.025e-6, out: 2e-6 },
   'gpt-5-nano': { in: 0.05e-6, cr: 0.005e-6, out: 0.4e-6 },

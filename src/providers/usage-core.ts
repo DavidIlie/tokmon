@@ -22,7 +22,7 @@ export interface Entry {
   cacheSavings: number
 }
 
-const CACHE_VERSION = 4
+const CACHE_VERSION = 5
 const STABLE_AGE_MS = 5 * 60_000
 const PRUNE_AGE_MS = 200 * DAY_MS
 const memCache = new Map<string, { mtimeMs: number; size: number; entries: Entry[] }>()
