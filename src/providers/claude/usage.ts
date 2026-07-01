@@ -83,6 +83,12 @@ function shortModel(model: string): string {
   return model.replace('claude-', '').replace(/-\d{8}$/, '')
 }
 
+function timestampMs(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value > 10_000_000_000 ? value : value * 1000
+  if (typeof value === 'string' && value.trim()) return new Date(value.trim()).getTime()
+  return NaN
+}
+
 async function parseFile(path: string): Promise<Entry[]> {
   const entries: Entry[] = []
   const input = createReadStream(path)
@@ -94,7 +100,7 @@ async function parseFile(path: string): Promise<Entry[]> {
       try {
         const obj = JSON.parse(line.charCodeAt(0) === 0xFEFF ? line.slice(1) : line)
         if (obj.type !== 'assistant' || !obj.message?.usage) continue
-        const ts = new Date(obj.timestamp ?? 0).getTime()
+        const ts = timestampMs(obj.timestamp)
         if (!Number.isFinite(ts)) continue
         const u = obj.message.usage
         const model = typeof obj.message.model === 'string' && obj.message.model ? obj.message.model : 'unknown'

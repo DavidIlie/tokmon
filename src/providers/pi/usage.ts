@@ -14,6 +14,12 @@ export async function detectPi(homeDir?: string): Promise<boolean> {
   try { await access(piSessionsDir(homeDir)); return true } catch { return false }
 }
 
+function timestampMs(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value > 10_000_000_000 ? value : value * 1000
+  if (typeof value === 'string' && value.trim()) return new Date(value.trim()).getTime()
+  return NaN
+}
+
 async function parseFile(path: string): Promise<Entry[]> {
   const entries: Entry[] = []
   const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity })
@@ -26,7 +32,7 @@ async function parseFile(path: string): Promise<Entry[]> {
       const msg = obj.message
       if (msg?.role !== 'assistant' || !msg?.usage) continue
       const u = msg.usage
-      const ts = new Date(obj.timestamp ?? msg.timestamp ?? 0).getTime()
+      const ts = timestampMs(obj.timestamp ?? msg.timestamp)
       if (!Number.isFinite(ts)) continue
       const input = safeNum(u.input)
       const output = safeNum(u.output)

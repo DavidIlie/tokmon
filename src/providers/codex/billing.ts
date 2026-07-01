@@ -11,6 +11,7 @@ import { readMacKeychainRaw } from '../_shared/keychain'
 import { codexHomes } from './usage'
 
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
+const RESET_CREDITS_URL = 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits'
 const CREDIT_USD_RATE = 0.04
 
 interface CodexAuth {
@@ -109,13 +110,104 @@ function planLabel(planType: unknown): string | null {
   return planType.charAt(0).toUpperCase() + planType.slice(1)
 }
 
-function resetFrom(window: any): string | null {
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const n = Number(value)
+    if (Number.isFinite(n)) return n
+  }
+  return undefined
+}
+
+function resetDateMs(window: any): number | null {
   if (!window) return null
-  let iso: string | null = null
-  if (typeof window.reset_at === 'number') iso = msToIso(window.reset_at * 1000)
-  else if (typeof window.resets_at === 'number') iso = msToIso(window.resets_at * 1000)
-  else if (typeof window.reset_after_seconds === 'number') iso = msToIso(Date.now() + window.reset_after_seconds * 1000)
+  const absolute = numberValue(window.reset_at ?? window.resets_at)
+  if (absolute !== undefined) return absolute > 10_000_000_000 ? absolute : absolute * 1000
+  const after = numberValue(window.reset_after_seconds)
+  if (after !== undefined) return Date.now() + after * 1000
+  for (const key of ['reset_at', 'resets_at']) {
+    const raw = window[key]
+    if (typeof raw === 'string' && raw.trim()) {
+      const parsed = new Date(raw).getTime()
+      if (Number.isFinite(parsed)) return parsed
+    }
+  }
+  return null
+}
+
+function resetFrom(window: any): string | null {
+  const ms = resetDateMs(window)
+  const iso = ms === null ? null : msToIso(ms)
   return iso ? resetIn(iso) : null
+}
+
+function normalizedUsedPercent(window: any, percent: unknown): number | undefined {
+  const used = numberValue(percent)
+  if (used === undefined) return undefined
+  const periodSeconds = numberValue(window?.limit_window_seconds ?? window?.period_seconds ?? window?.window_seconds)
+  const resetMs = resetDateMs(window)
+  if (periodSeconds && resetMs) {
+    const elapsedMs = periodSeconds * 1000 - Math.max(0, resetMs - Date.now())
+    if (elapsedMs <= 60_000 && used <= 1) return 0
+  }
+  return Math.max(0, used)
+}
+
+function metricLabelForAdditional(window: any): string | null {
+  const name = String(window?.limit_name ?? window?.name ?? window?.metered_feature ?? window?.feature ?? '').toLowerCase()
+  if (!name.includes('spark')) return null
+  const seconds = numberValue(window?.limit_window_seconds ?? window?.period_seconds ?? window?.window_seconds)
+  return name.includes('week') || (seconds !== undefined && seconds >= 6 * 24 * 60 * 60) ? 'Spark Weekly' : 'Spark'
+}
+
+function additionalRateLimits(rl: any): any[] {
+  const raw = rl?.additional_rate_limits ?? rl?.additionalRateLimits ?? rl?.additional
+  if (Array.isArray(raw)) return raw
+  if (raw && typeof raw === 'object') return Object.values(raw)
+  return []
+}
+
+function appendWindowMetrics(metrics: Metric[], rl: any, headerPct?: (name: string) => number | undefined): void {
+  const primary = rl?.primary_window ?? rl?.primary ?? null
+  const secondary = rl?.secondary_window ?? rl?.secondary ?? null
+  const primaryPct = normalizedUsedPercent(primary, primary?.used_percent ?? primary?.percent_used ?? headerPct?.('x-codex-primary-used-percent'))
+  const secondaryPct = normalizedUsedPercent(secondary, secondary?.used_percent ?? secondary?.percent_used ?? headerPct?.('x-codex-secondary-used-percent'))
+
+  if (primaryPct !== undefined) metrics.push(percentMetric('Session', primaryPct, resetFrom(primary), true))
+  if (secondaryPct !== undefined) metrics.push(percentMetric('Weekly', secondaryPct, resetFrom(secondary)))
+
+  for (const item of additionalRateLimits(rl)) {
+    const label = metricLabelForAdditional(item)
+    if (!label) continue
+    const used = normalizedUsedPercent(item, item?.used_percent ?? item?.percent_used)
+    if (used === undefined) continue
+    metrics.push(percentMetric(label, used, resetFrom(item)))
+  }
+}
+
+function appendCredits(metrics: Metric[], source: any): void {
+  const balance = numberValue(source?.credits?.balance ?? source?.credit_balance)
+  if (balance !== undefined && balance >= 0) {
+    metrics.push({ label: 'Credits', used: Math.floor(balance) * CREDIT_USD_RATE, limit: null, format: { kind: 'dollars' } })
+  }
+}
+
+async function fetchResetCredits(headers: Record<string, string>): Promise<number | undefined> {
+  try {
+    const res = await fetch(RESET_CREDITS_URL, {
+      headers: {
+        ...headers,
+        'OpenAI-Beta': 'codex-1',
+        'originator': 'Codex Desktop',
+      },
+      signal: AbortSignal.timeout(10000),
+    })
+    if (!res.ok) return undefined
+    const data = await readJson<any>(res)
+    return numberValue(data?.available_count ?? data?.available ?? data?.remaining)
+  } catch {
+    return undefined
+  }
 }
 
 async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {
@@ -132,26 +224,21 @@ async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {
     const data = await readJson<any>(res)
     if (!data) return null
 
-    const metrics: Metric[] = []
-    const rl = data.rate_limit ?? null
-    const primary = rl?.primary_window ?? null
-    const secondary = rl?.secondary_window ?? null
-
     const headerPct = (name: string): number | undefined => {
       const h = res.headers.get(name)
       if (h === null || h.trim() === '') return undefined
       const n = Number(h)
       return Number.isFinite(n) ? n : undefined
     }
-    const primaryPct = headerPct('x-codex-primary-used-percent') ?? primary?.used_percent
-    const secondaryPct = headerPct('x-codex-secondary-used-percent') ?? secondary?.used_percent
 
-    if (typeof primaryPct === 'number' && Number.isFinite(primaryPct)) metrics.push(percentMetric('5h', primaryPct, resetFrom(primary), true))
-    if (typeof secondaryPct === 'number' && Number.isFinite(secondaryPct)) metrics.push(percentMetric('Week', secondaryPct, resetFrom(secondary)))
+    const metrics: Metric[] = []
+    appendWindowMetrics(metrics, data.rate_limit ?? data, headerPct)
+    appendCredits(metrics, data)
 
-    const balance = data?.credits?.balance
-    if (typeof balance === 'number' && Number.isFinite(balance) && balance >= 0) {
-      metrics.push({ label: 'Credits', used: balance * CREDIT_USD_RATE, limit: null, format: { kind: 'dollars' } })
+    const resetCredits = await fetchResetCredits(headers)
+      ?? numberValue(data?.rate_limit_reset_credits?.available_count ?? data?.rate_limit_reset_credits?.available)
+    if (resetCredits !== undefined && resetCredits >= 0) {
+      metrics.push({ label: 'Rate Limit Resets', used: resetCredits, limit: null, format: { kind: 'count', suffix: 'available' } })
     }
 
     if (metrics.length === 0) return null
@@ -200,15 +287,11 @@ async function snapshotBilling(homeDir?: string, auth: CodexAuth | null = null):
   if (!last) return null
 
   const metrics: Metric[] = []
-  if (typeof last.primary?.used_percent === 'number' && Number.isFinite(last.primary.used_percent)) {
-    metrics.push(percentMetric('5h', last.primary.used_percent, resetFrom(last.primary), true))
-  }
-  if (typeof last.secondary?.used_percent === 'number' && Number.isFinite(last.secondary.used_percent)) {
-    metrics.push(percentMetric('Week', last.secondary.used_percent, resetFrom(last.secondary)))
-  }
-  const balance = last?.credits?.balance
-  if (typeof balance === 'number' && Number.isFinite(balance) && balance >= 0) {
-    metrics.push({ label: 'Credits', used: balance * CREDIT_USD_RATE, limit: null, format: { kind: 'dollars' } })
+  appendWindowMetrics(metrics, last.rate_limit ?? last)
+  appendCredits(metrics, last)
+  const resetCredits = numberValue(last?.rate_limit_reset_credits?.available_count ?? last?.rate_limit_reset_credits?.available)
+  if (resetCredits !== undefined && resetCredits >= 0) {
+    metrics.push({ label: 'Rate Limit Resets', used: resetCredits, limit: null, format: { kind: 'count', suffix: 'available' } })
   }
   if (metrics.length === 0) return null
   return { plan: auth?.plan ?? planLabel(last.plan_type), metrics, error: null, ...identityFields(auth) }

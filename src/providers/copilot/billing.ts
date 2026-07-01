@@ -17,8 +17,11 @@ interface TokenSource {
 
 interface QuotaSnapshot {
   percent_remaining?: number
+  remaining?: number
   entitlement?: number
   unlimited?: boolean
+  overage_permitted?: boolean
+  overage_count?: number
 }
 
 interface CopilotUsage {
@@ -27,6 +30,7 @@ interface CopilotUsage {
   quota_snapshots?: {
     premium_interactions?: QuotaSnapshot
     chat?: QuotaSnapshot
+    completions?: QuotaSnapshot
   }
   limited_user_reset_date?: string
   limited_user_quotas?: {
@@ -37,6 +41,7 @@ interface CopilotUsage {
     chat?: number
     completions?: number
   }
+  token_based_billing?: boolean
 }
 
 function ghConfigDir(homeDir?: string): string {
@@ -182,13 +187,41 @@ function resetDate(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? resetIn(value) : null
 }
 
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const n = Number(value)
+    if (Number.isFinite(n)) return n
+  }
+  return undefined
+}
+
+function boolValue(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    const s = value.trim().toLowerCase()
+    if (s === 'true' || s === '1') return true
+    if (s === 'false' || s === '0') return false
+  }
+  return undefined
+}
+
 function percentMetric(label: string, snapshot: QuotaSnapshot | undefined, reset: string | null, primary?: boolean): Metric | null {
-  if (!snapshot || typeof snapshot.percent_remaining !== 'number' || !Number.isFinite(snapshot.percent_remaining)) return null
-  if (snapshot.unlimited === true || snapshot.entitlement === 0) return null
-  const used = Math.min(100, Math.max(0, 100 - snapshot.percent_remaining))
+  if (!snapshot) return null
+  const entitlement = numberValue(snapshot.entitlement)
+  const remaining = numberValue(snapshot.remaining)
+  if (boolValue(snapshot.unlimited) === true || entitlement === -1 || remaining === -1 || entitlement === 0) return null
+  const percentRemaining = numberValue(snapshot.percent_remaining)
+  const used = percentRemaining !== undefined
+    ? 100 - percentRemaining
+    : entitlement !== undefined && entitlement > 0 && remaining !== undefined
+      ? 100 - (remaining / entitlement) * 100
+      : undefined
+  if (used === undefined) return null
   return {
     label,
-    used,
+    used: Math.min(100, Math.max(0, used)),
     limit: 100,
     format: { kind: 'percent' },
     resetsAt: reset,
@@ -197,19 +230,25 @@ function percentMetric(label: string, snapshot: QuotaSnapshot | undefined, reset
 }
 
 function countMetric(label: string, remaining: unknown, total: unknown, reset: string | null): Metric | null {
-  if (
-    typeof remaining !== 'number'
-    || typeof total !== 'number'
-    || !Number.isFinite(remaining)
-    || !Number.isFinite(total)
-    || total <= 0
-  ) return null
+  const remainingCount = numberValue(remaining)
+  const totalCount = numberValue(total)
+  if (remainingCount === undefined || totalCount === undefined || totalCount <= 0) return null
   return {
     label,
-    used: Math.max(0, total - remaining),
-    limit: total,
+    used: Math.max(0, totalCount - remainingCount),
+    limit: totalCount,
     format: { kind: 'count' },
     resetsAt: reset,
+  }
+}
+
+function overageMetric(snapshot: QuotaSnapshot | undefined): Metric | null {
+  if (!snapshot || boolValue(snapshot.overage_permitted) !== true) return null
+  return {
+    label: 'Extra',
+    used: Math.max(0, numberValue(snapshot.overage_count) ?? 0),
+    limit: null,
+    format: { kind: 'count' },
   }
 }
 
@@ -251,13 +290,17 @@ export async function copilotBilling(account: Account): Promise<BillingResult> {
   const quotaReset = resetDate(data.quota_reset_date)
   const snapshots = data.quota_snapshots
 
-  const premium = percentMetric('Premium', snapshots?.premium_interactions, quotaReset, true)
+  const premium = percentMetric('Credits', snapshots?.premium_interactions, quotaReset, true)
   if (premium) metrics.push(premium)
+  const overage = overageMetric(snapshots?.premium_interactions)
+  if (overage) metrics.push(overage)
 
   const chat = percentMetric('Chat', snapshots?.chat, quotaReset)
   if (chat) metrics.push(chat)
+  const completionsSnapshot = percentMetric('Completions', snapshots?.completions, quotaReset)
+  if (completionsSnapshot) metrics.push(completionsSnapshot)
 
-  if (data.limited_user_quotas && data.monthly_quotas) {
+  if (metrics.length === 0 && data.limited_user_quotas && data.monthly_quotas) {
     const reset = resetDate(data.limited_user_reset_date)
     const limitedChat = countMetric('Chat', data.limited_user_quotas.chat, data.monthly_quotas.chat, reset)
     if (limitedChat) metrics.push(limitedChat)
@@ -266,6 +309,8 @@ export async function copilotBilling(account: Account): Promise<BillingResult> {
     if (completions) metrics.push(completions)
   }
 
-  if (metrics.length === 0) return { plan, metrics: [], error: 'No usage data' }
+  if (metrics.length === 0) {
+    return { plan, metrics: [], error: boolValue(data.token_based_billing) === true ? null : 'No usage data' }
+  }
   return { plan, metrics, error: null }
 }

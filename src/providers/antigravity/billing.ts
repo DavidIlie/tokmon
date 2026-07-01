@@ -65,7 +65,7 @@ export async function antigravityBilling(account: Account): Promise<BillingResul
     if (!token) return { plan: null, metrics: [], error: cloudCodeSqliteError(status) }
     const quota = await fetchCloudCodeQuota(token, 'Token expired — open Antigravity')
     if (!quota.ok) return { plan: quota.plan, metrics: [], error: quota.error }
-    return { plan: quota.plan, metrics: cloudCodeBucketsToMetrics(quota.buckets), error: null }
+    return { plan: quota.plan, metrics: cloudCodeBucketsToMetrics(quota.buckets, { fullGeminiLabels: true }), error: null }
   } catch {
     return { plan: null, metrics: [], error: 'Antigravity billing unavailable' }
   }

@@ -418,14 +418,14 @@ function normalizeLabel(label: string): string {
   return label.replace(/\s*\([^)]*\)\s*$/, '').trim()
 }
 
-function poolLabel(label: string): string {
+function poolLabel(label: string, fullGeminiLabels = false): string {
   const lower = normalizeLabel(label).toLowerCase()
   // Claude is matched EXPLICITLY (Antigravity pools Claude models too) -- never
   // as a fallback, or non-pro/flash Gemini models render as a bogus "Claude"
   // quota row on the Gemini card.
   if (lower.includes('claude')) return 'Claude'
-  if (lower.includes('gemini') && lower.includes('pro')) return 'Pro'
-  if (lower.includes('gemini') && lower.includes('flash')) return 'Flash'
+  if (lower.includes('gemini') && lower.includes('pro')) return fullGeminiLabels ? 'Gemini Pro' : 'Pro'
+  if (lower.includes('gemini') && lower.includes('flash')) return fullGeminiLabels ? 'Gemini Flash' : 'Flash'
   if (lower.includes('gemini')) return 'Gemini'
   return normalizeLabel(label) || 'Other'
 }
@@ -443,11 +443,11 @@ function sortKey(label: string): string {
   return `2_${label}`
 }
 
-export function cloudCodeBucketsToMetrics(buckets: CloudCodeBucket[]): Metric[] {
+export function cloudCodeBucketsToMetrics(buckets: CloudCodeBucket[], options: { fullGeminiLabels?: boolean } = {}): Metric[] {
   const pooled = new Map<string, CloudCodeBucket>()
   for (const bucket of buckets) {
     if (!Number.isFinite(bucket.remainingFraction)) continue
-    const label = poolLabel(bucket.modelId)
+    const label = poolLabel(bucket.modelId, options.fullGeminiLabels === true)
     const existing = pooled.get(label)
     if (!existing || bucket.remainingFraction < existing.remainingFraction) {
       pooled.set(label, { ...bucket, modelId: label })

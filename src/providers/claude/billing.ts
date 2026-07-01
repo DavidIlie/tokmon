@@ -10,13 +10,13 @@ import { readMacKeychainRaw } from '../_shared/keychain'
 import { claudeConfigDirs } from './usage'
 
 interface OAuthResponse {
-  five_hour?: { utilization: number; resets_at: string }
-  seven_day?: { utilization: number; resets_at: string }
-  seven_day_sonnet?: { utilization: number; resets_at: string } | null
+  five_hour?: { utilization?: unknown; resets_at?: unknown }
+  seven_day?: { utilization?: unknown; resets_at?: unknown }
+  seven_day_sonnet?: { utilization?: unknown; resets_at?: unknown } | null
   extra_usage?: {
-    is_enabled: boolean
-    monthly_limit: number | null
-    used_credits: number | null
+    is_enabled?: unknown
+    monthly_limit?: unknown
+    used_credits?: unknown
     currency?: string | null
   } | null
 }
@@ -134,12 +134,34 @@ function planLabel(auth: ClaudeAuth): string | null {
 const pct = (used: number, resets?: string | null, primary?: boolean): Metric =>
   percentMetric('', used, resets ?? null, primary)
 
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const n = Number(value)
+    if (Number.isFinite(n)) return n
+  }
+  return undefined
+}
+
+function boolValue(value: unknown): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') return value.trim().toLowerCase() === 'true' || value.trim() === '1'
+  return false
+}
+
+function resetFrom(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return resetIn(value)
+  const n = numberValue(value)
+  if (n === undefined) return null
+  const ms = Math.abs(n) < 10_000_000_000 ? n * 1000 : n
+  return resetIn(new Date(ms).toISOString())
+}
+
 function usageMetric(label: string, window: { utilization?: unknown; resets_at?: unknown } | null | undefined, primary?: boolean): Metric | null {
-  if (!window || typeof window.utilization !== 'number' || !Number.isFinite(window.utilization)) return null
-  const resets = typeof window.resets_at === 'string' && window.resets_at.trim()
-    ? resetIn(window.resets_at)
-    : null
-  return { ...pct(window.utilization, resets, primary), label }
+  const used = numberValue(window?.utilization)
+  if (used === undefined) return null
+  return { ...pct(used, resetFrom(window?.resets_at), primary), label }
 }
 
 export async function claudeBilling(account: Account): Promise<BillingResult> {
@@ -160,7 +182,11 @@ export async function claudeBilling(account: Account): Promise<BillingResult> {
       signal: AbortSignal.timeout(10000),
     })
 
-    if (res.status === 429) return { plan, metrics: [], error: 'Rate limited — retrying next poll', ...identityFields(identity) }
+    if (res.status === 429) {
+      const retryAfter = numberValue(res.headers.get('retry-after'))
+      const retryText = retryAfter !== undefined ? ` — retry in ~${Math.ceil(retryAfter / 60)}m` : ' — retrying next poll'
+      return { plan, metrics: [], error: `Rate limited${retryText}`, ...identityFields(identity) }
+    }
     if (res.status === 401) return { plan, metrics: [], error: 'Token expired — restart Claude Code', ...identityFields(identity) }
     if (!res.ok) return { plan, metrics: [], error: `API ${res.status}`, ...identityFields(identity) }
 
@@ -168,20 +194,23 @@ export async function claudeBilling(account: Account): Promise<BillingResult> {
     if (!data) return { plan, metrics: [], error: 'Unexpected API response', ...identityFields(identity) }
     const metrics: Metric[] = []
 
-    const fiveHour = usageMetric('5h', data.five_hour, true)
+    const fiveHour = usageMetric('Session', data.five_hour, true)
     if (fiveHour) metrics.push(fiveHour)
-    const sevenDay = usageMetric('Week', data.seven_day)
+    const sevenDay = usageMetric('Weekly', data.seven_day)
     if (sevenDay) metrics.push(sevenDay)
     const sevenDaySonnet = usageMetric('Sonnet', data.seven_day_sonnet)
     if (sevenDaySonnet) metrics.push(sevenDaySonnet)
-    if (data.extra_usage?.is_enabled) {
-      const monthlyLimit = data.extra_usage.monthly_limit
-      metrics.push({
-        label: 'Extra',
-        used: finite(data.extra_usage.used_credits) / 100,
-        limit: typeof monthlyLimit === 'number' && Number.isFinite(monthlyLimit) ? monthlyLimit / 100 : null,
-        format: { kind: 'dollars', currency: data.extra_usage.currency ?? 'USD' },
-      })
+    if (boolValue(data.extra_usage?.is_enabled)) {
+      const usedCredits = numberValue(data.extra_usage?.used_credits)
+      const monthlyLimit = numberValue(data.extra_usage?.monthly_limit)
+      if (usedCredits !== undefined && (usedCredits > 0 || (monthlyLimit !== undefined && monthlyLimit > 0))) {
+        metrics.push({
+          label: 'Extra',
+          used: finite(usedCredits) / 100,
+          limit: monthlyLimit !== undefined && monthlyLimit > 0 ? monthlyLimit / 100 : null,
+          format: { kind: 'dollars', currency: data.extra_usage?.currency ?? 'USD' },
+        })
+      }
     }
 
     return { plan, metrics, error: null, ...identityFields(identity) }
