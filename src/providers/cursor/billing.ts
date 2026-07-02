@@ -5,7 +5,9 @@ import { resetIn } from '../../format'
 import { envDir } from '../../config'
 import { readJson } from '../../http'
 import type { Account, BillingResult, Metric } from '../types'
-import { dollars, finite, finiteNumber, percentMetric } from '../_shared/metric'
+import { identityFields } from '../_shared/identity'
+import { decodeBase64UrlJson } from '../_shared/jwt'
+import { dollars, finite, numberValue, percentMetric } from '../_shared/metric'
 import { msToIso } from '../_shared/time'
 import { cursorActivity } from './activity'
 import { cursorModelSpend } from './composer'
@@ -84,25 +86,6 @@ function cleanStoredString(value: string | null): string | undefined {
   return trimmed || undefined
 }
 
-function numberValue(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim()) {
-    const n = Number(value)
-    if (Number.isFinite(n)) return n
-  }
-  return undefined
-}
-
-function decodeBase64UrlJson(segment: string): any | null {
-  try {
-    const normalized = segment.replace(/-/g, '+').replace(/_/g, '/')
-    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4)
-    return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'))
-  } catch {
-    return null
-  }
-}
-
 function cursorSessionToken(accessToken: string): string | null {
   const payload = accessToken.includes('.') ? decodeBase64UrlJson(accessToken.split('.')[1]) : null
   const subject = typeof payload?.sub === 'string' ? payload.sub : null
@@ -110,13 +93,6 @@ function cursorSessionToken(accessToken: string): string | null {
   const parts = subject.split('|')
   const userId = (parts.length > 1 ? parts[1] : parts[0]).trim()
   return userId ? `${userId}%3A%3A${accessToken}` : null
-}
-
-function identityFields(email: string | undefined, displayName?: string): Pick<BillingResult, 'email' | 'displayName'> {
-  return {
-    email: email ?? null,
-    displayName: displayName ?? null,
-  }
 }
 
 async function connectPost(url: string, token: string): Promise<any | null> {
@@ -179,10 +155,10 @@ function appendCredits(metrics: Metric[], creditGrants: CreditGrantsResponse | n
   metrics.push({ label: 'Credits', used: dollars(Math.max(0, total - (hasValidGrants ? grantUsed : 0))), limit: null, format: { kind: 'dollars' } })
 }
 
-export async function cursorBilling(account: Account): Promise<BillingResult> {
+export async function cursorBilling(account: Account, tz: string): Promise<BillingResult> {
   const [core, activity, spend] = await Promise.all([
     cursorBillingCore(account),
-    cursorActivity(account.homeDir),
+    cursorActivity(tz, account.homeDir),
     cursorModelSpend(account.homeDir),
   ])
   let merged = activity
@@ -216,7 +192,7 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
 
   if (!token) {
     const error = tokenRes.status === 'ok' ? 'Not signed in — open Cursor' : sqliteStatusMessage(tokenRes.status)
-    return { plan: planFallback, metrics: [], error, ...identityFields(email, displayName) }
+    return { plan: planFallback, metrics: [], error, ...identityFields({ email, displayName }) }
   }
 
   const [usage, planInfo, creditGrants, stripe] = await Promise.all([
@@ -227,7 +203,7 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
   ])
   if (!usage || usage.__status) {
     const expired = usage?.__status === 401 || usage?.__status === 403
-    return { plan: planFallback, metrics: [], error: expired ? 'Token expired — re-open Cursor' : 'Cursor API error', ...identityFields(email, displayName) }
+    return { plan: planFallback, metrics: [], error: expired ? 'Token expired — re-open Cursor' : 'Cursor API error', ...identityFields({ email, displayName }) }
   }
 
   const planName = planInfo?.planInfo?.planName ?? planFallback
@@ -240,8 +216,6 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
   const endMs = numberValue(rawEnd) ?? NaN
   const iso = msToIso(endMs)
   const resets = iso && endMs > 0 ? resetIn(iso) : null
-
-  appendCredits(metrics, creditGrants, stripe)
 
   const limit = numberValue(pu.limit)
   const planUsedCents = numberValue(pu.totalSpend)
@@ -307,8 +281,11 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
     }
   }
 
+  // Credits render after the plan metrics so the primary 'Usage' metric stays the headline.
+  appendCredits(metrics, creditGrants, stripe)
+
   if (metrics.length === 0) {
-    return { plan, metrics: [], error: usage.enabled === false ? 'No active subscription' : 'No usage data', ...identityFields(email, displayName) }
+    return { plan, metrics: [], error: usage.enabled === false ? 'No active subscription' : 'No usage data', ...identityFields({ email, displayName }) }
   }
-  return { plan, metrics, error: null, ...identityFields(email, displayName) }
+  return { plan, metrics, error: null, ...identityFields({ email, displayName }) }
 }

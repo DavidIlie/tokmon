@@ -6,7 +6,7 @@ import { envDir } from '../../config'
 import { readJson } from '../../http'
 import type { Account, BillingResult, Metric } from '../types'
 import { readMacKeychainRaw, unwrapGoKeyringBase64 } from '../_shared/keychain'
-import { onPath } from '../detect'
+import { numberValue } from '../_shared/metric'
 const USAGE_URL = 'https://api.github.com/copilot_internal/user'
 const GH_KEYCHAIN_SERVICE = 'gh:github.com'
 
@@ -63,12 +63,23 @@ export function ghHostsPath(homeDir?: string): string {
   return join(ghConfigDir(homeDir), 'hosts.yml')
 }
 
+// gh being installed (or even authenticated) only means "GitHub user" — require
+// Copilot-specific state so non-Copilot developers don't get a spurious card.
 export async function detectCopilot(homeDir?: string): Promise<boolean> {
-  try {
-    await access(ghHostsPath(homeDir))
-    return true
-  } catch {}
-  return onPath(['gh'])
+  const home = homeDir ?? homedir()
+  const candidates = [
+    join(home, '.config', 'github-copilot'),
+    join(home, '.copilot'),
+    join(vscodeUserDir(homeDir), 'globalStorage', 'github.copilot'),
+    join(vscodeUserDir(homeDir), 'globalStorage', 'github.copilot-chat'),
+  ]
+  if (process.platform === 'win32') {
+    candidates.push(join(envDir('LOCALAPPDATA') ?? join(home, 'AppData', 'Local'), 'github-copilot'))
+  }
+  for (const path of candidates) {
+    try { await access(path); return true } catch {}
+  }
+  return false
 }
 
 function unquoteYamlValue(value: string): string {
@@ -172,9 +183,11 @@ async function loadTokenFromVsCode(homeDir?: string): Promise<TokenSource | null
 }
 
 async function loadToken(homeDir?: string): Promise<TokenSource | null> {
+  // The gh keychain item is a single machine-wide slot for the default GitHub
+  // login — never attribute it to a custom-home (alt) account.
   return (
     await loadTokenFromHosts(homeDir) ||
-    await loadTokenFromGhKeychain() ||
+    (homeDir ? null : await loadTokenFromGhKeychain()) ||
     await loadTokenFromVsCode(homeDir)
   )
 }
@@ -185,15 +198,6 @@ function redactToken(token: string): string {
 
 function resetDate(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? resetIn(value) : null
-}
-
-function numberValue(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim()) {
-    const n = Number(value)
-    if (Number.isFinite(n)) return n
-  }
-  return undefined
 }
 
 function boolValue(value: unknown): boolean | undefined {

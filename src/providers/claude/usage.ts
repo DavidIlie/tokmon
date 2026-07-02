@@ -14,6 +14,7 @@ const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> 
   'claude-opus-4': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
   'claude-3-opus': { i: 15e-6, o: 75e-6, cc: 18.75e-6, cr: 1.5e-6 },
   'claude-sonnet-4': { i: 3e-6, o: 15e-6, cc: 3.75e-6, cr: 3e-7 },
+  'claude-sonnet-5': { i: 3e-6, o: 15e-6, cc: 3.75e-6, cr: 3e-7 },
   'claude-haiku-4': { i: 1e-6, o: 5e-6, cc: 1.25e-6, cr: 1e-7 },
   'claude-fable-5': { i: 10e-6, o: 50e-6, cc: 12.5e-6, cr: 1e-6 },
 }

@@ -5,7 +5,7 @@ import { shortModel } from '../lib/colors'
 import { Sparkline } from './ui/primitives'
 import { Watermark } from './watermark'
 
-const scopeLabel = (p: string) => (p === 'all time' ? 'all time' : `last ${p}`)
+const scopeLabel = (p: string) => `last ${p}`
 
 export interface SummaryOpts {
   glow: boolean

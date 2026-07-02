@@ -81,8 +81,18 @@ export function installSignals(id: ProviderId): boolean {
       return onPath(['pi'])
     case 'opencode':
       return onPath(['opencode'])
-    case 'copilot':
-      return onPath(['gh'])
+    case 'copilot': {
+      // `gh` on PATH only means "GitHub user" — require Copilot-specific state
+      // (IDE plugin config dir, standalone Copilot CLI dir, or gh-copilot extension).
+      const appData = process.env.APPDATA
+      return [
+        join(home, '.config', 'github-copilot'),
+        join(home, '.copilot'),
+        lad && join(lad, 'github-copilot'),
+        appData && join(appData, 'GitHub Copilot'),
+        join(home, '.local', 'share', 'gh', 'extensions', 'gh-copilot'),
+      ].some(p => !!p && existsSync(p))
+    }
     case 'antigravity':
       return onPath(['antigravity']) || anyExists([
         '/Applications/Antigravity.app', join(home, 'Applications', 'Antigravity.app'),

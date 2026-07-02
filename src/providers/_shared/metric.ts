@@ -19,6 +19,15 @@ export function finitePositiveCoerced(value: unknown): number {
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
+export function numberValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const n = Number(value)
+    if (Number.isFinite(n)) return n
+  }
+  return undefined
+}
+
 export function percentMetric(label: string, used: number, resetsAt: string | null, primary?: boolean): Metric {
   return {
     label,

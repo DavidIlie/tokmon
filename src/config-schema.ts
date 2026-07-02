@@ -176,13 +176,15 @@ export function normalizeConfig(parsed: Record<string, unknown>): Config {
     const accounts: Account[] = (Array.isArray(parsed.accounts) ? parsed.accounts : [])
       .map((a: Account) => ({ ...a, providerId: a.providerId ?? 'claude' }))
       .filter((a: Account) => typeof a?.id === 'string' && typeof a?.name === 'string' && PROVIDER_IDS.includes(a.providerId))
+      // homeDir must survive normalization as a string — the daemon's AccountSchema requires it.
+      .map((a: Account) => ({ ...a, homeDir: typeof a.homeDir === 'string' && a.homeDir.trim() ? a.homeDir : '~' }))
     return {
       ...DEFAULTS,
       interval: clampNum(parsed.interval, DEFAULTS.interval, 1),
       billingInterval: clampNum(parsed.billingInterval, DEFAULTS.billingInterval, 1),
       clearScreen: typeof parsed.clearScreen === 'boolean' ? parsed.clearScreen : DEFAULTS.clearScreen,
       timezone: typeof parsed.timezone === 'string' && parsed.timezone.trim() && isValidTimezone(parsed.timezone.trim())
-        ? parsed.timezone
+        ? parsed.timezone.trim()
         : null,
       accounts,
       activeAccountId: typeof parsed.activeAccountId === 'string' ? parsed.activeAccountId : null,

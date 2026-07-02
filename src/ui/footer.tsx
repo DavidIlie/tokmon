@@ -14,6 +14,13 @@ export const Footer = memo(function Footer({ hasAccounts, paginated, cols }: { h
   const showOpt = IS_APPLE_TERMINAL && inner >= BASE + OPT
   const showJump = hasAccounts && inner >= BASE + (showOpt ? OPT : 0) + JUMP + (paginated ? PAGE : 0)
   const showPage = paginated && inner >= BASE + (showOpt ? OPT : 0) + (showJump ? JUMP : 0) + PAGE
+  if (inner < BASE) {
+    return (
+      <Box marginTop={1} flexWrap="nowrap">
+        <Text dimColor wrap="truncate-end">O=repo  W=web  s=settings  q=quit</Text>
+      </Box>
+    )
+  }
   return (
     <Box marginTop={1} flexWrap="nowrap">
       <Text dimColor>by </Text>

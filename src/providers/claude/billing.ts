@@ -5,8 +5,10 @@ import { resetIn } from '../../format'
 import { readJson } from '../../http'
 import { expandHome } from '../../config'
 import type { Account, BillingResult, Metric } from '../types'
-import { finite, percentMetric } from '../_shared/metric'
+import { identityFields } from '../_shared/identity'
+import { finite, numberValue, percentMetric } from '../_shared/metric'
 import { readMacKeychainRaw } from '../_shared/keychain'
+import { readClaudeIdentity } from './identity'
 import { claudeConfigDirs } from './usage'
 
 interface OAuthResponse {
@@ -25,53 +27,7 @@ interface ClaudeAuth {
   token: string
   subscriptionType?: string
   rateLimitTier?: string
-}
-
-interface ClaudeIdentity {
-  email?: string
-  displayName?: string
-  plan?: string
-}
-
-function titleWords(value: string): string {
-  return value
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(' ')
-}
-
-function claudeOrgPlanLabel(orgType: unknown): string | null {
-  if (typeof orgType !== 'string' || !orgType.trim()) return null
-  const normalized = orgType.trim().toLowerCase()
-  const stripped = normalized.startsWith('claude_') ? normalized.slice('claude_'.length) : normalized
-  const label = titleWords(stripped)
-  return label ? `Claude ${label}` : null
-}
-
-async function readClaudeIdentity(homeDir?: string): Promise<ClaudeIdentity> {
-  const base = homeDir ? expandHome(homeDir) : homedir()
-  try {
-    const parsed = JSON.parse(await readFile(join(base, '.claude.json'), 'utf-8'))
-    const oauth = parsed?.oauthAccount
-    const email = typeof oauth?.emailAddress === 'string' && oauth.emailAddress.trim()
-      ? oauth.emailAddress.trim()
-      : undefined
-    const displayName = typeof oauth?.displayName === 'string' && oauth.displayName.trim()
-      ? oauth.displayName.trim()
-      : undefined
-    const plan = claudeOrgPlanLabel(parsed?.organizationType)
-    return { email, displayName, plan: plan ?? undefined }
-  } catch {
-    return {}
-  }
-}
-
-function identityFields(identity: ClaudeIdentity): Pick<BillingResult, 'email' | 'displayName'> {
-  return {
-    email: identity.email ?? null,
-    displayName: identity.displayName ?? null,
-  }
+  expiresAt?: number
 }
 
 function parseAuth(raw: string): ClaudeAuth | null {
@@ -84,6 +40,7 @@ function parseAuth(raw: string): ClaudeAuth | null {
       token,
       subscriptionType: typeof o.subscriptionType === 'string' ? o.subscriptionType : undefined,
       rateLimitTier: typeof o.rateLimitTier === 'string' ? o.rateLimitTier : undefined,
+      expiresAt: typeof o.expiresAt === 'number' && Number.isFinite(o.expiresAt) ? o.expiresAt : undefined,
     }
   } catch {
     return null
@@ -105,22 +62,91 @@ async function readMacKeychain(): Promise<ClaudeAuth | null> {
   return raw ? parseAuth(raw) : null
 }
 
-async function getAuth(homeDir?: string): Promise<ClaudeAuth | null> {
+interface AuthCandidate {
+  auth: ClaudeAuth
+  // The keychain item is a single machine-wide slot shared by every Claude Code
+  // instance, so a keychain token may belong to a different account than the
+  // one being polled; file creds live inside the account's own home dir.
+  shared: boolean
+}
+
+async function authCandidates(homeDir?: string): Promise<AuthCandidate[]> {
   const expandedHomeDir = homeDir ? expandHome(homeDir) : undefined
   const isDefault = !expandedHomeDir || expandedHomeDir === homedir()
-  // macOS default account: keychain ("Claude Code-credentials") first; custom-homeDir accounts use .credentials.json first.
-  if (isDefault) {
-    if (process.platform === 'darwin') {
-      const auth = await readMacKeychain()
-      if (auth) return auth
+  const out: AuthCandidate[] = []
+  const file = await readCredentialsFile(isDefault ? undefined : expandedHomeDir)
+  const keychain = process.platform === 'darwin' ? await readMacKeychain() : null
+  // Default account: keychain first (Claude Code keeps it fresher than the file); alt accounts: own file first.
+  const ordered = isDefault
+    ? [keychain && { auth: keychain, shared: true }, file && { auth: file, shared: false }]
+    : [file && { auth: file, shared: false }, keychain && { auth: keychain, shared: true }]
+  for (const c of ordered) if (c) out.push(c)
+  return out
+}
+
+interface TokenIdentity {
+  accountUuid: string
+  email: string | null
+}
+
+// A token's binding to its account never changes, so cache verdicts for the process lifetime.
+const tokenIdentityCache = new Map<string, TokenIdentity | null>()
+
+async function tokenIdentity(token: string): Promise<TokenIdentity | null | undefined> {
+  if (tokenIdentityCache.has(token)) return tokenIdentityCache.get(token)
+  try {
+    const res = await fetch('https://api.anthropic.com/api/oauth/profile', {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'anthropic-beta': 'oauth-2025-04-20',
+        'User-Agent': 'tokmon',
+      },
+      signal: AbortSignal.timeout(10000),
+    })
+    if (res.status === 401 || res.status === 403) {
+      tokenIdentityCache.set(token, null)
+      return null
     }
-    return readCredentialsFile(undefined)
+    if (!res.ok) return undefined // transient — do not cache
+    const data = await readJson<{ account?: { uuid?: unknown; email?: unknown } }>(res)
+    const uuid = data?.account?.uuid
+    if (typeof uuid !== 'string' || !uuid) return undefined
+    const identity: TokenIdentity = {
+      accountUuid: uuid,
+      email: typeof data?.account?.email === 'string' ? data.account.email : null,
+    }
+    if (tokenIdentityCache.size > 64) tokenIdentityCache.clear()
+    tokenIdentityCache.set(token, identity)
+    return identity
+  } catch {
+    return undefined // transient — do not cache
   }
-  // Non-default: file first, but fall back to keychain — Claude Code sometimes stores creds only there even for custom dirs.
-  const fileAuth = await readCredentialsFile(expandedHomeDir)
-  if (fileAuth) return fileAuth
-  if (process.platform === 'darwin') return readMacKeychain()
-  return null
+}
+
+interface ResolvedAuth {
+  auth: ClaudeAuth | null
+  // Set when every available credential belongs to a different account than this one.
+  wrongAccountEmail?: string | null
+  expired?: boolean
+}
+
+async function getAuth(homeDir: string | undefined, expectedUuid: string | undefined): Promise<ResolvedAuth> {
+  const candidates = await authCandidates(homeDir)
+  let wrongAccountEmail: string | null | undefined
+  let sawExpired = false
+  for (const { auth, shared } of candidates) {
+    if (auth.expiresAt !== undefined && auth.expiresAt < Date.now() - 60_000) { sawExpired = true; continue }
+    // Account-scoped file creds are trusted as-is; the shared keychain slot must
+    // prove it holds THIS account's token before we attribute its data here.
+    if (!shared || !expectedUuid) return { auth }
+    const identity = await tokenIdentity(auth.token)
+    if (identity === undefined) return { auth } // verification unavailable — keep old behavior
+    if (identity === null) continue // dead token
+    if (identity.accountUuid === expectedUuid) return { auth }
+    wrongAccountEmail = identity.email
+  }
+  if (wrongAccountEmail !== undefined) return { auth: null, wrongAccountEmail }
+  return { auth: null, expired: sawExpired }
 }
 
 function planLabel(auth: ClaudeAuth): string | null {
@@ -133,15 +159,6 @@ function planLabel(auth: ClaudeAuth): string | null {
 
 const pct = (used: number, resets?: string | null, primary?: boolean): Metric =>
   percentMetric('', used, resets ?? null, primary)
-
-function numberValue(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim()) {
-    const n = Number(value)
-    if (Number.isFinite(n)) return n
-  }
-  return undefined
-}
 
 function boolValue(value: unknown): boolean {
   if (typeof value === 'boolean') return value
@@ -165,11 +182,16 @@ function usageMetric(label: string, window: { utilization?: unknown; resets_at?:
 }
 
 export async function claudeBilling(account: Account): Promise<BillingResult> {
-  const [auth, identity] = await Promise.all([
-    getAuth(account.homeDir),
-    readClaudeIdentity(account.homeDir),
-  ])
-  if (!auth) return { plan: identity.plan ?? null, metrics: [], error: 'No OAuth token — run claude and log in', ...identityFields(identity) }
+  const identity = readClaudeIdentity(account.homeDir)
+  const { auth, wrongAccountEmail, expired } = await getAuth(account.homeDir, identity.accountUuid)
+  if (!auth) {
+    const error = wrongAccountEmail !== undefined
+      ? `Signed in as ${wrongAccountEmail ?? 'another account'} — run claude in this home to refresh`
+      : expired
+        ? 'Token expired — run claude to refresh'
+        : 'No OAuth token — run claude and log in'
+    return { plan: identity.plan ?? null, metrics: [], error, ...identityFields(identity) }
+  }
   const plan = identity.plan ?? planLabel(auth)
 
   try {
@@ -187,7 +209,7 @@ export async function claudeBilling(account: Account): Promise<BillingResult> {
       const retryText = retryAfter !== undefined ? ` — retry in ~${Math.ceil(retryAfter / 60)}m` : ' — retrying next poll'
       return { plan, metrics: [], error: `Rate limited${retryText}`, ...identityFields(identity) }
     }
-    if (res.status === 401) return { plan, metrics: [], error: 'Token expired — restart Claude Code', ...identityFields(identity) }
+    if (res.status === 401) return { plan, metrics: [], error: 'Token expired — run claude to refresh', ...identityFields(identity) }
     if (!res.ok) return { plan, metrics: [], error: `API ${res.status}`, ...identityFields(identity) }
 
     const data = await readJson<OAuthResponse>(res)

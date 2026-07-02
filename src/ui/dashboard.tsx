@@ -2,7 +2,7 @@ import { memo } from 'react'
 import { Box, Text } from 'ink'
 import * as fmt from '../format'
 import { PROVIDERS } from '../providers'
-import type { Account, Metric, ProviderId } from '../providers/types'
+import type { Account, BillingResult, Metric, ProviderId } from '../providers/types'
 import type { UsageSummary, DashboardData } from '../types'
 import type { AccountStats } from '../stats'
 import { Bar, sparkline, metricValueText, truncateName } from './shared'
@@ -26,9 +26,39 @@ export type GridLayout = {
   pageCount: number
 }
 
-export function chooseLayout(content: number, budget: number, n: number, single: boolean, cols: number): GridLayout {
+// Estimate each provider card's natural full-variant height so the layout can
+// budget for real content (cards grow with accounts × metrics) instead of the
+// fixed CARD_H, which clipped multi-account cards inside the overflow box.
+export function estimateCardHeights(
+  groups: { provider: ProviderId; accounts: Account[] }[],
+  stats: Map<string, AccountStats>,
+): number[] {
+  return groups.map(g => {
+    const meta = PROVIDERS[g.provider]
+    let h = 3 // borders + title row
+    if (meta.hasUsage) h += 5 // spacer + 3 summary rows + kpi line
+    if (meta.hasBilling) {
+      if (meta.hasUsage) h += 1 // rule
+      const multi = g.accounts.length > 1
+      g.accounts.forEach((a, i) => {
+        const metricRows = stats.get(a.id)?.billing?.metrics.length || 1
+        h += metricRows + (multi ? 1 : 0) + (multi && i > 0 ? 1 : 0) // name row + gap between accounts
+      })
+    }
+    h += 2 // spark/activity footer (rule + row)
+    return Math.max(h, CARD_H.mini)
+  })
+}
+
+export function chooseLayout(content: number, budget: number, n: number, single: boolean, cols: number, heights?: number[]): GridLayout {
   if (n <= 0) return { ncols: 1, variant: 'mini', cardsPerPage: 1, pageCount: 1 }
 
+  const heightFor = (variant: Variant): number => {
+    if (!heights || heights.length === 0) return CARD_H[variant]
+    if (variant === 'mini') return CARD_H.mini
+    const hs = heights.map(h => variant === 'full' ? h : Math.max(h - 2, CARD_H.mini - 2))
+    return Math.max(...hs)
+  }
   const gridHeight = (rows: number, H: number) => rows * H + Math.max(0, rows - 1)
 
   const colCap = single ? 1
@@ -40,10 +70,11 @@ export function chooseLayout(content: number, budget: number, n: number, single:
   const minWidthAt = (nc: number) => nc >= 3 ? MIN_CARD_DENSE : MIN_CARD
 
   for (const variant of VARIANT_ORDER) {
+    const H = heightFor(variant)
     for (let nc = maxCols; nc >= 1; nc--) {
       if (nc > 1 && cardWidthAt(nc) < minWidthAt(nc)) continue
       const rows = Math.ceil(n / nc)
-      if (gridHeight(rows, CARD_H[variant]) <= budget) {
+      if (gridHeight(rows, H) <= budget) {
         return { ncols: nc, variant, cardsPerPage: n, pageCount: 1 }
       }
     }
@@ -61,6 +92,27 @@ export function chooseLayout(content: number, budget: number, n: number, single:
   return { ncols, variant: 'mini', cardsPerPage, pageCount }
 }
 
+// Single source of truth for the dashboard grid — used by both the view and the
+// key-handling layer in app.tsx so page counts can't drift apart.
+export function computeDashLayout(
+  groups: { provider: ProviderId; accounts: Account[] }[],
+  stats: Map<string, AccountStats>,
+  cols: number,
+  budget: number,
+  focusId: string | null,
+  layoutPref: 'grid' | 'single',
+): GridLayout {
+  const content = Math.max(30, cols - 4)
+  const heights = estimateCardHeights(groups, stats)
+  const single = focusId !== null || layoutPref === 'single'
+  if (layoutPref === 'single' && focusId === null && groups.length > 1) {
+    // "Single" with All focus pages through providers one card at a time.
+    const one = chooseLayout(content, budget, 1, true, cols, [Math.max(...heights)])
+    return { ...one, cardsPerPage: 1, pageCount: groups.length }
+  }
+  return chooseLayout(content, budget, groups.length, single, cols, heights)
+}
+
 export const DashboardView = memo(function DashboardView({ groups, stats, cols, budget, focusId, layout, page = 0 }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
   stats: Map<string, AccountStats>
@@ -74,24 +126,20 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
     return <Text dimColor>No providers enabled {glyphs().emDash} press s to pick providers.</Text>
   }
 
-  let shown = groups
-  if (layout === 'single' && focusId === null) shown = groups.slice(0, 1)
-
-  const single = focusId !== null || layout === 'single'
-  const content = Math.max(MIN_CARD, cols - 4)
-  const { ncols, variant, cardsPerPage, pageCount } = chooseLayout(content, budget, shown.length, single, cols)
+  const content = Math.max(30, cols - 4)
+  const { ncols, variant, cardsPerPage, pageCount } = computeDashLayout(groups, stats, cols, budget, focusId, layout)
 
   let cardW = ncols <= 1 ? content : Math.floor((content - GAP * (ncols - 1)) / ncols)
   if (ncols === 1 && cardW > MAX_SINGLE_CARD) cardW = MAX_SINGLE_CARD
 
   const pg = pageCount > 1 ? ((page % pageCount) + pageCount) % pageCount : 0
   const visible = pageCount > 1
-    ? shown.slice(pg * cardsPerPage, pg * cardsPerPage + cardsPerPage)
-    : shown
+    ? groups.slice(pg * cardsPerPage, pg * cardsPerPage + cardsPerPage)
+    : groups
 
   return (
     <Box height={budget} flexDirection="column" overflow="hidden">
-      <Box width={content} flexWrap="wrap" columnGap={GAP} rowGap={1}>
+      <Box width={content} flexWrap="wrap" columnGap={GAP} rowGap={1} alignItems="flex-start">
         {visible.map(g => (
           <Box key={g.provider} flexShrink={0}>
             <ProviderCard provider={g.provider} accounts={g.accounts} stats={stats} width={cardW} variant={variant} />
@@ -119,7 +167,6 @@ function ProviderCard({ provider, accounts, stats, width, variant }: {
   const plan = items.map(i => i.s?.billing?.plan).find(Boolean) ?? null
   const activity = items.map(i => i.s?.billing?.activity).find(Boolean) ?? null
   const inner = width - 4
-  const barW = Math.max(10, Math.min(46, inner - 20))
   const hasSpark = !!agg && agg.series.some(v => v > 0)
   const showBars = variant !== 'mini'
   const showSpark = variant === 'full'
@@ -150,7 +197,7 @@ function ProviderCard({ provider, accounts, stats, width, variant }: {
       {meta.hasBilling && showBars && (
         <>
           {meta.hasUsage && <Rule inner={inner} />}
-          <LimitsBlock items={items} barW={barW} />
+          <LimitsBlock items={items} inner={inner} />
         </>
       )}
       {meta.hasBilling && !showBars && !meta.hasUsage && (
@@ -182,7 +229,7 @@ function CompactBilling({ items }: { items: Item[] }) {
   const billing = items.map(i => i.s?.billing).find(Boolean)
   if (!billing) return <Text dimColor>Fetching{glyphs().ellipsis}</Text>
   if (billing.error) return <Text color="red">{billing.error}</Text>
-  const m = billing.metrics[0]
+  const m = billing.metrics.find(x => x.primary) ?? billing.metrics[0]
   if (!m) return <Text dimColor>No data</Text>
   return <Text bold color="yellow">{metricValueText(m)}</Text>
 }
@@ -218,8 +265,17 @@ function KpiLine({ agg }: { agg: DashboardData }) {
   )
 }
 
-function LimitsBlock({ items, barW }: { items: Item[]; barW: number }) {
+function accountTitle(account: Account, billing: BillingResult | null | undefined): string {
+  const email = billing?.email
+  return email && !account.name.includes('@') ? `${account.name} ${email}` : account.name
+}
+
+function LimitsBlock({ items, inner }: { items: Item[]; inner: number }) {
   const showName = items.length > 1
+  // Shared label gutter so values/bars align across every metric row in the card.
+  const labels = items.flatMap(i => i.s?.billing?.metrics ?? []).map(m => m.label.length)
+  const labelW = Math.min(Math.max(7, ...labels) + 1, 14)
+  const barW = Math.max(10, Math.min(46, inner - labelW - 13))
   return (
     <Box flexDirection="column">
       {items.map(({ account, s }, idx) => {
@@ -227,16 +283,16 @@ function LimitsBlock({ items, barW }: { items: Item[]; barW: number }) {
         return (
           <Box key={account.id} flexDirection="column" marginTop={showName && idx > 0 ? 1 : 0}>
             {showName && (
-              <Box><Text color={account.color}>{glyphs().dot} </Text><Text bold>{truncateName(account.name, 22)}</Text></Box>
+              <Box><Text color={account.color}>{glyphs().dot} </Text><Text bold>{truncateName(accountTitle(account, billing), Math.max(22, inner - 2))}</Text></Box>
             )}
             {!billing ? (
               <Text dimColor>Fetching{glyphs().ellipsis}</Text>
             ) : billing.error ? (
-              <Text color="red">{billing.error}</Text>
+              <Text color="red" wrap="truncate-end">{billing.error}</Text>
             ) : billing.metrics.length === 0 ? (
               <Text dimColor>No data</Text>
             ) : (
-              billing.metrics.map((m, i) => <MetricRow key={`${m.label}${i}`} m={m} color={account.color} barW={barW} />)
+              billing.metrics.map((m, i) => <MetricRow key={`${m.label}${i}`} m={m} color={account.color} barW={barW} labelW={labelW} />)
             )}
           </Box>
         )
@@ -245,12 +301,12 @@ function LimitsBlock({ items, barW }: { items: Item[]; barW: number }) {
   )
 }
 
-function MetricRow({ m, color, barW }: { m: Metric; color: string; barW: number }) {
+function MetricRow({ m, color, barW, labelW }: { m: Metric; color: string; barW: number; labelW: number }) {
   if (m.format.kind === 'percent') {
     const barColor = m.used >= 90 ? 'red' : m.used >= 75 ? 'yellow' : color
     return (
       <Box>
-        <Box width={7}><Text dimColor wrap="truncate">{m.label}</Text></Box>
+        <Box width={labelW} flexShrink={0}><Text dimColor wrap="truncate">{m.label}</Text></Box>
         <Bar pct={m.used} color={barColor} width={barW} />
         <Box width={5} justifyContent="flex-end"><Text bold>{Math.round(m.used)}%</Text></Box>
         <Box width={8} justifyContent="flex-end">
@@ -261,7 +317,7 @@ function MetricRow({ m, color, barW }: { m: Metric; color: string; barW: number 
   }
   return (
     <Box>
-      <Box width={7}><Text dimColor wrap="truncate">{m.label}</Text></Box>
+      <Box width={labelW} flexShrink={0}><Text dimColor wrap="truncate">{m.label}</Text></Box>
       <Text bold color="yellow">{metricValueText(m)}</Text>
     </Box>
   )

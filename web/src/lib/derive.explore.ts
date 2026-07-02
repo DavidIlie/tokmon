@@ -15,7 +15,7 @@ export function exploreRows(snap: WebSnapshot | null, f: Filters, gran: Granular
   if (!snap) return []
   const accounts = selectAccounts(snap, f)
   const latest = latestDayOf(accounts)
-  const dailyCut = granRangeStart(f.period, gran, latest)
+  const dailyCut = granRangeStart(f.period, gran, latest, snap.tz)
   const cutoff = !dailyCut ? null
     : gran === 'monthly' ? dailyCut.slice(0, 7)
       : gran === 'weekly' ? weekStartStr(dailyCut)

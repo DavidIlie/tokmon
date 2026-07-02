@@ -5,7 +5,9 @@ import { join } from 'node:path'
 import { resetIn } from '../../format'
 import { readJson } from '../../http'
 import type { Account, BillingResult, Metric } from '../types'
-import { percentMetric } from '../_shared/metric'
+import { identityFields } from '../_shared/identity'
+import { identityFromIdToken } from '../_shared/jwt'
+import { numberValue, percentMetric } from '../_shared/metric'
 import { msToIso } from '../_shared/time'
 import { readMacKeychainRaw } from '../_shared/keychain'
 import { codexHomes } from './usage'
@@ -20,16 +22,6 @@ interface CodexAuth {
   email?: string
   displayName?: string
   plan?: string
-}
-
-function decodeBase64UrlJson(segment: string): any | null {
-  try {
-    const normalized = segment.replace(/-/g, '+').replace(/_/g, '/')
-    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4)
-    return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'))
-  } catch {
-    return null
-  }
 }
 
 function chatGptPlanLabel(planType: unknown): string | null {
@@ -47,25 +39,11 @@ function chatGptPlanLabel(planType: unknown): string | null {
   return `ChatGPT ${p.charAt(0).toUpperCase()}${p.slice(1)}`
 }
 
-function identityFromIdToken(idToken: unknown): Pick<CodexAuth, 'email' | 'displayName' | 'plan'> {
-  if (typeof idToken !== 'string' || !idToken.includes('.')) return {}
-  const payload = decodeBase64UrlJson(idToken.split('.')[1])
-  if (!payload || typeof payload !== 'object') return {}
-  const email = typeof payload.email === 'string' && payload.email.trim() ? payload.email.trim() : undefined
-  const displayName = typeof payload.name === 'string' && payload.name.trim()
-    ? payload.name.trim()
-    : typeof payload.given_name === 'string' && payload.given_name.trim()
-      ? payload.given_name.trim()
-      : undefined
+function codexIdentity(idToken: unknown): Pick<CodexAuth, 'email' | 'displayName' | 'plan'> {
+  const { email, displayName, payload } = identityFromIdToken(idToken)
+  if (!payload) return {}
   const plan = chatGptPlanLabel(payload['https://api.openai.com/auth']?.chatgpt_plan_type)
   return { email, displayName, plan: plan ?? undefined }
-}
-
-function identityFields(auth: CodexAuth | null): Pick<BillingResult, 'email' | 'displayName'> {
-  return {
-    email: auth?.email ?? null,
-    displayName: auth?.displayName ?? null,
-  }
 }
 
 async function readAuthFile(home: string): Promise<CodexAuth | null> {
@@ -74,7 +52,7 @@ async function readAuthFile(home: string): Promise<CodexAuth | null> {
     const auth = JSON.parse(raw)
     const accessToken = auth?.tokens?.access_token
     if (!accessToken) return null
-    return { accessToken, accountId: auth?.tokens?.account_id, ...identityFromIdToken(auth?.tokens?.id_token) }
+    return { accessToken, accountId: auth?.tokens?.account_id, ...codexIdentity(auth?.tokens?.id_token) }
   } catch {
     return null
   }
@@ -87,7 +65,7 @@ async function readKeychainAuth(): Promise<CodexAuth | null> {
     const auth = JSON.parse(raw)
     const accessToken = auth?.tokens?.access_token
     if (!accessToken) return null
-    return { accessToken, accountId: auth?.tokens?.account_id, ...identityFromIdToken(auth?.tokens?.id_token) }
+    return { accessToken, accountId: auth?.tokens?.account_id, ...codexIdentity(auth?.tokens?.id_token) }
   } catch {
     return null
   }
@@ -98,7 +76,9 @@ async function getAuth(homeDir?: string): Promise<CodexAuth | null> {
     const auth = await readAuthFile(home)
     if (auth) return auth
   }
-  if (process.platform === 'darwin') return readKeychainAuth()
+  // The keychain "Codex Auth" item is a single machine-wide slot that belongs to
+  // the default account — never attribute it to a custom-home (alt) account.
+  if (!homeDir && process.platform === 'darwin') return readKeychainAuth()
   return null
 }
 
@@ -108,15 +88,6 @@ function planLabel(planType: unknown): string | null {
   if (p === 'prolite') return 'Pro 5x'
   if (p === 'pro') return 'Pro 20x'
   return planType.charAt(0).toUpperCase() + planType.slice(1)
-}
-
-function numberValue(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim()) {
-    const n = Number(value)
-    if (Number.isFinite(n)) return n
-  }
-  return undefined
 }
 
 function resetDateMs(window: any): number | null {
@@ -141,10 +112,17 @@ function resetFrom(window: any): string | null {
   return iso ? resetIn(iso) : null
 }
 
+function windowSeconds(window: any): number | undefined {
+  const seconds = numberValue(window?.limit_window_seconds ?? window?.period_seconds ?? window?.window_seconds)
+  if (seconds !== undefined) return seconds
+  const minutes = numberValue(window?.limit_window_minutes ?? window?.window_minutes ?? window?.period_minutes)
+  return minutes === undefined ? undefined : minutes * 60
+}
+
 function normalizedUsedPercent(window: any, percent: unknown): number | undefined {
   const used = numberValue(percent)
   if (used === undefined) return undefined
-  const periodSeconds = numberValue(window?.limit_window_seconds ?? window?.period_seconds ?? window?.window_seconds)
+  const periodSeconds = windowSeconds(window)
   const resetMs = resetDateMs(window)
   if (periodSeconds && resetMs) {
     const elapsedMs = periodSeconds * 1000 - Math.max(0, resetMs - Date.now())
@@ -156,7 +134,7 @@ function normalizedUsedPercent(window: any, percent: unknown): number | undefine
 function metricLabelForAdditional(window: any): string | null {
   const name = String(window?.limit_name ?? window?.name ?? window?.metered_feature ?? window?.feature ?? '').toLowerCase()
   if (!name.includes('spark')) return null
-  const seconds = numberValue(window?.limit_window_seconds ?? window?.period_seconds ?? window?.window_seconds)
+  const seconds = windowSeconds(window)
   return name.includes('week') || (seconds !== undefined && seconds >= 6 * 24 * 60 * 60) ? 'Spark Weekly' : 'Spark'
 }
 
@@ -188,7 +166,7 @@ function appendWindowMetrics(metrics: Metric[], rl: any, headerPct?: (name: stri
 function appendCredits(metrics: Metric[], source: any): void {
   const balance = numberValue(source?.credits?.balance ?? source?.credit_balance)
   if (balance !== undefined && balance >= 0) {
-    metrics.push({ label: 'Credits', used: Math.floor(balance) * CREDIT_USD_RATE, limit: null, format: { kind: 'dollars' } })
+    metrics.push({ label: 'Credits', used: balance * CREDIT_USD_RATE, limit: null, format: { kind: 'dollars' } })
   }
 }
 
@@ -235,10 +213,11 @@ async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {
     appendWindowMetrics(metrics, data.rate_limit ?? data, headerPct)
     appendCredits(metrics, data)
 
-    const resetCredits = await fetchResetCredits(headers)
-      ?? numberValue(data?.rate_limit_reset_credits?.available_count ?? data?.rate_limit_reset_credits?.available)
+    // Prefer the value already in the usage response; only pay for a second round-trip when absent.
+    const resetCredits = numberValue(data?.rate_limit_reset_credits?.available_count ?? data?.rate_limit_reset_credits?.available)
+      ?? await fetchResetCredits(headers)
     if (resetCredits !== undefined && resetCredits >= 0) {
-      metrics.push({ label: 'Rate Limit Resets', used: resetCredits, limit: null, format: { kind: 'count', suffix: 'available' } })
+      metrics.push({ label: 'Resets', used: resetCredits, limit: null, format: { kind: 'count', suffix: 'available' } })
     }
 
     if (metrics.length === 0) return null
@@ -248,8 +227,11 @@ async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {
   }
 }
 
-async function newestRolloutFile(homeDir?: string): Promise<string | null> {
-  let best: { path: string; mtime: number } | null = null
+const SNAPSHOT_CANDIDATES = 8
+const SNAPSHOT_STALE_MS = 24 * 3_600_000
+
+async function newestRolloutFiles(homeDir?: string): Promise<{ path: string; mtime: number }[]> {
+  const all: { path: string; mtime: number }[] = []
   for (const home of codexHomes(homeDir)) {
     const dir = join(home, 'sessions')
     let listing: string[]
@@ -259,16 +241,14 @@ async function newestRolloutFile(homeDir?: string): Promise<string | null> {
       const path = join(dir, f)
       try {
         const s = await fsStat(path)
-        if (!best || s.mtimeMs > best.mtime) best = { path, mtime: s.mtimeMs }
+        all.push({ path, mtime: s.mtimeMs })
       } catch {}
     }
   }
-  return best?.path ?? null
+  return all.sort((a, b) => b.mtime - a.mtime).slice(0, SNAPSHOT_CANDIDATES)
 }
 
-async function snapshotBilling(homeDir?: string, auth: CodexAuth | null = null): Promise<BillingResult | null> {
-  const path = await newestRolloutFile(homeDir)
-  if (!path) return null
+async function lastRateLimits(path: string): Promise<any | null> {
   let last: any = null
   try {
     const input = createReadStream(path)
@@ -284,17 +264,26 @@ async function snapshotBilling(homeDir?: string, auth: CodexAuth | null = null):
   } catch {
     return null
   }
-  if (!last) return null
+  return last
+}
 
-  const metrics: Metric[] = []
-  appendWindowMetrics(metrics, last.rate_limit ?? last)
-  appendCredits(metrics, last)
-  const resetCredits = numberValue(last?.rate_limit_reset_credits?.available_count ?? last?.rate_limit_reset_credits?.available)
-  if (resetCredits !== undefined && resetCredits >= 0) {
-    metrics.push({ label: 'Rate Limit Resets', used: resetCredits, limit: null, format: { kind: 'count', suffix: 'available' } })
+// A brand-new session file has no rate_limits yet, so walk newest-first until one does.
+async function snapshotBilling(homeDir?: string, auth: CodexAuth | null = null): Promise<(BillingResult & { asOfMs: number }) | null> {
+  for (const file of await newestRolloutFiles(homeDir)) {
+    const last = await lastRateLimits(file.path)
+    if (!last) continue
+
+    const metrics: Metric[] = []
+    appendWindowMetrics(metrics, last.rate_limit ?? last)
+    appendCredits(metrics, last)
+    const resetCredits = numberValue(last?.rate_limit_reset_credits?.available_count ?? last?.rate_limit_reset_credits?.available)
+    if (resetCredits !== undefined && resetCredits >= 0) {
+      metrics.push({ label: 'Resets', used: resetCredits, limit: null, format: { kind: 'count', suffix: 'available' } })
+    }
+    if (metrics.length === 0) continue
+    return { plan: auth?.plan ?? planLabel(last.plan_type), metrics, error: null, asOfMs: file.mtime, ...identityFields(auth) }
   }
-  if (metrics.length === 0) return null
-  return { plan: auth?.plan ?? planLabel(last.plan_type), metrics, error: null, ...identityFields(auth) }
+  return null
 }
 
 export async function codexBilling(account: Account): Promise<BillingResult> {
@@ -304,9 +293,14 @@ export async function codexBilling(account: Account): Promise<BillingResult> {
     if (live) return live
   }
   const snap = await snapshotBilling(account.homeDir, auth)
-  if (snap) return snap
+  // Serve offline snapshots while they're plausibly current; a day-old snapshot
+  // behind a failing live API is misinformation, not data.
+  if (snap && Date.now() - snap.asOfMs < SNAPSHOT_STALE_MS) {
+    const { asOfMs: _asOfMs, ...result } = snap
+    return result
+  }
   return {
-    plan: auth?.plan ?? null,
+    plan: auth?.plan ?? snap?.plan ?? null,
     metrics: [],
     error: auth ? 'Usage API failed — run codex to refresh' : 'Not logged in — run codex',
     ...identityFields(auth),

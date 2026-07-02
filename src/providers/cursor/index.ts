@@ -54,5 +54,5 @@ export const cursorProvider: Provider = {
   hasBilling: true,
   detect: (homeDir) => detectCursor(homeDir),
   fetchTable: (account, tz) => cursorTable(tz, account.homeDir),
-  fetchBilling: (account) => cursorBilling(account),
+  fetchBilling: (account, tz) => cursorBilling(account, tz),
 }

@@ -42,10 +42,10 @@ export async function fetchAccountTable(account: Account, tz: string): Promise<T
   return p.fetchTable(account, tz)
 }
 
-export async function fetchAccountBilling(account: Account): Promise<BillingResult | null> {
+export async function fetchAccountBilling(account: Account, tz: string): Promise<BillingResult | null> {
   const p = PROVIDERS[account.providerId]
   if (!p.fetchBilling) return null
-  return p.fetchBilling(account)
+  return p.fetchBilling(account, tz)
 }
 
 export function assembleSnapshot(opts: {

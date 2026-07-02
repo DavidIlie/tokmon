@@ -135,7 +135,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
           <div className="flex shrink-0 items-center gap-1.5">
             <span className="text-xs text-fg-faint">range:</span>
             <Segmented
-              options={PERIODS.map(p => ({ value: p.key, label: p.key === 'mtd' ? 'MTD' : p.key === 'all' ? 'ALL' : p.key }))}
+              options={PERIODS.map(p => ({ value: p.key, label: p.key === 'mtd' ? 'MTD' : p.key === 'all' ? '6M' : p.key }))}
               value={filters.period}
               onChange={period => setFilters(f => ({ ...f, period }))}
               size="sm"

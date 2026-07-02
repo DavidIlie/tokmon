@@ -22,7 +22,7 @@ export interface Entry {
   cacheSavings: number
 }
 
-const CACHE_VERSION = 6
+const CACHE_VERSION = 7
 const STABLE_AGE_MS = 5 * 60_000
 const PRUNE_AGE_MS = 200 * DAY_MS
 const memCache = new Map<string, { mtimeMs: number; size: number; entries: Entry[] }>()
@@ -132,6 +132,18 @@ export async function loadCachedEntries(
   return dedupe(chunks.flat().filter(e => e.ts >= since))
 }
 
+// Walk calendar days via each day's start (not fixed 24h steps, which skip the
+// spring-forward day and double-count the fall-back day). Returns keys oldest-first.
+export function lastDayKeys(now: number, tz: string, n: number): string[] {
+  const keys: string[] = []
+  let cursor = now
+  for (let i = 0; i < n; i++) {
+    keys.unshift(dayKey(cursor, tz))
+    cursor = startOfDay(cursor, tz) - DAY_MS / 2 // midpoint of the previous day in any DST regime
+  }
+  return keys
+}
+
 export function dashboardSince(tz: string): number {
   const now = Date.now()
   return Math.min(startOfMonth(now, tz), startOfWeek(now, tz), now - SPARK_DAYS * DAY_MS)
@@ -160,7 +172,7 @@ export function dedupe(entries: Entry[]): Entry[] {
   for (const raw of entries) {
     const e = cleanEntry(raw)
     if (e.ts <= 0) continue
-    const k = e.id ?? `${e.ts} ${e.model} ${e.input} ${e.output} ${e.cacheCreate} ${e.cacheRead}`
+    const k = e.id ?? `${e.ts} ${e.model} ${e.input} ${e.output} ${e.cacheCreate} ${e.cacheRead} ${e.cost}`
     if (seen.has(k)) continue
     seen.add(k)
     out.push(e)
@@ -200,8 +212,7 @@ export function summarize(entries: Entry[], tz: string): DashboardData {
   const rawBurnRate = hadToday ? today.cost / hrs : 0
   const burnRate = Number.isFinite(rawBurnRate) ? rawBurnRate : 0
 
-  const series: number[] = []
-  for (let i = SPARK_DAYS - 1; i >= 0; i--) series.push(byDay.get(dayKey(now - i * DAY_MS, tz)) ?? 0)
+  const series = lastDayKeys(now, tz, SPARK_DAYS).map(k => byDay.get(k) ?? 0)
 
   return { today, week, month, burnRate, series }
 }

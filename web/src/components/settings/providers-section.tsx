@@ -8,6 +8,7 @@ export function ProvidersSection({ draft, patch }: { draft: Config; patch: (fn: 
   const toggle = (pid: ProviderId, enabled: boolean) =>
     patch(c => ({
       ...c,
+      knownProviders: c.knownProviders.includes(pid) ? c.knownProviders : [...c.knownProviders, pid],
       disabledProviders: enabled
         ? c.disabledProviders.filter(p => p !== pid)
         : Array.from(new Set([...c.disabledProviders, pid])),

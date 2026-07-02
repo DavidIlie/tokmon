@@ -192,6 +192,12 @@ function RootLayout() {
       </header>
 
       <main className="mx-auto max-w-[1600px] px-5 2xl:max-w-[1920px] py-5">
+        {snapshot?.seeded && (
+          <div className="mb-4 flex items-center gap-2 rounded border border-line bg-bg-1 px-3 py-1.5 text-xs text-fg-dim" role="status">
+            <span className="inline-flex size-2 rounded-full" style={{ background: 'var(--color-cost)' }} aria-hidden />
+            showing cached data — refreshing…
+          </div>
+        )}
         {!snapshot ? (
           <Connecting label={conn === 'error' ? 'connection lost — retrying…' : 'reading usage…'} />
         ) : !hasUsage && !hasBilling ? (

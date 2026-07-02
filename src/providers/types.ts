@@ -45,5 +45,5 @@ export interface Provider {
   detect(homeDir?: string): Promise<boolean>
   fetchSummary?(account: Account, tz: string): Promise<DashboardData>
   fetchTable?(account: Account, tz: string): Promise<TableData>
-  fetchBilling?(account: Account): Promise<BillingResult>
+  fetchBilling?(account: Account, tz: string): Promise<BillingResult>
 }

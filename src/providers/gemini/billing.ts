@@ -2,6 +2,7 @@ import { access, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { Account, BillingResult } from '../types'
+import { decodeBase64UrlJson } from '../_shared/jwt'
 import { cloudCodeBucketsToMetrics, fetchCloudCodeQuota } from '../cloud-code'
 import { geminiTmpDir } from './usage'
 
@@ -83,16 +84,6 @@ interface GeminiCreds {
   email?: string
   displayName?: string
   name?: string
-}
-
-function decodeBase64UrlJson(segment: string): any | null {
-  try {
-    const normalized = segment.replace(/-/g, '+').replace(/_/g, '/')
-    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4)
-    return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'))
-  } catch {
-    return null
-  }
 }
 
 function geminiIdentity(creds: GeminiCreds | null): Pick<BillingResult, 'email' | 'displayName'> {

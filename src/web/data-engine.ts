@@ -145,91 +145,72 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   let usageAccounts = resolved.filter(r => r.hasUsage)
   let billingAccounts = resolved.filter(r => r.hasBilling)
 
-  // Each loop uses a *ForcePending flag so a forced call that lands mid-run re-invokes after the in-flight run finishes.
-  let summaryBusy = false
-  let summaryForcePending = false
-  const refreshSummary = async (force = false): Promise<void> => {
-    if (stopped) return
-    if (summaryBusy) { if (force) summaryForcePending = true; return }
-    if (!force && idle()) return
-    const epoch = configEpoch
-    summaryBusy = true
-    try {
-      for (const r of usageAccounts) {
-        if (stopped) return
-        let dashboard: DashboardData | null = null
-        let ok = true
-        try { dashboard = await withTimeout(fetchAccountSummary(r.account, tz), FETCH_TIMEOUT_MS) } catch { ok = false }
-        if (stopped || epoch !== configEpoch) return
-        if (ok) { usageEntry(r.account.id).dashboard = dashboard; summaryState.set(r.account.id, 'ready') }
-        else summaryState.set(r.account.id, 'error')
-        reveal()
+  // One skeleton for the three account-refresh loops. Each keeps a busy flag and
+  // a forcePending flag so a forced call that lands mid-run re-invokes after the
+  // in-flight run finishes; in-flight results are dropped when the config epoch moves.
+  const makeRefreshLoop = <T,>(opts: {
+    accounts: () => ResolvedAccount[]
+    fetch: (r: ResolvedAccount) => Promise<T>
+    apply: (id: string, value: T) => void
+    state: Map<string, AccountFetchState>
+  }): ((force?: boolean) => Promise<void>) => {
+    let busy = false
+    let forcePending = false
+    const run = async (force = false): Promise<void> => {
+      if (stopped) return
+      if (busy) { if (force) forcePending = true; return }
+      if (!force && idle()) return
+      const epoch = configEpoch
+      busy = true
+      try {
+        for (const r of opts.accounts()) {
+          if (stopped) return
+          let value: T | null = null
+          let ok = true
+          try { value = await withTimeout(opts.fetch(r), FETCH_TIMEOUT_MS) } catch { ok = false }
+          if (stopped || epoch !== configEpoch) return
+          if (ok) { opts.apply(r.account.id, value as T); opts.state.set(r.account.id, 'ready') }
+          else opts.state.set(r.account.id, 'error')
+          reveal()
+        }
+        rebuild()
+      } finally {
+        busy = false
+        if (forcePending && !stopped) { forcePending = false; void run(true) }
       }
-      rebuild()
-    } finally {
-      summaryBusy = false
-      if (summaryForcePending && !stopped) { summaryForcePending = false; void refreshSummary(true) }
     }
+    return run
   }
 
-  let tableBusy = false
-  let tableForcePending = false
-  const refreshTable = async (force = false): Promise<void> => {
-    if (stopped) return
-    if (tableBusy) { if (force) tableForcePending = true; return }
-    if (!force && idle()) return
-    const epoch = configEpoch
-    tableBusy = true
-    try {
-      for (const r of usageAccounts) {
-        if (stopped) return
-        let table: TableData | null = null
-        let ok = true
-        try { table = await withTimeout(fetchAccountTable(r.account, tz), FETCH_TIMEOUT_MS) } catch { ok = false }
-        if (stopped || epoch !== configEpoch) return
-        if (ok) { usageEntry(r.account.id).table = table; tableState.set(r.account.id, 'ready') }
-        else tableState.set(r.account.id, 'error')
-        reveal()
-      }
-      rebuild()
-    } finally {
-      tableBusy = false
-      if (tableForcePending && !stopped) { tableForcePending = false; void refreshTable(true) }
-    }
-  }
+  const refreshSummary = makeRefreshLoop({
+    accounts: () => usageAccounts,
+    fetch: r => fetchAccountSummary(r.account, tz),
+    apply: (id, dashboard) => { usageEntry(id).dashboard = dashboard },
+    state: summaryState,
+  })
 
-  let billingBusy = false
-  let billingForcePending = false
-  const refreshBilling = async (force = false): Promise<void> => {
-    if (stopped) return
-    if (billingBusy) { if (force) billingForcePending = true; return }
-    if (!force && idle()) return
-    const epoch = configEpoch
-    billingBusy = true
-    try {
-      for (const r of billingAccounts) {
-        if (stopped) return
-        let result: BillingResult | null = null
-        let ok = true
-        try { result = await withTimeout(fetchAccountBilling(r.account), FETCH_TIMEOUT_MS) } catch { ok = false }
-        if (stopped || epoch !== configEpoch) return
-        if (ok) { billing.set(r.account.id, result); billingState.set(r.account.id, 'ready') }
-        else billingState.set(r.account.id, 'error')
-        reveal()
-      }
-      rebuild()
-    } finally {
-      billingBusy = false
-      if (billingForcePending && !stopped) { billingForcePending = false; void refreshBilling(true) }
-    }
-  }
+  const refreshTable = makeRefreshLoop({
+    accounts: () => usageAccounts,
+    fetch: r => fetchAccountTable(r.account, tz),
+    apply: (id, table) => { usageEntry(id).table = table },
+    state: tableState,
+  })
+
+  const refreshBilling = makeRefreshLoop({
+    accounts: () => billingAccounts,
+    fetch: r => fetchAccountBilling(r.account, tz),
+    apply: (id, result) => { billing.set(id, result) },
+    state: billingState,
+  })
 
   let peakBusy = false
   const refreshPeak = async (force = false) => {
     if (stopped || peakBusy || !hasClaude || (!force && idle())) return
+    const epoch = configEpoch
     peakBusy = true
     try {
       const next = await fetchPeak()
+      if (stopped || epoch !== configEpoch || !hasClaude) return
       if (next) { peak = next; rebuild() }
     } finally {
       peakBusy = false
@@ -286,13 +267,22 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       tz = next.tz
       summaryIntervalMs = next.summaryIntervalMs
       billingIntervalMs = next.billingIntervalMs
+      const sourceKey = (r: ResolvedAccount) => `${r.account.providerId}:${r.account.homeDir ?? ''}`
+      const prevSources = new Map(resolved.map(r => [r.account.id, sourceKey(r)]))
       resolved = next.resolved
       hasClaude = resolved.some(r => r.account.providerId === 'claude')
       if (!hasClaude) peak = null
       usageAccounts = resolved.filter(r => r.hasUsage)
       billingAccounts = resolved.filter(r => r.hasBilling)
 
-      const survivors = new Set(resolved.map(r => r.account.id))
+      // Drop cached data for removed ids AND for ids whose account was repointed
+      // at a different provider or home — otherwise the old source's numbers keep
+      // rendering under the new identity until the next refresh completes.
+      const survivors = new Set(
+        resolved
+          .filter(r => !prevSources.has(r.account.id) || prevSources.get(r.account.id) === sourceKey(r))
+          .map(r => r.account.id),
+      )
       for (const id of [...usage.keys()]) if (!survivors.has(id)) usage.delete(id)
       for (const id of [...billing.keys()]) if (!survivors.has(id)) billing.delete(id)
       for (const map of [summaryState, billingState, tableState]) {

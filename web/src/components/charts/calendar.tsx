@@ -73,7 +73,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
               <StatBlock label="busiest day" value={stats.costed ? fmtCost(stats.top.cost) : fmtTokens(stats.top.tokens)} sub={fmtDayLabel(stats.top.date)} valueClass="text-cost" />
               <StatBlock label="daily average" value={stats.costed ? fmtCost(stats.avg) : fmtTokens(stats.avg)} sub={`across ${stats.active} active days`} />
               <StatBlock label="top weekday" value={WEEKDAYS[stats.busiest]} valueClass="text-fg-bright" />
-              <StatBlock label="current streak" value={`${stats.streak}d`} sub={stats.streak > 0 ? 'in a row' : 'idle today'} valueClass="text-positive" />
+              <StatBlock label="latest streak" value={`${stats.streak}d`} sub={stats.streak > 0 ? 'in a row' : 'idle today'} valueClass="text-positive" />
             </div>
             {shown && <div className="dialog-fade absolute inset-0 md:pl-6"><DayDetail day={shown} pinned={!hover && shown === pinned} /></div>}
           </div>

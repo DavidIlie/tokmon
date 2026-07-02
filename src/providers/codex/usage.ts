@@ -18,7 +18,10 @@ const PRICING: Record<string, { in: number; cr: number; out: number }> = {
   'gpt-5': { in: 1.25e-6, cr: 0.125e-6, out: 10e-6 },
   'o4-mini': { in: 1.1e-6, cr: 0.275e-6, out: 4.4e-6 },
 }
-const ZERO_PRICE = { in: 0, cr: 0, out: 0 }
+// Unknown/new model families are priced at the current flagship rate rather than
+// $0 — a slightly-wrong estimate beats silently free usage when OpenAI ships a
+// model this table doesn't know yet (the gpt-5.5 launch was 4x under-priced this way).
+const FALLBACK_PRICE = PRICING['gpt-5.5']
 const PRICE_KEYS = Object.keys(PRICING).sort((a, b) => b.length - a.length)
 
 export function codexHomes(homeDir?: string): string[] {
@@ -44,7 +47,10 @@ function modelKeyMatches(model: string, key: string): boolean {
   while (idx >= 0) {
     const before = idx === 0 ? '' : model[idx - 1]
     const rest = model.slice(idx + key.length)
-    if ((!before || !/[a-z0-9-]/.test(before)) && (rest === '' || rest[0] === '-' || !/[a-z0-9]/.test(rest[0]))) {
+    // A trailing ".N" is a version continuation ("gpt-5" must not claim "gpt-5.6"),
+    // not a word boundary like "-codex" or end-of-string.
+    const versionContinues = rest[0] === '.' && /\d/.test(rest[1] ?? '')
+    if ((!before || !/[a-z0-9-]/.test(before)) && !versionContinues && (rest === '' || rest[0] === '-' || !/[a-z0-9]/.test(rest[0]))) {
       return true
     }
     idx = model.indexOf(key, idx + key.length)
@@ -57,7 +63,7 @@ function priceFor(model: string) {
   for (const key of PRICE_KEYS) {
     if (modelKeyMatches(m, key)) return PRICING[key]
   }
-  return ZERO_PRICE
+  return FALLBACK_PRICE
 }
 
 function extractModel(obj: any): string | null {

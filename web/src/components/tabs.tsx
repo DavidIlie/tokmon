@@ -1,6 +1,6 @@
 import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react'
 import type { WebProviderInfo, WebSnapshot } from '@shared'
-import { exploreRows, type Derived, type Filters, type Granularity } from '../lib/derive'
+import { exploreRows, selectAccounts, type Derived, type Filters, type Granularity } from '../lib/derive'
 import { Segmented } from './ui/controls'
 import { Search, X } from './icons'
 import { KpiStrip, ProviderCards } from './charts/cards'
@@ -91,9 +91,13 @@ export function ExploreTab({ snapshot, filters, periodLabel }: {
   const [q, setQ] = useState('')
   const [gran, setGran] = useState<Granularity>('daily')
   const rows = useMemo(() => exploreRows(snapshot, filters, gran), [snapshot, filters, gran])
+  const tablesLoading = useMemo(
+    () => (snapshot ? selectAccounts(snapshot, filters) : []).some(a => a.tableState !== 'ready'),
+    [snapshot, filters],
+  )
   const windowNote = gran !== 'daily'
     ? `showing up to ${gran === 'monthly' ? '12 months' : '12 weeks'}`
-    : filters.period !== 'all' ? `scoped to ${periodLabel}` : null
+    : `scoped to ${periodLabel}`
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-3">
@@ -109,6 +113,9 @@ export function ExploreTab({ snapshot, filters, periodLabel }: {
           />
         </div>
         {windowNote && <span className="text-xs text-fg-faint">{windowNote}</span>}
+        {tablesLoading && (
+          <span className="text-xs text-fg-faint" role="status">loading history<span className="cursor-blink text-accent">▋</span></span>
+        )}
         <div className="ml-auto flex items-center gap-1.5 rounded border border-line bg-bg-1 px-2 py-1 text-xs focus-within:border-line-2">
           <Search className="size-3 text-fg-faint" />
           <input

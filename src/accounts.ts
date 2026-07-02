@@ -3,6 +3,8 @@ import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { type Config, expandHome, slugify } from './config'
 import { PROVIDER_ORDER, PROVIDERS } from './providers'
+import { readClaudeIdentity } from './providers/claude/identity'
+import { codexAuthPaths, readCodexIdentity } from './providers/codex/identity'
 import type { Account, ProviderId } from './providers/types'
 
 interface DiscoveredAccount {
@@ -11,16 +13,6 @@ interface DiscoveredAccount {
   name: string
   color: string
   homeDir?: string
-}
-
-interface ClaudeIdentity {
-  email?: string
-  displayName?: string
-}
-
-interface CodexIdentity {
-  email?: string
-  displayName?: string
 }
 
 function accountKey(providerId: ProviderId, homeDir?: string): string {
@@ -43,19 +35,6 @@ function uniqueId(base: string, used: Set<string>): string {
   id = `${id}_${Date.now()}`
   used.add(id)
   return id
-}
-
-function readClaudeIdentity(homeDir: string): ClaudeIdentity {
-  try {
-    const parsed = JSON.parse(readFileSync(join(homeDir, '.claude.json'), 'utf-8'))
-    const oauth = parsed?.oauthAccount
-    return {
-      email: typeof oauth?.emailAddress === 'string' && oauth.emailAddress.trim() ? oauth.emailAddress.trim() : undefined,
-      displayName: typeof oauth?.displayName === 'string' && oauth.displayName.trim() ? oauth.displayName.trim() : undefined,
-    }
-  } catch {
-    return {}
-  }
 }
 
 function hasClaudeState(homeDir: string): boolean {
@@ -93,41 +72,6 @@ function labelForClaudeHome(homeDir: string): string {
   if (identity.displayName) return `Claude ${identity.displayName}`
   const raw = basename(homeDir).replace(/^\.claude[_-]?/, '').replace(/[_-]+/g, ' ').trim()
   return raw ? `Claude ${raw}` : 'Claude'
-}
-
-function decodeBase64UrlJson(segment: string): any | null {
-  try {
-    const normalized = segment.replace(/-/g, '+').replace(/_/g, '/')
-    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4)
-    return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'))
-  } catch {
-    return null
-  }
-}
-
-function codexAuthPaths(homeDir: string): string[] {
-  return [join(homeDir, '.codex', 'auth.json'), join(homeDir, 'auth.json')]
-}
-
-function readCodexIdentity(homeDir: string): CodexIdentity {
-  for (const path of codexAuthPaths(homeDir)) {
-    try {
-      const parsed = JSON.parse(readFileSync(path, 'utf-8'))
-      const idToken = parsed?.tokens?.id_token
-      if (typeof idToken !== 'string' || !idToken.includes('.')) continue
-      const payload = decodeBase64UrlJson(idToken.split('.')[1])
-      if (!payload || typeof payload !== 'object') continue
-      return {
-        email: typeof payload?.email === 'string' && payload.email.trim() ? payload.email.trim() : undefined,
-        displayName: typeof payload?.name === 'string' && payload.name.trim()
-          ? payload.name.trim()
-          : typeof payload?.given_name === 'string' && payload.given_name.trim()
-            ? payload.given_name.trim()
-            : undefined,
-      }
-    } catch {}
-  }
-  return {}
 }
 
 function hasCodexAuth(homeDir: string): boolean {

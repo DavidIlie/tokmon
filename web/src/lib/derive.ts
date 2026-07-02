@@ -52,9 +52,6 @@ export interface CalendarDay {
 export interface Derived {
   filteredAccounts: WebAccount[]
   totals: Totals
-  today: Totals
-  week: Totals
-  month: Totals
   burnRate: number
   timeline: TimelinePoint[]
   cumulative: { date: string; total: number }[]
@@ -71,21 +68,12 @@ export interface Derived {
 
 const emptyTotals = (): Totals => ({ cost: 0, tokens: 0, cacheSavings: 0, calls: 0 })
 
-function summaryTotals(a: WebAccount, which: 'today' | 'week' | 'month'): Totals {
-  const s = a.dashboard?.[which]
-  if (!s) return emptyTotals()
-  return { cost: s.cost, tokens: s.tokens, cacheSavings: s.cacheSavings, calls: 0 }
-}
-
 const addInto = (t: Totals, c: number, tok: number, sav: number, calls: number) => {
   t.cost += c; t.tokens += tok; t.cacheSavings += sav; t.calls += calls
 }
 
 interface AccState {
   totals: Totals
-  today: Totals
-  week: Totals
-  month: Totals
   burnRate: number
   timelineMap: Map<string, TimelinePoint>
   cacheByDay: Map<string, number>
@@ -99,9 +87,6 @@ interface AccState {
 function makeAccState(): AccState {
   return {
     totals: emptyTotals(),
-    today: emptyTotals(),
-    week: emptyTotals(),
-    month: emptyTotals(),
     burnRate: 0,
     timelineMap: new Map(),
     cacheByDay: new Map(),
@@ -111,15 +96,6 @@ function makeAccState(): AccState {
     modelOptionSet: new Set(),
     tokenComposition: { input: 0, output: 0, cacheCreate: 0, cacheRead: 0 },
   }
-}
-
-function accumulateSummary(acc: AccState, a: WebAccount): void {
-  const totalsOf = (t: Totals): [number, number, number, number] =>
-    [t.cost, t.tokens, t.cacheSavings, t.calls]
-  addInto(acc.today, ...totalsOf(summaryTotals(a, 'today')))
-  addInto(acc.week, ...totalsOf(summaryTotals(a, 'week')))
-  addInto(acc.month, ...totalsOf(summaryTotals(a, 'month')))
-  acc.burnRate += a.dashboard?.burnRate ?? 0
 }
 
 function accumulateDayRow(
@@ -193,7 +169,7 @@ function buildByModel(acc: AccState, timeline: TimelinePoint[], totalCost: numbe
 export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
   const accounts = snap ? selectAccounts(snap, f) : []
   const latestDay = latestDayOf(accounts)
-  const rangeStart = rangeStartOf(f.period, latestDay)
+  const rangeStart = rangeStartOf(f.period, latestDay, snap?.tz ?? '')
   const modelSet = f.models.length ? new Set(f.models) : null
 
   const providerColor = new Map<string, string>()
@@ -207,7 +183,7 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
   const inRange = (label: string) => !rangeStart || label >= rangeStart
 
   for (const a of accounts) {
-    accumulateSummary(acc, a)
+    acc.burnRate += a.dashboard?.burnRate ?? 0
     const pid = a.providerId
     const color = providerColor.get(pid) ?? a.color
     for (const row of a.table?.daily ?? []) {
@@ -259,7 +235,7 @@ export function deriveAll(snap: WebSnapshot | null, f: Filters): Derived {
 
   return {
     filteredAccounts: accounts,
-    totals: acc.totals, today: acc.today, week: acc.week, month: acc.month,
+    totals: acc.totals,
     burnRate: acc.burnRate,
     timeline, cumulative, cacheSavingsSeries, calendar,
     cardAccounts: snap ? selectCardAccounts(snap, f) : [],

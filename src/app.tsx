@@ -1,32 +1,28 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Box, Text, useInput, useStdout, useApp } from 'ink'
+import { Box, Text, useInput, useApp } from 'ink'
 import { useMouse } from '@zenobius/ink-mouse'
-import { fetchPeak, type PeakStatus } from './peak'
 import {
   loadConfig, saveConfigSync,
-  generateAccountId, pickAccentColor,
-  DEFAULTS, normalizeConfig, sanitizeTyped, getTrackedAccountRows,
-  type Config, type Account as StoredAccount, type TrackedAccountRow,
+  DEFAULTS, normalizeConfig, getTrackedAccountRows,
+  type Config,
 } from './config'
 import { reconcileDaemonConfig } from './config-sync'
 import { buildAccounts, accountsByProvider } from './accounts'
 import { PROVIDERS, PROVIDER_ORDER, detectProviders, type Account, type ProviderId } from './providers'
 import type { TableData } from './types'
 import { resolveTimezone } from './tz'
-import { loadSeedSnapshot } from './client/seed-cache'
 import { glyphs } from './glyphs'
 import * as fmt from './format'
-import type { AccountStats } from './stats'
 import type { WebServerController } from './web/server'
 import { Spinner, TabBar, PeakBadge, dispatchLinkClicks } from './ui/shared'
-import { DashboardView, chooseLayout, TotalsRow } from './ui/dashboard'
+import { DashboardView, computeDashLayout, TotalsRow } from './ui/dashboard'
 import { TableProviderBar, ControlBar, TokenTable, CursorSpendTable } from './ui/table'
 import { cursorModelSpend, type CursorModelSpend } from './providers/cursor/composer'
 import { Onboarding, type OnboardItem } from './ui/onboarding'
 import { LoadingView, accountReady, statsReadyInput, type ReadyInput } from './ui/loading'
 import {
-  SettingsView, COLOR_PALETTE, FORM_FIELDS, GENERAL_ROWS,
-  type AccountForm, type AccountIdentity, type SettingsTab,
+  SettingsView, GENERAL_ROWS,
+  type AccountIdentity, type SettingsTab,
 } from './ui/settings'
 import { deriveSlots, findActiveSlot, computeChrome } from './ui/app-layout.logic'
 import { ResizingView } from './ui/resizing'
@@ -39,39 +35,15 @@ import {
   TABS, VIEWS, SORTS, CURSOR_SORTS,
   type Slot,
   acctKey, clampCaret, spliceInsert, applyStartup,
-  upsert, fetchScopeTable, sortLabel, sortRows, filterTokenRows, filterCursorRows, sortCursorRows,
+  fetchScopeTable, sortLabel, sortRows, filterTokenRows, filterCursorRows, sortCursorRows,
 } from './app.logic'
 import { openUrl, IS_TTY } from './ui/terminal'
 import { handleKey } from './ui/keybindings'
-
-const DEBOUNCE_MS = 300
-const LOADER_GRACE_MS = 600
-const LOADER_MAX_MS = 8000
-const LOADER_MIN_VISIBLE_MS = 700
-
-interface TermSize { cols: number; rows: number; resizing: boolean; live: { cols: number; rows: number } }
-function useTerminalSize(settleMs = 90): TermSize {
-  const { stdout } = useStdout()
-  const read = () => ({ cols: stdout?.columns || 80, rows: stdout?.rows || 24 })
-  const [size, setSize] = useState(read)
-  const [live, setLive] = useState(read)
-  const [resizing, setResizing] = useState(false)
-  useEffect(() => {
-    if (!stdout) return
-    let t: ReturnType<typeof setTimeout> | undefined
-    const now = () => ({ cols: stdout.columns || 80, rows: stdout.rows || 24 })
-    const settle = () => { setSize(now()); setResizing(false) }
-    const onResize = () => {
-      setLive(now())
-      setResizing(true)
-      if (t) clearTimeout(t)
-      t = setTimeout(settle, settleMs)
-    }
-    stdout.on('resize', onResize)
-    return () => { if (t) clearTimeout(t); stdout.off('resize', onResize) }
-  }, [stdout, settleMs])
-  return { cols: size.cols, rows: size.rows, resizing, live }
-}
+import { useTerminalSize } from './ui/hooks/use-terminal-size'
+import { usePaste } from './ui/hooks/use-paste'
+import { useLoader } from './ui/hooks/use-loader'
+import { useDegradedPolling } from './ui/hooks/use-degraded-polling'
+import { useAccountForm } from './ui/hooks/use-account-form'
 
 export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsToken = null, mode = 'degraded' }: {
   interval?: number
@@ -86,12 +58,8 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
 
   const [config, setConfig] = useState<Config | null>(() => initialConfig ? applyStartup(initialConfig, cliInterval) : null)
   const [detected, setDetected] = useState<ProviderId[]>([])
-  const [statsLocal, setStats] = useState<Map<string, AccountStats>>(new Map())
-  const [peakLocal, setPeak] = useState<PeakStatus | null>(null)
   const [tableLocal, setTable] = useState<TableData | null>(null)
   const [tableLoading, setTableLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [updatedLocal, setUpdated] = useState(new Date())
   const [tab, setTab] = useState(0)
   const [view, setView] = useState(0)
   const [cursor, setCursor] = useState(0)
@@ -108,20 +76,9 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const [tzError, setTzError] = useState<string | null>(null)
   const [tzCaret, setTzCaret] = useState(0)
   const [searchCaret, setSearchCaret] = useState(0)
-  const [accountForm, setAccountForm] = useState<AccountForm | null>(null)
   const [onboardSel, setOnboardSel] = useState<ProviderId[] | null>(null)
   const [onboardCursor, setOnboardCursor] = useState(0)
   const [dashPage, setDashPage] = useState(0)
-  const [debouncePassed, setDebouncePassed] = useState(false)
-  const [graceHold, setGraceHold] = useState(false)
-  const [loaderShownAt, setLoaderShownAt] = useState<number | null>(null)
-  const loaderDone = useRef(false)
-  const [loaderDoneState, setLoaderDoneFlag] = useState(false)
-  const setLoaderDone = useCallback((v: boolean) => {
-    loaderDone.current = v
-    setLoaderDoneFlag(v)
-  }, [])
-  const prevShowPicker = useRef(false)
   const { exit } = useApp()
   const { cols, rows, resizing, live } = useTerminalSize()
 
@@ -148,16 +105,22 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const tabRef = useRef(0)
   tabRef.current = tab
   const dashPageCountRef = useRef(1)
-  const seededRef = useRef(false)
-  const pasteBufRef = useRef<string | null>(null)
-  const pasteCarryRef = useRef<string>('')
   const pendingLocalConfigRef = useRef<Config | null>(null)
-  const insertPasteRef = useRef<(text: string) => void>(() => {})
   const tzValueRef = useRef('')
   const tzCaretRef = useRef(0)
   const searchValueRef = useRef('')
   const searchCaretRef = useRef(0)
   const accountsKey = useMemo(() => accounts.map(acctKey).join('|'), [accounts])
+
+  const needsOnboarding = configReady && !cfg.onboarded
+  const newProviders = configReady && cfg.onboarded
+    ? PROVIDER_ORDER.filter(p => !cfg.knownProviders.includes(p) && detected.includes(p))
+    : []
+  const showPicker = needsOnboarding || newProviders.length > 0
+
+  const { statsLocal, peakLocal, updatedLocal, error } = useDegradedPolling({
+    degraded, configReady, showPicker, accountsKey, accountsRef, interval, billingMs, tz,
+  })
 
   const snapshot = daemon.snapshot
   const stats = useMemo(
@@ -216,10 +179,10 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const allReady = accounts.length > 0 && accounts.every(a => accountReady(readyInputFor(a.id), a.providerId))
 
   const { gridBudget } = useMemo(() => computeChrome(slots, cols, rows), [slots, cols, rows])
-  const dashLayout = useMemo(() => chooseLayout(
-    Math.max(56, cols - 4), gridBudget, groups.length,
-    focusId !== null || cfg.dashboardLayout === 'single', cols,
-  ), [cols, gridBudget, groups.length, focusId, cfg.dashboardLayout])
+  const dashLayout = useMemo(
+    () => computeDashLayout(groups, stats, cols, gridBudget, focusId, cfg.dashboardLayout),
+    [groups, stats, cols, gridBudget, focusId, cfg.dashboardLayout],
+  )
   const dashPageCount = dashLayout.pageCount
   const dashPaginated = dashPageCount > 1
   dashPageCountRef.current = dashPageCount
@@ -249,7 +212,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       setSearch(r.value); setSearchCaret(r.caret)
     }
   }
-  insertPasteRef.current = insertText
+  const { handlePasteData, isPasteInput } = usePaste(insertText)
 
   const effTableProvider = (tableProvider && tableProvs.includes(tableProvider)) ? tableProvider : (tableProvs[0] ?? null)
   const tableIsCursor = !!effTableProvider && !PROVIDERS[effTableProvider].hasUsage
@@ -269,15 +232,10 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     [connected, snapshot, tableAccounts, cursorRowsLocal],
   )
 
-  const needsOnboarding = configReady && !cfg.onboarded
-  const newProviders = configReady && cfg.onboarded
-    ? PROVIDER_ORDER.filter(p => !cfg.knownProviders.includes(p) && detected.includes(p))
-    : []
-  const showPicker = needsOnboarding || newProviders.length > 0
-  const minVisibleHold = loaderShownAt !== null && Date.now() - loaderShownAt < LOADER_MIN_VISIBLE_MS
-  const showLoader = configReady && !showPicker && !showSettings && !TOO_SMALL
-    && accounts.length > 0 && (!allReady || graceHold || minVisibleHold)
-    && (debouncePassed || loaderShownAt !== null) && !loaderDoneState
+  const { showLoader } = useLoader({
+    configReady, showPicker, accountsKey, allReady,
+    tooSmall: TOO_SMALL, showSettings, accountsCount: accounts.length,
+  })
   const pickerProviders = needsOnboarding ? PROVIDER_ORDER : newProviders
   const onboardEnabled = onboardSel ?? detected
   const onboardItems: OnboardItem[] = pickerProviders.map(pid => ({
@@ -286,111 +244,9 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   }))
 
   useEffect(() => {
-    const wasPicker = prevShowPicker.current
-    prevShowPicker.current = showPicker
-    if (wasPicker && !showPicker) {
-      setLoaderDone(false)
-      setDebouncePassed(false)
-      setGraceHold(false)
-      setLoaderShownAt(null)
-    }
-  }, [showPicker])
-
-  useEffect(() => {
-    if (showLoader && loaderShownAt === null) setLoaderShownAt(Date.now())
-  }, [showLoader, loaderShownAt])
-
-  useEffect(() => {
     if (!initialConfig) loadConfig().then(c => setConfig(applyStartup(c, cliInterval)))
     detectProviders().then(setDetected)
   }, [])
-
-  useEffect(() => {
-    if (!degraded) return
-    if (seededRef.current || !configReady || showPicker || accounts.length === 0) return
-    seededRef.current = true
-    loadSeedSnapshot().then(snap => {
-      setStats(prev => {
-        if (prev.size > 0) return prev
-        const next = new Map(prev)
-        for (const acc of accountsRef.current) {
-          const s = snap[acc.id]
-          if (s && (s.dashboard || s.billing)) next.set(acc.id, { account: acc, dashboard: s.dashboard ?? null, billing: s.billing ?? null })
-        }
-        return next
-      })
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [degraded, configReady, showPicker, accountsKey])
-
-  useEffect(() => {
-    if (!configReady || showPicker || accounts.length === 0) return
-    if (allReady || loaderDone.current) return
-    const debounce = setTimeout(() => setDebouncePassed(true), DEBOUNCE_MS)
-    const deadline = setTimeout(() => { setLoaderDone(true); setDebouncePassed(false) }, LOADER_MAX_MS)
-    return () => { clearTimeout(debounce); clearTimeout(deadline) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configReady, showPicker, accountsKey])
-
-  useEffect(() => {
-    if (!allReady || loaderDone.current) return
-    if (loaderShownAt === null) { setLoaderDone(true); return }
-    setGraceHold(true)
-    const minRemaining = Math.max(0, LOADER_MIN_VISIBLE_MS - (Date.now() - loaderShownAt))
-    const hold = Math.max(LOADER_GRACE_MS, minRemaining)
-    const t = setTimeout(() => { setLoaderDone(true); setGraceHold(false) }, hold)
-    return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allReady, loaderShownAt])
-
-  useEffect(() => {
-    if (!degraded || !configReady || showPicker) return
-    let active = true
-    let timer: ReturnType<typeof setTimeout>
-    const load = async () => {
-      try {
-        await Promise.all(accountsRef.current.map(async (acc) => {
-          const provider = PROVIDERS[acc.providerId]
-          if (!provider.hasUsage || !provider.fetchSummary) return
-          try {
-            const dashboard = await provider.fetchSummary(acc, tz)
-            if (active) setStats(prev => upsert(prev, acc, { dashboard }))
-          } catch {}
-        }))
-        if (active) { setError(null); setUpdated(new Date()) }
-      } finally {
-        if (active) timer = setTimeout(load, interval)
-      }
-    }
-    load()
-    return () => { active = false; clearTimeout(timer) }
-  }, [degraded, interval, tz, configReady, showPicker, accountsKey])
-
-  useEffect(() => {
-    if (!degraded || !configReady || showPicker) return
-    let active = true
-    let timer: ReturnType<typeof setTimeout>
-    const load = async () => {
-      try {
-        const peakP = accountsRef.current.some(a => a.providerId === 'claude')
-          ? fetchPeak() : Promise.resolve(null)
-        await Promise.all(accountsRef.current.map(async (acc) => {
-          const provider = PROVIDERS[acc.providerId]
-          if (!provider.hasBilling || !provider.fetchBilling) return
-          try {
-            const billing = await provider.fetchBilling(acc)
-            if (active) setStats(prev => upsert(prev, acc, { billing }))
-          } catch {}
-        }))
-        const p = await peakP
-        if (active && p) setPeak(p)
-      } finally {
-        if (active) timer = setTimeout(load, billingMs)
-      }
-    }
-    load()
-    return () => { active = false; clearTimeout(timer) }
-  }, [degraded, billingMs, configReady, showPicker, accountsKey])
 
   const tableKey = useMemo(
     () => `${effTableProvider}|${tableAccounts.map(acctKey).join(',')}|${tz}`,
@@ -439,55 +295,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
 
   const resetView = useCallback(() => { setCursor(0); setExpanded(-1) }, [])
   const clampRow = (n: number) => Math.max(0, Math.min(rowCountRef.current - 1, n))
-
-  const PASTE_START = '\x1b[200~'
-  const PASTE_END = '\x1b[201~'
-  const PASTE_MAX = 1 << 20
-  const handlePasteData = useCallback((chunk: Buffer | string): boolean => {
-    const s = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
-
-    if (pasteBufRef.current !== null) {
-      const combined = pasteBufRef.current + s
-      const end = combined.indexOf(PASTE_END)
-      if (end === -1) {
-        if (combined.length >= PASTE_MAX) {
-          const clean = sanitizeTyped(combined)
-          pasteBufRef.current = null
-          if (clean) insertPasteRef.current(clean)
-          return true
-        }
-        pasteBufRef.current = combined
-        return true
-      }
-      const clean = sanitizeTyped(combined.slice(0, end))
-      pasteBufRef.current = null
-      if (clean) insertPasteRef.current(clean)
-      return end + PASTE_END.length >= combined.length
-    }
-
-    const combined = pasteCarryRef.current + s
-    const start = combined.indexOf(PASTE_START)
-    if (start === -1) {
-      const keep = Math.min(combined.length, PASTE_START.length - 1)
-      pasteCarryRef.current = combined.slice(combined.length - keep)
-      return false
-    }
-    pasteCarryRef.current = ''
-    const rest = combined.slice(start + PASTE_START.length)
-    const end = rest.indexOf(PASTE_END)
-    if (end === -1) {
-      pasteBufRef.current = rest
-      return true
-    }
-    const clean = sanitizeTyped(rest.slice(0, end))
-    if (clean) insertPasteRef.current(clean)
-    return true
-  }, [])
-
-  const isPasteInput = useCallback((input: string): boolean => {
-    if (pasteBufRef.current !== null) return true
-    return input.includes('[200~') || input.includes('[201~')
-  }, [])
 
   const mouse = useMouse()
   useEffect(() => {
@@ -596,88 +403,11 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     setCursor(0); setExpanded(-1); setSearch(''); setSearchCaret(0); setSearchMode(false)
   }, [tableProvs, effTableProvider])
 
-  function openAddAccount(defaults?: Pick<TrackedAccountRow, 'providerId' | 'name' | 'homeDir' | 'color'>): void {
-    const providerId = defaults?.providerId ?? ((detected[0] ?? 'claude') as ProviderId)
-    setAccountForm({
-      mode: 'add', field: 'provider', providerId,
-      name: defaults?.name ?? '', homeDir: defaults?.homeDir ?? '~', color: defaults?.color ?? pickAccentColor(cfg.accounts),
-      caret: defaults?.name?.length ?? 0,
-      editingId: null, error: null,
-    })
-  }
-  function openConfigureAccount(row: TrackedAccountRow): void {
-    openAddAccount(row)
-  }
-  function openEditAccount(acc: StoredAccount): void {
-    setAccountForm({
-      mode: 'edit', field: 'provider', providerId: acc.providerId,
-      name: acc.name, homeDir: acc.homeDir, color: acc.color || PROVIDERS[acc.providerId].color,
-      caret: acc.name.length,
-      editingId: acc.id, error: null,
-    })
-  }
-  function commitAccountForm(): void {
-    if (!accountForm) return
-    const name = accountForm.name.trim()
-    const homeDir = accountForm.homeDir.trim() || '~'
-    if (!name) { setAccountForm({ ...accountForm, error: 'Name required', field: 'name', caret: accountForm.name.length }); return }
-    updateConfig(c => {
-      if (accountForm.mode === 'add') {
-        const id = generateAccountId(name, c.accounts)
-        const account: StoredAccount = { id, providerId: accountForm.providerId, name, homeDir, color: accountForm.color }
-        return { ...c, accounts: [...c.accounts, account] }
-      }
-      return {
-        ...c,
-        accounts: c.accounts.map(a =>
-          a.id === accountForm.editingId
-            ? { ...a, providerId: accountForm.providerId, name, homeDir, color: accountForm.color }
-            : a),
-      }
-    })
-    setAccountForm(null)
-  }
-  const cycleFormField = useCallback((dir: 1 | -1): void => {
-    setAccountForm(f => {
-      if (!f) return f
-      const i = FORM_FIELDS.indexOf(f.field)
-      const next = FORM_FIELDS[(i + dir + FORM_FIELDS.length) % FORM_FIELDS.length]
-      const caret = next === 'name' ? f.name.length : next === 'homeDir' ? f.homeDir.length : f.caret
-      return { ...f, field: next, caret }
-    })
-  }, [])
-  const cycleProvider = useCallback((dir: 1 | -1): void => {
-    setAccountForm(f => {
-      if (!f) return f
-      const i = PROVIDER_ORDER.indexOf(f.providerId)
-      return { ...f, providerId: PROVIDER_ORDER[(i + dir + PROVIDER_ORDER.length) % PROVIDER_ORDER.length] }
-    })
-  }, [])
-  const cycleColor = useCallback((dir: 1 | -1): void => {
-    setAccountForm(f => {
-      if (!f) return f
-      const i = COLOR_PALETTE.indexOf(f.color as typeof COLOR_PALETTE[number])
-      const idx = i < 0 ? 0 : i
-      return { ...f, color: COLOR_PALETTE[(idx + dir + COLOR_PALETTE.length) % COLOR_PALETTE.length] }
-    })
-  }, [])
-  function deleteAccount(id: string): void {
-    updateConfig(c => ({
-      ...c,
-      accounts: c.accounts.filter(a => a.id !== id),
-      activeAccountId: c.activeAccountId === id ? null : c.activeAccountId,
-    }))
-  }
-  function moveAccount(idx: number, dir: -1 | 1): void {
-    updateConfig(c => {
-      const next = [...c.accounts]
-      const target = idx + dir
-      if (target < 0 || target >= next.length) return c
-      ;[next[idx], next[target]] = [next[target], next[idx]]
-      return { ...c, accounts: next }
-    })
-    setSettingsCursor(c => Math.max(0, Math.min(trackedAccountRows.length - 1, c + dir)))
-  }
+  const {
+    accountForm, setAccountForm,
+    openAddAccount, openConfigureAccount, openEditAccount, commitAccountForm,
+    cycleFormField, cycleProvider, cycleColor, deleteAccount, moveAccount,
+  } = useAccountForm({ cfg, detected, updateConfig, trackedAccountRows, setSettingsCursor })
 
   async function toggleWeb(): Promise<void> {
     if (connected) {
