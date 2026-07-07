@@ -1,10 +1,10 @@
-import { readdir, stat as fsStat, access } from 'node:fs/promises'
+import { stat as fsStat, access } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
-import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, finitePositive, dashboardSince, tableSince } from '../usage-core'
+import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, finitePositive, dashboardSince, tableSince, walkFiles } from '../usage-core'
 
 export function piSessionsDir(homeDir?: string): string {
   return join(homeDir ?? homedir(), '.pi', 'agent', 'sessions')
@@ -66,12 +66,7 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   const dir = piSessionsDir(homeDir)
   const files: { path: string; mtimeMs: number; size: number }[] = []
   const seenIno = new Set<string>()
-  let listing: string[]
-  try {
-    listing = await readdir(dir, { recursive: true })
-  } catch {
-    return []
-  }
+  const listing = await walkFiles(dir)
   for (const f of listing) {
     if (!f.endsWith('.jsonl')) continue
     const path = join(dir, f)

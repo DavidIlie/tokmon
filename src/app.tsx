@@ -36,6 +36,7 @@ import {
   type Slot,
   acctKey, clampCaret, spliceInsert, applyStartup,
   fetchScopeTable, sortLabel, sortRows, filterTokenRows, filterCursorRows, sortCursorRows,
+  tableModelOptions, cycleTableModel, filterRowsByModel,
 } from './app.logic'
 import { openUrl, IS_TTY } from './ui/terminal'
 import { handleKey } from './ui/keybindings'
@@ -66,6 +67,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const [expanded, setExpanded] = useState(-1)
   const [sort, setSort] = useState(1)
   const [tableProvider, setTableProvider] = useState<ProviderId | null>(null)
+  const [tableModel, setTableModel] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [searchMode, setSearchMode] = useState(false)
   const [cursorRowsLocal, setCursorRows] = useState<CursorModelSpend[] | null>(null)
@@ -255,6 +257,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   useEffect(() => {
     setTable(null); setCursorRows(null)
     setCursor(0); setExpanded(-1)
+    setTableModel(null)
     setSort(tableIsCursor ? 0 : 1)
     setTableLoading(false)
   }, [tableKey])
@@ -286,7 +289,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     return () => { active = false; clearTimeout(timer) }
   }, [degraded, tab, tableKey, interval])
 
-  useEffect(() => { setCursor(0); setExpanded(-1) }, [search])
+  useEffect(() => { setCursor(0); setExpanded(-1) }, [search, tableModel])
 
   useEffect(() => { setDashPage(p => Math.min(p, dashPageCount - 1)) }, [dashPageCount])
   useEffect(() => {
@@ -400,7 +403,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     setTableProvider(nextProv)
     const nextIsCursor = !!nextProv && !PROVIDERS[nextProv].hasUsage
     setSort(nextIsCursor ? 0 : 1)
-    setCursor(0); setExpanded(-1); setSearch(''); setSearchCaret(0); setSearchMode(false)
+    setCursor(0); setExpanded(-1); setTableModel(null); setSearch(''); setSearchCaret(0); setSearchMode(false)
   }, [tableProvs, effTableProvider])
 
   const {
@@ -432,18 +435,31 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     updateConfig(c => ({ ...c, activeAccountId: slots[i].id })); resetView()
   }, [slots, updateConfig, resetView])
   const onProviderSelect = useCallback((p: ProviderId) => {
-    setTableProvider(p); setCursor(0); setExpanded(-1); setSearch(''); setSearchCaret(0); setSearchMode(false)
+    setTableProvider(p); setCursor(0); setExpanded(-1); setTableModel(null); setSearch(''); setSearchCaret(0); setSearchMode(false)
   }, [])
   const onRowClickToken = useCallback((idx: number) => {
     if (idx === cursor) setExpanded(e => e === idx ? -1 : idx); else setCursor(idx)
   }, [cursor])
   const onRowClickCursor = useCallback((idx: number) => setCursor(idx), [])
 
+  const rawTokenRows = useMemo(
+    () => tab === 1 && !tableIsCursor ? (table ? [table.daily, table.weekly, table.monthly][view] : []) : [],
+    [tab, tableIsCursor, table, view],
+  )
+  const tokenModelOptions = useMemo(() => tableModelOptions(rawTokenRows), [rawTokenRows])
+  useEffect(() => {
+    if (tableModel && !tokenModelOptions.includes(tableModel)) setTableModel(null)
+  }, [tableModel, tokenModelOptions])
+  const cycleTableModelFilter = useCallback((dir: 1 | -1): void => {
+    setTableModel(cur => cycleTableModel(cur, tokenModelOptions, dir))
+    resetView()
+  }, [tokenModelOptions, resetView])
+  const activeTableModel = tableModel && tokenModelOptions.includes(tableModel) ? tableModel : null
   const tokenRows = useMemo(
     () => tab === 1 && !tableIsCursor
-      ? sortRows(filterTokenRows(table ? [table.daily, table.weekly, table.monthly][view] : [], search), sort)
+      ? sortRows(filterTokenRows(filterRowsByModel(rawTokenRows, activeTableModel), search), sort)
       : [],
-    [tab, tableIsCursor, table, view, search, sort],
+    [tab, tableIsCursor, rawTokenRows, activeTableModel, search, sort],
   )
   const cursorTableRows = useMemo(
     () => tab === 1 && tableIsCursor
@@ -460,7 +476,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     showLoader, configReady, toggleWeb, settingsCursor, settingsTab, setSettingsTab, setShowSettings, cfg, trackedAccountRows, moveAccount,
     setSettingsCursor, toggleProvider, openEditAccount, openConfigureAccount, deleteAccount, openAddAccount, cycleAccount, setTab,
     resetView, slots, dashPaginated, dashPageCount, setDashPage, cycleTableProvider, setExpanded, setSort,
-    SORTS_FOR, tableIsCursor, setView, cursor, rowCountRef, rows, setCursor, clampRow,
+    SORTS_FOR, tableIsCursor, cycleTableModel: cycleTableModelFilter, setView, cursor, rowCountRef, rows, setCursor, clampRow,
   }), { isActive: IS_TTY })
 
   if (error) return <Box padding={1}><Text color="red">{error}</Text></Box>
@@ -560,7 +576,8 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
               )}
               <Box height={1} />
               <ControlBar views={VIEWS} period={view} sort={sortLabel(SORTS_FOR[sort % SORTS_FOR.length])}
-                search={search} searchCaret={searchCaret} searching={searchMode} showPeriod={!tableIsCursor} />
+                model={activeTableModel} search={search} searchCaret={searchCaret} searching={searchMode}
+                showPeriod={!tableIsCursor} showModel={!tableIsCursor} />
               <Box height={1} />
               {!effTableProvider ? (
                 <Text dimColor>No providers enabled {glyphs().emDash} press s to pick providers.</Text>

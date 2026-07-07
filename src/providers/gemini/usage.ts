@@ -1,10 +1,10 @@
-import { readdir, stat as fsStat } from 'node:fs/promises'
+import { readFile, stat as fsStat } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
-import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince } from '../usage-core'
+import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince, walkFiles } from '../usage-core'
 
 const PRICING: Record<string, { in: number; out: number; cr: number }> = {
   'gemini-3.1-pro-preview': { in: 2e-6, out: 12e-6, cr: 0.2e-6 },
@@ -12,8 +12,8 @@ const PRICING: Record<string, { in: number; out: number; cr: number }> = {
   'gemini-3-pro-preview': { in: 2e-6, out: 12e-6, cr: 0.2e-6 },
   'gemini-3-pro': { in: 2e-6, out: 12e-6, cr: 0.2e-6 },
   'gemini-3.5-flash': { in: 1.5e-6, out: 9e-6, cr: 0.15e-6 },
-  'gemini-3-flash-preview': { in: 1.5e-6, out: 9e-6, cr: 0.15e-6 },
-  'gemini-3-flash': { in: 1.5e-6, out: 9e-6, cr: 0.15e-6 },
+  'gemini-3-flash-preview': { in: 0.5e-6, out: 3e-6, cr: 0.05e-6 },
+  'gemini-3-flash': { in: 0.5e-6, out: 3e-6, cr: 0.05e-6 },
   'gemini-2.5-flash-lite': { in: 0.1e-6, out: 0.4e-6, cr: 0.01e-6 },
   'gemini-3.1-flash-lite': { in: 0.1e-6, out: 0.4e-6, cr: 0.01e-6 },
   'gemini-2.5-flash': { in: 0.3e-6, out: 2.5e-6, cr: 0.03e-6 },
@@ -46,40 +46,82 @@ function isGeminiSessionFile(path: string): boolean {
     || /(^|[\\/])chats[\\/]session-.*\.json$/.test(path)
 }
 
-async function parseFile(path: string): Promise<Entry[]> {
+function entryFromObject(obj: any): Entry | null {
+  if ((obj.sessionId && obj.kind) || obj.$set || obj.$rewindTo) return null
+  if (obj.type !== 'gemini' || !obj.tokens) return null
+
+  const ts = Date.parse(obj.timestamp ?? '')
+  if (!Number.isFinite(ts)) return null
+
+  const t = obj.tokens
+  const input = Math.max(0, safeNum(t.input) + safeNum(t.tool) - safeNum(t.cached))
+  const output = safeNum(t.output) + safeNum(t.thoughts)
+  const cacheRead = safeNum(t.cached)
+  if (input + output + cacheRead === 0) return null
+
+  const model = typeof obj.model === 'string' && obj.model ? obj.model : 'unknown'
+  const p = priceFor(model)
+  return {
+    id: typeof obj.id === 'string' ? obj.id : undefined,
+    ts,
+    model: shortModel(model),
+    cost: input * p.in + cacheRead * p.cr + output * p.out,
+    input,
+    output,
+    cacheCreate: 0,
+    cacheRead,
+    cacheSavings: cacheRead * (p.in - p.cr),
+  }
+}
+
+function entriesFromJson(value: unknown): Entry[] {
   const entries: Entry[] = []
-  const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity })
-  for await (const line of rl) {
+  const visit = (v: unknown) => {
+    if (Array.isArray(v)) {
+      for (const item of v) visit(item)
+      return
+    }
+    if (!v || typeof v !== 'object') return
+    const obj = v as Record<string, unknown>
+    const entry = entryFromObject(obj)
+    if (entry) {
+      entries.push(entry)
+      return
+    }
+    for (const key of ['events', 'messages', 'entries', 'records']) {
+      const nested = obj[key]
+      if (Array.isArray(nested)) visit(nested)
+    }
+  }
+  visit(value)
+  return entries
+}
+
+async function parseLineFile(path: string): Promise<Entry[]> {
+  const entries: Entry[] = []
+  const input = createReadStream(path)
+  input.on('error', () => {})
+  const rl = createInterface({ input, crlfDelay: Infinity })
+  try {
+    for await (const line of rl) {
+      try {
+        const obj = JSON.parse(line.charCodeAt(0) === 0xFEFF ? line.slice(1) : line)
+        const entry = entryFromObject(obj)
+        if (entry) entries.push(entry)
+      } catch {}
+    }
+  } catch {}
+  return entries
+}
+
+async function parseFile(path: string): Promise<Entry[]> {
+  if (path.endsWith('.json')) {
     try {
-      const obj = JSON.parse(line.charCodeAt(0) === 0xFEFF ? line.slice(1) : line)
-      if ((obj.sessionId && obj.kind) || obj.$set || obj.$rewindTo) continue
-      if (obj.type !== 'gemini' || !obj.tokens) continue
-
-      const ts = Date.parse(obj.timestamp ?? '')
-      if (!Number.isFinite(ts)) continue
-
-      const t = obj.tokens
-      const input = Math.max(0, safeNum(t.input) + safeNum(t.tool) - safeNum(t.cached))
-      const output = safeNum(t.output) + safeNum(t.thoughts)
-      const cacheRead = safeNum(t.cached)
-      if (input + output + cacheRead === 0) continue
-
-      const model = typeof obj.model === 'string' && obj.model ? obj.model : 'unknown'
-      const p = priceFor(model)
-      entries.push({
-        id: typeof obj.id === 'string' ? obj.id : undefined,
-        ts,
-        model: shortModel(model),
-        cost: input * p.in + cacheRead * p.cr + output * p.out,
-        input,
-        output,
-        cacheCreate: 0,
-        cacheRead,
-        cacheSavings: cacheRead * (p.in - p.cr),
-      })
+      const raw = await readFile(path, 'utf-8')
+      return entriesFromJson(JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw))
     } catch {}
   }
-  return entries
+  return parseLineFile(path)
 }
 
 async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
@@ -87,16 +129,12 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   const seen = new Set<string>()
   const seenIno = new Set<string>()
 
-  let listing: string[]
-  try {
-    listing = await readdir(geminiTmpDir(homeDir), { recursive: true })
-  } catch {
-    return []
-  }
+  const root = geminiTmpDir(homeDir)
+  const listing = await walkFiles(root)
 
   for (const f of listing) {
     if (!isGeminiSessionFile(f)) continue
-    const path = join(geminiTmpDir(homeDir), f)
+    const path = join(root, f)
     if (seen.has(path)) continue
     seen.add(path)
     try {

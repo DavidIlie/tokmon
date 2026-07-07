@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { resetIn } from '../../format'
@@ -7,20 +7,43 @@ import { expandHome } from '../../config'
 import type { Account, BillingResult, Metric } from '../types'
 import { identityFields } from '../_shared/identity'
 import { finite, numberValue, percentMetric } from '../_shared/metric'
-import { readMacKeychainRaw } from '../_shared/keychain'
+import { msToIso } from '../_shared/time'
+import { readMacKeychainFileRaw, readMacKeychainRaw } from '../_shared/keychain'
 import { readClaudeIdentity } from './identity'
 import { claudeConfigDirs } from './usage'
 
+interface UsageWindow {
+  utilization?: unknown
+  resets_at?: unknown
+}
+
+interface OAuthLimit {
+  kind?: unknown
+  group?: unknown
+  percent?: unknown
+  resets_at?: unknown
+  scope?: {
+    model?: {
+      id?: unknown
+      display_name?: unknown
+    } | null
+    surface?: unknown
+  } | null
+  severity?: unknown
+  is_active?: unknown
+}
+
 interface OAuthResponse {
-  five_hour?: { utilization?: unknown; resets_at?: unknown }
-  seven_day?: { utilization?: unknown; resets_at?: unknown }
-  seven_day_sonnet?: { utilization?: unknown; resets_at?: unknown } | null
+  limits?: OAuthLimit[] | null
   extra_usage?: {
     is_enabled?: unknown
     monthly_limit?: unknown
     used_credits?: unknown
+    decimal_places?: unknown
     currency?: string | null
   } | null
+  spend?: unknown
+  [key: string]: unknown
 }
 
 interface ClaudeAuth {
@@ -62,6 +85,23 @@ async function readMacKeychain(): Promise<ClaudeAuth | null> {
   return raw ? parseAuth(raw) : null
 }
 
+// Alternate accounts are typically launched with HOME=<altHome> and an isolated
+// login keychain inside that home (so Claude Code's keychain writes don't fight
+// over the single machine-wide slot). On macOS Claude Code prefers the keychain
+// over .credentials.json, so that per-home keychain file is often the ONLY
+// place the account's OAuth token lives.
+async function readHomeKeychain(homeDir: string): Promise<ClaudeAuth | null> {
+  if (process.platform !== 'darwin') return null
+  const keychainPath = join(homeDir, 'Library', 'Keychains', 'login.keychain-db')
+  try {
+    await access(keychainPath)
+  } catch {
+    return null
+  }
+  const raw = await readMacKeychainFileRaw('Claude Code-credentials', keychainPath)
+  return raw ? parseAuth(raw) : null
+}
+
 interface AuthCandidate {
   auth: ClaudeAuth
   // The keychain item is a single machine-wide slot shared by every Claude Code
@@ -76,10 +116,17 @@ async function authCandidates(homeDir?: string): Promise<AuthCandidate[]> {
   const out: AuthCandidate[] = []
   const file = await readCredentialsFile(isDefault ? undefined : expandedHomeDir)
   const keychain = process.platform === 'darwin' ? await readMacKeychain() : null
-  // Default account: keychain first (Claude Code keeps it fresher than the file); alt accounts: own file first.
+  const homeKeychain = !isDefault && expandedHomeDir ? await readHomeKeychain(expandedHomeDir) : null
+  // Default account: keychain first (Claude Code keeps it fresher than the file).
+  // Alt accounts: their own home's keychain first (same freshness argument), then
+  // their own file creds, then the shared machine slot as a last resort.
   const ordered = isDefault
     ? [keychain && { auth: keychain, shared: true }, file && { auth: file, shared: false }]
-    : [file && { auth: file, shared: false }, keychain && { auth: keychain, shared: true }]
+    : [
+        homeKeychain && { auth: homeKeychain, shared: false },
+        file && { auth: file, shared: false },
+        keychain && { auth: keychain, shared: true },
+      ]
   for (const c of ordered) if (c) out.push(c)
   return out
 }
@@ -134,8 +181,13 @@ async function getAuth(homeDir: string | undefined, expectedUuid: string | undef
   const candidates = await authCandidates(homeDir)
   let wrongAccountEmail: string | null | undefined
   let sawExpired = false
+  let sawExpiredOwn = false
   for (const { auth, shared } of candidates) {
-    if (auth.expiresAt !== undefined && auth.expiresAt < Date.now() - 60_000) { sawExpired = true; continue }
+    if (auth.expiresAt !== undefined && auth.expiresAt < Date.now() - 60_000) {
+      sawExpired = true
+      if (!shared) sawExpiredOwn = true
+      continue
+    }
     // Account-scoped file creds are trusted as-is; the shared keychain slot must
     // prove it holds THIS account's token before we attribute its data here.
     if (!shared || !expectedUuid) return { auth }
@@ -145,6 +197,9 @@ async function getAuth(homeDir: string | undefined, expectedUuid: string | undef
     if (identity.accountUuid === expectedUuid) return { auth }
     wrongAccountEmail = identity.email
   }
+  // The account's OWN (non-shared) creds being expired is the actionable state;
+  // reporting the shared keychain's foreign identity instead would mis-diagnose.
+  if (sawExpiredOwn) return { auth: null, expired: true }
   if (wrongAccountEmail !== undefined) return { auth: null, wrongAccountEmail }
   return { auth: null, expired: sawExpired }
 }
@@ -171,14 +226,100 @@ function resetFrom(value: unknown): string | null {
   if (typeof value === 'string' && value.trim()) return resetIn(value)
   const n = numberValue(value)
   if (n === undefined) return null
-  const ms = Math.abs(n) < 10_000_000_000 ? n * 1000 : n
-  return resetIn(new Date(ms).toISOString())
+  const iso = msToIso(Math.abs(n) < 10_000_000_000 ? n * 1000 : n)
+  return iso ? resetIn(iso) : null
 }
 
-function usageMetric(label: string, window: { utilization?: unknown; resets_at?: unknown } | null | undefined, primary?: boolean): Metric | null {
+function usageMetric(label: string, window: UsageWindow | null | undefined, primary?: boolean): Metric | null {
   const used = numberValue(window?.utilization)
   if (used === undefined) return null
   return { ...pct(used, resetFrom(window?.resets_at), primary), label }
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function titleCaseWords(value: string): string {
+  return value
+    .split('_')
+    .filter(Boolean)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
+
+function limitLabel(entry: Record<string, unknown>): string | null {
+  const scope = recordValue(entry.scope)
+  const model = recordValue(scope?.model)
+  const displayName = nonEmptyString(model?.display_name)
+  if (displayName) return displayName
+
+  const kind = nonEmptyString(entry.kind)
+  const normalizedKind = kind?.toLowerCase()
+  if (normalizedKind === 'session') return 'Session'
+  if (normalizedKind === 'weekly_all') return 'Weekly'
+
+  const source = kind ?? nonEmptyString(entry.group)
+  return source ? titleCaseWords(source) : null
+}
+
+function limitIsSession(entry: unknown): boolean {
+  const o = recordValue(entry)
+  if (!o) return false
+  return nonEmptyString(o.group)?.toLowerCase() === 'session'
+    || nonEmptyString(o.kind)?.toLowerCase() === 'session'
+}
+
+function limitMetric(entry: unknown, primary?: boolean): Metric | null {
+  const o = recordValue(entry)
+  if (!o) return null
+  const used = numberValue(o.percent)
+  if (used === undefined) return null
+  const label = limitLabel(o)
+  if (!label) return null
+  return percentMetric(label, used, resetFrom(o.resets_at), primary)
+}
+
+function limitMetrics(limits: unknown): Metric[] {
+  if (!Array.isArray(limits)) return []
+  const metrics: Metric[] = []
+  let sawSession = false
+  for (const entry of limits) {
+    const primary = limitIsSession(entry) && !sawSession
+    const metric = limitMetric(entry, primary ? true : undefined)
+    if (limitIsSession(entry)) sawSession = true
+    if (metric) metrics.push(metric)
+  }
+  return metrics
+}
+
+function usageLabelFromKey(key: string): string {
+  if (key === 'five_hour') return 'Session'
+  if (key === 'seven_day') return 'Weekly'
+  if (key.startsWith('seven_day_')) return titleCaseWords(key.slice('seven_day_'.length))
+  return titleCaseWords(key)
+}
+
+function topLevelUsageMetrics(data: OAuthResponse): Metric[] {
+  const metrics: Metric[] = []
+  for (const [key, value] of Object.entries(data)) {
+    if (key === 'extra_usage' || key === 'spend') continue
+    const window = recordValue(value)
+    if (!window || numberValue(window.utilization) === undefined) continue
+    const metric = usageMetric(usageLabelFromKey(key), window, key === 'five_hour' ? true : undefined)
+    if (metric) metrics.push(metric)
+  }
+  return metrics
+}
+
+function decimalScale(value: unknown): number {
+  const n = numberValue(value)
+  const places = n !== undefined && Number.isInteger(n) ? Math.min(4, Math.max(0, n)) : 2
+  return 10 ** places
 }
 
 export async function claudeBilling(account: Account): Promise<BillingResult> {
@@ -213,23 +354,18 @@ export async function claudeBilling(account: Account): Promise<BillingResult> {
     if (!res.ok) return { plan, metrics: [], error: `API ${res.status}`, ...identityFields(identity) }
 
     const data = await readJson<OAuthResponse>(res)
-    if (!data) return { plan, metrics: [], error: 'Unexpected API response', ...identityFields(identity) }
-    const metrics: Metric[] = []
-
-    const fiveHour = usageMetric('Session', data.five_hour, true)
-    if (fiveHour) metrics.push(fiveHour)
-    const sevenDay = usageMetric('Weekly', data.seven_day)
-    if (sevenDay) metrics.push(sevenDay)
-    const sevenDaySonnet = usageMetric('Sonnet', data.seven_day_sonnet)
-    if (sevenDaySonnet) metrics.push(sevenDaySonnet)
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return { plan, metrics: [], error: 'Unexpected API response', ...identityFields(identity) }
+    const metrics: Metric[] = limitMetrics(data.limits)
+    if (metrics.length === 0) metrics.push(...topLevelUsageMetrics(data))
     if (boolValue(data.extra_usage?.is_enabled)) {
       const usedCredits = numberValue(data.extra_usage?.used_credits)
       const monthlyLimit = numberValue(data.extra_usage?.monthly_limit)
       if (usedCredits !== undefined && (usedCredits > 0 || (monthlyLimit !== undefined && monthlyLimit > 0))) {
+        const scale = decimalScale(data.extra_usage?.decimal_places)
         metrics.push({
           label: 'Extra',
-          used: finite(usedCredits) / 100,
-          limit: monthlyLimit !== undefined && monthlyLimit > 0 ? monthlyLimit / 100 : null,
+          used: finite(usedCredits) / scale,
+          limit: monthlyLimit !== undefined && monthlyLimit > 0 ? monthlyLimit / scale : null,
           format: { kind: 'dollars', currency: data.extra_usage?.currency ?? 'USD' },
         })
       }

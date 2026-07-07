@@ -1,17 +1,22 @@
-import { readdir, stat as fsStat, access, open as openFile } from 'node:fs/promises'
+import { stat as fsStat, access, open as openFile } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
 import { envDir } from '../../config'
-import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince } from '../usage-core'
+import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince, walkFiles } from '../usage-core'
 
 const PRICING: Record<string, { in: number; cr: number; out: number }> = {
   'gpt-5.5-codex': { in: 5e-6, cr: 0.5e-6, out: 30e-6 },
   'gpt-5.5': { in: 5e-6, cr: 0.5e-6, out: 30e-6 },
   'gpt-5.4-codex': { in: 2.5e-6, cr: 0.25e-6, out: 15e-6 },
   'gpt-5.4': { in: 2.5e-6, cr: 0.25e-6, out: 15e-6 },
+  'gpt-5.3-codex': { in: 1.75e-6, cr: 0.175e-6, out: 14e-6 },
+  'gpt-5.3': { in: 1.75e-6, cr: 0.175e-6, out: 14e-6 },
+  'gpt-5.2-codex': { in: 1.75e-6, cr: 0.175e-6, out: 14e-6 },
+  'gpt-5.2': { in: 1.75e-6, cr: 0.175e-6, out: 14e-6 },
+  'gpt-5.1': { in: 1.25e-6, cr: 0.125e-6, out: 10e-6 },
   'gpt-5-codex': { in: 1.25e-6, cr: 0.125e-6, out: 10e-6 },
   'gpt-5-mini': { in: 0.25e-6, cr: 0.025e-6, out: 2e-6 },
   'gpt-5-nano': { in: 0.05e-6, cr: 0.005e-6, out: 0.4e-6 },
@@ -318,12 +323,7 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
 
   for (const home of codexHomes(homeDir)) {
     for (const dir of [join(home, 'sessions'), join(home, 'archived_sessions')]) {
-      let listing: string[]
-      try {
-        listing = await readdir(dir, { recursive: true })
-      } catch {
-        continue
-      }
+      const listing = await walkFiles(dir)
       for (const f of listing) {
         if (!f.endsWith('.jsonl')) continue
         const path = join(dir, f)
@@ -331,6 +331,7 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
         seen.add(path)
         try {
           const s = await fsStat(path)
+          if (s.mtimeMs < since) continue
           if (s.ino && process.platform !== 'win32') {
             const idn = `${s.dev}:${s.ino}`
             if (seenIno.has(idn)) continue

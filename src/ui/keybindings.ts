@@ -89,6 +89,7 @@ export interface KeyContext {
   setSort: Dispatch<SetStateAction<number>>
   SORTS_FOR: readonly { label: string; dir: 'up' | 'down' | null }[]
   tableIsCursor: boolean
+  cycleTableModel: (dir: 1 | -1) => void
   setView: Dispatch<SetStateAction<number>>
   cursor: number
   rowCountRef: MutableRefObject<number>
@@ -106,7 +107,7 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
     showLoader, configReady, toggleWeb, settingsCursor, settingsTab, setSettingsTab, setShowSettings, cfg, trackedAccountRows, moveAccount,
     setSettingsCursor, toggleProvider, openEditAccount, openConfigureAccount, deleteAccount, openAddAccount, cycleAccount, setTab,
     resetView, slots, dashPaginated, dashPageCount, setDashPage, cycleTableProvider, setExpanded, setSort,
-    SORTS_FOR, tableIsCursor, setView, cursor, rowCountRef, rows, setCursor, clampRow,
+    SORTS_FOR, tableIsCursor, cycleTableModel, setView, cursor, rowCountRef, rows, setCursor, clampRow,
   } = ctx
 
   if (showPicker) {
@@ -338,7 +339,8 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
     if (!tableIsCursor) {
       if (input === 'd') { setView(0); resetView(); return }
       if (input === 'w') { setView(1); resetView(); return }
-      if (input === 'm') { setView(2); resetView(); return }
+      if (input === 'm') { cycleTableModel(1); return }
+      if (input === 'M') { cycleTableModel(-1); return }
       if (key.leftArrow) { setView(v => (v - 1 + VIEWS.length) % VIEWS.length); resetView(); return }
       if (key.rightArrow) { setView(v => (v + 1) % VIEWS.length); resetView(); return }
       if (key.return) { setExpanded(e => e === cursor ? -1 : cursor); return }

@@ -1,10 +1,12 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import type { Derived } from '../lib/derive'
+import type { ModelSpotlightData } from '../lib/derive.explore'
 import { ShareSheet } from './share-sheet'
 
 export type ShareSource =
   | { kind: 'summary'; derived: Derived; periodLabel: string; tz: string; version: string }
   | { kind: 'panel'; node: HTMLElement; captureName: string }
+  | ({ kind: 'model'; model: string; periodLabel: string; tz: string; version: string } & ModelSpotlightData)
 
 const ShareCtx = createContext<(s: ShareSource) => void>(() => {})
 export const useShare = () => useContext(ShareCtx)

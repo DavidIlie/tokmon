@@ -1,7 +1,37 @@
 import type { WebSnapshot, TableRow } from '@shared'
 import { weekStartStr } from './date'
 import { sumTokens } from './format'
-import { selectAccounts, latestDayOf, granRangeStart, type Filters, type Granularity } from './derive.filters'
+import { selectAccounts, latestDayOf, granRangeStart, rangeStartOf, type Filters, type Granularity } from './derive.filters'
+
+export interface ModelSpotlightAccount {
+  name: string
+  color: string
+  provider: string
+  providerId: string
+  tokens: number
+  cost: number
+}
+
+export interface ModelSpotlightTotals {
+  input: number
+  output: number
+  cacheCreate: number
+  cacheRead: number
+  cost: number
+  count: number
+}
+
+export interface ModelSpotlightDay {
+  day: string
+  cost: number
+  tokens: number
+}
+
+export interface ModelSpotlightData {
+  accounts: ModelSpotlightAccount[]
+  totals: ModelSpotlightTotals
+  daily: ModelSpotlightDay[]
+}
 
 function sumBreakdown(rows: TableRow['breakdown']) {
   return rows.reduce((agg, m) => {
@@ -57,4 +87,66 @@ export function exploreRows(snap: WebSnapshot | null, f: Filters, gran: Granular
     }
   }
   return [...byLabel.values()]
+}
+
+function emptyModelTotals(): ModelSpotlightTotals {
+  return { input: 0, output: 0, cacheCreate: 0, cacheRead: 0, cost: 0, count: 0 }
+}
+
+function addModelTotals(t: ModelSpotlightTotals, m: TableRow['breakdown'][number]): void {
+  t.input += m.input
+  t.output += m.output
+  t.cacheCreate += m.cacheCreate
+  t.cacheRead += m.cacheRead
+  t.cost += m.cost
+  t.count += m.count
+}
+
+export function deriveModelSpotlight(snap: WebSnapshot | null, f: Filters, model: string): ModelSpotlightData | null {
+  if (!snap) return null
+  const accounts = selectAccounts(snap, f)
+  const latest = latestDayOf(accounts)
+  const rangeStart = rangeStartOf(f.period, latest, snap.tz)
+  const inRange = (label: string) => !rangeStart || label >= rangeStart
+  const providerName = new Map(snap.providers.map(p => [p.id, p.name]))
+
+  const totals = emptyModelTotals()
+  const daily = new Map<string, ModelSpotlightDay>()
+  const accountRows: ModelSpotlightAccount[] = []
+
+  for (const account of accounts) {
+    const accountTotals = emptyModelTotals()
+    for (const row of account.table?.daily ?? []) {
+      if (!inRange(row.label)) continue
+      const detail = row.breakdown.find(m => m.name === model)
+      if (!detail) continue
+
+      const tokens = sumTokens(detail)
+      addModelTotals(totals, detail)
+      addModelTotals(accountTotals, detail)
+
+      const day = daily.get(row.label) ?? { day: row.label, cost: 0, tokens: 0 }
+      day.cost += detail.cost
+      day.tokens += tokens
+      daily.set(row.label, day)
+    }
+
+    const accountTokens = sumTokens(accountTotals)
+    if (accountTokens > 0 || accountTotals.cost > 0 || accountTotals.count > 0) {
+      accountRows.push({
+        name: account.name,
+        color: account.color,
+        provider: providerName.get(account.providerId) ?? account.providerId,
+        providerId: account.providerId,
+        tokens: accountTokens,
+        cost: accountTotals.cost,
+      })
+    }
+  }
+
+  return {
+    accounts: accountRows.sort((a, b) => b.cost - a.cost || b.tokens - a.tokens || a.name.localeCompare(b.name)),
+    totals,
+    daily: [...daily.values()].sort((a, b) => a.day.localeCompare(b.day)),
+  }
 }

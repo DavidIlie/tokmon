@@ -8,6 +8,7 @@ import type { CursorModelSpend } from '../providers/cursor/composer'
 import { ClickableBox } from './shared'
 import { CaretText } from './settings'
 import { glyphs } from '../glyphs'
+import { modelColor } from '../shared/colors'
 
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -34,14 +35,16 @@ export const TableProviderBar = memo(function TableProviderBar({ providers, acti
   )
 })
 
-export const ControlBar = memo(function ControlBar({ views, period, sort, search, searchCaret, searching, showPeriod }: {
+export const ControlBar = memo(function ControlBar({ views, period, sort, model, search, searchCaret, searching, showPeriod, showModel }: {
   views: readonly string[]
   period: number
   sort: string
+  model: string | null
   search: string
   searchCaret: number
   searching: boolean
   showPeriod: boolean
+  showModel: boolean
 }) {
   return (
     <Box>
@@ -57,6 +60,12 @@ export const ControlBar = memo(function ControlBar({ views, period, sort, search
       )}
       <Text dimColor>sort </Text><Text bold color="magenta">{sort}</Text>
       <Text dimColor>  o cycle  {glyphs().middot}  </Text>
+      {showModel && (
+        <>
+          <Text dimColor>model </Text><Text bold color={model ? modelColor(model) : 'cyan'}>{model ?? 'all'}</Text>
+          <Text dimColor>  m model  {glyphs().middot}  </Text>
+        </>
+      )}
       {searching
         ? <><Text dimColor>/</Text><CaretText value={search} caret={searchCaret} color="cyan" /></>
         : search

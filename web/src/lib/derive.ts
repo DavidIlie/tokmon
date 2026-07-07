@@ -5,7 +5,7 @@ import type { Filters } from './derive.filters'
 import { selectAccounts, selectCardAccounts, latestDayOf, rangeStartOf } from './derive.filters'
 
 export * from './derive.filters'
-export { exploreRows } from './derive.explore'
+export { exploreRows, deriveModelSpotlight } from './derive.explore'
 
 
 export interface Totals {

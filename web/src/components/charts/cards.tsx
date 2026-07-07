@@ -95,7 +95,7 @@ function ProviderCard({ account, index, providerName }: { account: WebAccount; i
 
       {metrics.length > 0 && (
         <div className={`flex flex-col gap-2 ${d ? 'mt-3 border-t border-line-faint pt-3' : 'mt-4'}`}>
-          {metrics.slice(0, 8).map(m => <QuotaBar key={m.label} metric={m} />)}
+          {metrics.slice(0, 8).map((m, i) => <QuotaBar key={`${m.label}${i}`} metric={m} />)}
         </div>
       )}
 

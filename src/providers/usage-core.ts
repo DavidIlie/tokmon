@@ -1,4 +1,5 @@
-import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
+import { readFile, writeFile, rename, mkdir, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { UsageSummary, TableRow, ModelDetail, DashboardData, TableData } from '../types'
 import { dayKey, monthKey, weekKey, startOfDay, startOfMonth, startOfWeek, monthsAgoStart } from '../tz'
@@ -22,11 +23,12 @@ export interface Entry {
   cacheSavings: number
 }
 
-const CACHE_VERSION = 7
-const STABLE_AGE_MS = 5 * 60_000
-const PRUNE_AGE_MS = 200 * DAY_MS
+const CACHE_VERSION = 8
+// tableSince keeps 6 calendar months; month-start alignment can reach ~214 days.
+const PRUNE_AGE_MS = 230 * DAY_MS
 const memCache = new Map<string, { mtimeMs: number; size: number; entries: Entry[] }>()
 let diskLoaded = false
+let diskLoadPromise: Promise<void> | null = null
 let dirty = false
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -34,6 +36,19 @@ type Shard = { m: number; s: number; mods: string[]; rows: (number | string)[][]
 
 function cacheFile(): string {
   return join(cacheDir(), `usage-v${CACHE_VERSION}.json`)
+}
+
+async function cleanupOldCacheFiles(): Promise<void> {
+  try {
+    const dir = cacheDir()
+    const names = await readdir(dir)
+    await Promise.all(names.map(async (name) => {
+      const version = /^usage-v(\d+)\.json$/.exec(name)
+      const oldVersion = version ? Number(version[1]) !== CACHE_VERSION : false
+      const tmp = /^usage-v\d+\.json\..*\.tmp$/.test(name)
+      if (oldVersion || tmp) await unlink(join(dir, name)).catch(() => {})
+    }))
+  } catch {}
 }
 
 function encode(mtimeMs: number, size: number, entries: Entry[]): Shard {
@@ -68,23 +83,32 @@ function decode(s: Shard): Entry[] {
 
 async function ensureDiskLoaded(): Promise<void> {
   if (diskLoaded) return
-  diskLoaded = true
-  try {
-    const obj = JSON.parse(await readFile(cacheFile(), 'utf-8')) as Record<string, Shard>
-    for (const [path, s] of Object.entries(obj)) {
-      if (s && typeof s.m === 'number' && Array.isArray(s.rows) && Array.isArray(s.mods)) {
-        memCache.set(path, { mtimeMs: s.m, size: typeof s.s === 'number' ? s.s : -1, entries: decode(s) })
+  if (!diskLoadPromise) {
+    diskLoadPromise = (async () => {
+      try {
+        const obj = JSON.parse(await readFile(cacheFile(), 'utf-8')) as Record<string, Shard>
+        for (const [path, s] of Object.entries(obj)) {
+          if (s && typeof s.m === 'number' && Array.isArray(s.rows) && Array.isArray(s.mods)) {
+            memCache.set(path, { mtimeMs: s.m, size: typeof s.s === 'number' ? s.s : -1, entries: decode(s) })
+          }
+        }
+      } catch {
+      } finally {
+        await cleanupOldCacheFiles()
+        diskLoaded = true
       }
-    }
-  } catch {}
+    })().finally(() => { diskLoadPromise = null })
+  }
+  await diskLoadPromise
 }
 
 export async function flushDisk(): Promise<void> {
   if (!dirty) return
+  dirty = false
   const now = Date.now()
   const obj: Record<string, Shard> = {}
   for (const [path, v] of memCache) {
-    if (now - v.mtimeMs > STABLE_AGE_MS && now - v.mtimeMs < PRUNE_AGE_MS) {
+    if (now - v.mtimeMs < PRUNE_AGE_MS) {
       obj[path] = encode(v.mtimeMs, v.size, v.entries)
     }
   }
@@ -93,14 +117,36 @@ export async function flushDisk(): Promise<void> {
     const tmp = `${cacheFile()}.${process.pid}.tmp`
     await writeFile(tmp, JSON.stringify(obj))
     await rename(tmp, cacheFile())
-    dirty = false
-  } catch {}
+  } catch {
+    dirty = true
+  }
 }
 
 function scheduleFlush(): void {
   if (flushTimer) return
-  flushTimer = setTimeout(() => { flushTimer = null; void flushDisk() }, 4000)
+  flushTimer = setTimeout(() => { flushTimer = null; void flushDisk() }, 30000)
   flushTimer.unref?.()
+}
+
+export async function walkFiles(root: string): Promise<string[]> {
+  const files: string[] = []
+  const stack = ['']
+  while (stack.length > 0) {
+    const rel = stack.pop() ?? ''
+    const dir = rel ? join(root, rel) : root
+    let entries: Dirent<string>[]
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const child = rel ? join(rel, entry.name) : entry.name
+      if (entry.isDirectory()) stack.push(child)
+      else if (entry.isFile()) files.push(child)
+    }
+  }
+  return files
 }
 
 async function mapLimit<T>(items: T[], limit: number, fn: (t: T) => Promise<void>): Promise<void> {
@@ -123,7 +169,7 @@ export async function loadCachedEntries(
         const entries = await parse(f.path)
         c = { mtimeMs: f.mtimeMs, size: f.size, entries }
         memCache.set(f.path, c)
-        if (Date.now() - f.mtimeMs > STABLE_AGE_MS) dirty = true
+        dirty = true
       }
       chunks.push(c.entries)
     } catch {}
@@ -167,17 +213,14 @@ function cleanEntry(e: Entry): Entry {
 }
 
 export function dedupe(entries: Entry[]): Entry[] {
-  const seen = new Set<string>()
-  const out: Entry[] = []
+  const byKey = new Map<string, Entry>()
   for (const raw of entries) {
     const e = cleanEntry(raw)
     if (e.ts <= 0) continue
     const k = e.id ?? `${e.ts} ${e.model} ${e.input} ${e.output} ${e.cacheCreate} ${e.cacheRead} ${e.cost}`
-    if (seen.has(k)) continue
-    seen.add(k)
-    out.push(e)
+    byKey.set(k, e)
   }
-  return out
+  return [...byKey.values()]
 }
 
 export function summarize(entries: Entry[], tz: string): DashboardData {

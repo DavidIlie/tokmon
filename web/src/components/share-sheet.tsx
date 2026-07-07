@@ -3,6 +3,7 @@ import { copyNode, downloadNode, shareFilename } from '../lib/share'
 import { Check, Copy, Download, X } from './icons'
 import { Segmented } from './ui/controls'
 import { SummaryCard } from './summary-card'
+import { ModelShareCard } from './model-share-card'
 import { CaptureFrame } from './capture-frame'
 import type { ShareSource } from './share-provider'
 
@@ -11,20 +12,23 @@ type WmPos = 'footer' | 'corner'
 const STAGE_W = 600
 const STAGE_H = 360
 const bgFor = (t: Theme) => (t === 'light' ? '#f4f5f5' : '#0a0a0a')
+const modelSlug = (model: string) => model.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'model'
 
 export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: () => void }) {
   const isSummary = source.kind === 'summary'
+  const isModel = source.kind === 'model'
+  const isCard = isSummary || isModel
   const exportRef = useRef<HTMLDivElement>(null)
   const dlRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const doneTimer = useRef<ReturnType<typeof setTimeout>>()
 
   const [theme, setTheme] = useState<Theme>(() => (document.documentElement.classList.contains('light') ? 'light' : 'dark'))
-  const [wmPos, setWmPos] = useState<WmPos>(isSummary ? 'footer' : 'corner')
+  const [wmPos, setWmPos] = useState<WmPos>(isCard ? 'footer' : 'corner')
   const [scale, setScale] = useState<'1' | '2' | '3'>('2')
   const [glow, setGlow] = useState(true)
   const [framed, setFramed] = useState(true)
-  const [dims, setDims] = useState({ w: isSummary ? 1040 : 700, h: isSummary ? 540 : 360 })
+  const [dims, setDims] = useState({ w: isSummary ? 1040 : isModel ? 900 : 700, h: isCard ? 540 : 360 })
   const [done, setDone] = useState<'dl' | 'copy' | 'fail' | null>(null)
 
   useEffect(() => {
@@ -64,7 +68,7 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
 
   const k = Math.min(STAGE_W / dims.w, STAGE_H / dims.h, 1)
   const opts = { pixelRatio: Number(scale), backgroundColor: bgFor(theme) }
-  const filename = shareFilename(isSummary ? 'summary' : source.captureName)
+  const filename = shareFilename(isSummary ? 'summary' : isModel ? `model-${modelSlug(source.model)}` : source.captureName)
 
   const onDownload = async () => {
     if (!exportRef.current) return
@@ -94,9 +98,13 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
           <div className="overflow-hidden rounded" style={{ width: dims.w * k, height: dims.h * k }}>
             <div style={{ width: dims.w, height: dims.h, transform: `scale(${k})`, transformOrigin: 'top left' }}>
               <div className={theme === 'light' ? 'light' : 'dark'}>
-                {isSummary
-                  ? <SummaryCard ref={exportRef} derived={source.derived} periodLabel={source.periodLabel} tz={source.tz} version={source.version} opts={{ glow, wmPos }} />
-                  : <CaptureFrame ref={exportRef} node={source.node} title={source.captureName} framed={framed} wmPos={wmPos} />}
+                {isSummary ? (
+                  <SummaryCard ref={exportRef} derived={source.derived} periodLabel={source.periodLabel} tz={source.tz} version={source.version} opts={{ glow, wmPos }} />
+                ) : isModel ? (
+                  <ModelShareCard ref={exportRef} source={source} opts={{ glow, wmPos }} />
+                ) : (
+                  <CaptureFrame ref={exportRef} node={source.node} title={source.captureName} framed={framed} wmPos={wmPos} />
+                )}
               </div>
             </div>
           </div>
@@ -109,7 +117,7 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
           <Chip label="mark">
             <Segmented<WmPos> size="xs" containerClassName={SEG} ariaLabel="watermark position" options={[{ value: 'footer', label: 'footer' }, { value: 'corner', label: 'corner' }]} value={wmPos} onChange={setWmPos} />
           </Chip>
-          {isSummary ? (
+          {isCard ? (
             <Chip label="glow">
               <Segmented<'on' | 'off'> size="xs" containerClassName={SEG} ariaLabel="accent glow" options={[{ value: 'on', label: 'on' }, { value: 'off', label: 'off' }]} value={glow ? 'on' : 'off'} onChange={v => setGlow(v === 'on')} />
             </Chip>

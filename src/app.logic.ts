@@ -77,6 +77,48 @@ export function sortRows(rows: TableRow[], sortIdx: number): TableRow[] {
   }
 }
 
+export function tableModelOptions(rows: TableRow[]): string[] {
+  const models = new Set<string>()
+  for (const row of rows) for (const model of row.breakdown) models.add(model.name)
+  return [...models].sort()
+}
+
+export function cycleTableModel(current: string | null, models: readonly string[], dir: 1 | -1): string | null {
+  if (models.length === 0) return null
+  const idx = current ? models.indexOf(current) : -1
+  if (dir === 1) {
+    if (idx < 0) return models[0]
+    return idx === models.length - 1 ? null : models[idx + 1]
+  }
+  if (idx < 0) return models[models.length - 1]
+  return idx === 0 ? null : models[idx - 1]
+}
+
+export function filterRowsByModel(rows: TableRow[], model: string | null): TableRow[] {
+  if (!model) return rows
+  return rows.flatMap(row => {
+    const detail = row.breakdown.find(m => m.name === model)
+    if (!detail) return []
+    const input = detail.input
+    const output = detail.output
+    const cacheCreate = detail.cacheCreate
+    const cacheRead = detail.cacheRead
+    return [{
+      label: row.label,
+      models: [model],
+      input,
+      output,
+      cacheCreate,
+      cacheRead,
+      cacheSavings: detail.cacheSavings,
+      total: input + output + cacheCreate + cacheRead,
+      cost: detail.cost,
+      count: detail.count,
+      breakdown: [{ ...detail }],
+    }]
+  })
+}
+
 export function filterTokenRows(rows: TableRow[], q: string): TableRow[] {
   if (!q) return rows
   const s = q.toLowerCase()

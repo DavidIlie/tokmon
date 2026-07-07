@@ -1,11 +1,11 @@
-import { readdir, stat as fsStat, access } from 'node:fs/promises'
+import { stat as fsStat, access } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
 import { envDir } from '../../config'
-import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince } from '../usage-core'
+import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince, walkFiles } from '../usage-core'
 
 const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> = {
   'claude-opus-4-1': { i: 15e-6, o: 75e-6, cc: 18.75e-6, cr: 1.5e-6 },
@@ -14,7 +14,8 @@ const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> 
   'claude-opus-4': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
   'claude-3-opus': { i: 15e-6, o: 75e-6, cc: 18.75e-6, cr: 1.5e-6 },
   'claude-sonnet-4': { i: 3e-6, o: 15e-6, cc: 3.75e-6, cr: 3e-7 },
-  'claude-sonnet-5': { i: 3e-6, o: 15e-6, cc: 3.75e-6, cr: 3e-7 },
+  // intro pricing through 2026-08-31 — revert to 3/15/3.75/0.3 after.
+  'claude-sonnet-5': { i: 2e-6, o: 10e-6, cc: 2.5e-6, cr: 2e-7 },
   'claude-haiku-4': { i: 1e-6, o: 5e-6, cc: 1.25e-6, cr: 1e-7 },
   'claude-fable-5': { i: 10e-6, o: 50e-6, cc: 12.5e-6, cr: 1e-6 },
 }
@@ -30,7 +31,8 @@ export function claudeConfigDirs(homeDir?: string): string[] {
   const xdg = envDir('XDG_CONFIG_HOME')
   if (xdg) {
     dirs.push(join(xdg, 'claude'))
-  } else if (process.platform !== 'win32') {
+  }
+  if (process.platform !== 'win32') {
     dirs.push(join(home, '.config', 'claude'))
   }
   const appData = envDir('APPDATA')
@@ -70,13 +72,20 @@ interface UsageTokens {
   output_tokens?: number
   cache_creation_input_tokens?: number
   cache_read_input_tokens?: number
+  cache_creation?: {
+    ephemeral_5m_input_tokens?: number
+    ephemeral_1h_input_tokens?: number
+  } | null
 }
 
-function costOf(model: string, u: UsageTokens): number {
+function costOf(model: string, u: UsageTokens, cacheCreate5m: number, cacheCreate1h: number, hasCacheCreateSplit: boolean): number {
   const p = priceFor(model)
+  const cacheCreateCost = hasCacheCreateSplit
+    ? cacheCreate5m * p.cc + cacheCreate1h * (2 * p.i)
+    : safeNum(u.cache_creation_input_tokens) * p.cc
   return safeNum(u.input_tokens) * p.i
     + safeNum(u.output_tokens) * p.o
-    + safeNum(u.cache_creation_input_tokens) * p.cc
+    + cacheCreateCost
     + safeNum(u.cache_read_input_tokens) * p.cr
 }
 
@@ -107,7 +116,11 @@ async function parseFile(path: string): Promise<Entry[]> {
         const model = typeof obj.message.model === 'string' && obj.message.model ? obj.message.model : 'unknown'
         const inputTokens = safeNum(u.input_tokens)
         const output = safeNum(u.output_tokens)
-        const cacheCreate = safeNum(u.cache_creation_input_tokens)
+        const hasCacheCreateSplit = u.cache_creation?.ephemeral_5m_input_tokens !== undefined
+          || u.cache_creation?.ephemeral_1h_input_tokens !== undefined
+        const cacheCreate5m = safeNum(u.cache_creation?.ephemeral_5m_input_tokens)
+        const cacheCreate1h = safeNum(u.cache_creation?.ephemeral_1h_input_tokens)
+        const cacheCreate = hasCacheCreateSplit ? cacheCreate5m + cacheCreate1h : safeNum(u.cache_creation_input_tokens)
         const cacheRead = safeNum(u.cache_read_input_tokens)
         if (inputTokens + output + cacheCreate + cacheRead === 0) continue
         const p = priceFor(model)
@@ -116,7 +129,7 @@ async function parseFile(path: string): Promise<Entry[]> {
           id: msgId ? msgId + (obj.requestId ? ':' + obj.requestId : '') : undefined,
           ts,
           model: shortModel(model),
-          cost: costOf(model, u),
+          cost: costOf(model, u, cacheCreate5m, cacheCreate1h, hasCacheCreateSplit),
           input: inputTokens,
           output,
           cacheCreate,
@@ -135,12 +148,7 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   const seenIno = new Set<string>()
 
   for (const dir of getClaudeDirs(homeDir)) {
-    let listing: string[]
-    try {
-      listing = await readdir(dir, { recursive: true })
-    } catch {
-      continue
-    }
+    const listing = await walkFiles(dir)
     for (const f of listing) {
       if (!f.endsWith('.jsonl')) continue
       const path = join(dir, f)
