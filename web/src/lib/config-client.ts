@@ -1,12 +1,12 @@
-import { normalizeConfig, type Config } from '@shared'
+import { repairConfig, type Config } from '@shared'
 import { daemonRpcClient } from './rpc-client'
 
 export async function getConfig(): Promise<Config> {
-  return normalizeConfig(await daemonRpcClient().getConfig() as unknown as Record<string, unknown>)
+  return repairConfig(await daemonRpcClient().getConfig()).config
 }
 
 export async function putConfig(config: Config): Promise<Config> {
-  return normalizeConfig(await daemonRpcClient().setConfig(config) as unknown as Record<string, unknown>)
+  return repairConfig(await daemonRpcClient().setConfig(config)).config
 }
 
 export interface FsEntry { name: string; path: string; dir: boolean }
@@ -18,6 +18,6 @@ export async function listDir(path: string): Promise<FsListing> {
 
 export function subscribeConfig(onConfig: (c: Config) => void): () => void {
   return daemonRpcClient().subscribeConfig((config) => {
-    onConfig(normalizeConfig(config as unknown as Record<string, unknown>))
+    onConfig(repairConfig(config).config)
   })
 }

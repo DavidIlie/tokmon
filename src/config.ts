@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir, rename } from 'node:fs/promises'
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
-import { DEFAULTS, normalizeConfig, type Config, type Account } from './config-schema'
+import { DEFAULTS, normalizeConfig, repairConfig, type Config, type Account } from './config-schema'
 
 export type { Config, Account } from './config-schema'
 export type { TrackedAccountRow, TrackedAccountSource } from './config-schema'
@@ -15,6 +15,7 @@ export {
   getTrackedAccountRows,
   clampNum,
   normalizeConfig,
+  repairConfig,
   slugify,
   generateAccountId,
   pickAccentColor,
@@ -60,20 +61,24 @@ export async function loadConfig(): Promise<Config> {
   } catch {
     return { ...DEFAULTS }
   }
-  let parsed: Record<string, unknown>
+  let parsed: unknown
   try {
     parsed = JSON.parse(raw)
   } catch {
     try { await writeFile(configLocation() + '.bak', raw) } catch {}
     return { ...DEFAULTS }
   }
-  return normalizeConfig(parsed)
+  const repaired = repairConfig(parsed)
+  if (repaired.repaired) {
+    try { await saveConfig(repaired.config) } catch {}
+  }
+  return repaired.config
 }
 
 let saveQueue: Promise<void> = Promise.resolve()
 
 function configJson(config: Config): string {
-  return JSON.stringify(config, null, 2) + '\n'
+  return JSON.stringify(normalizeConfig(config), null, 2) + '\n'
 }
 
 export function saveConfig(config: Config): Promise<void> {

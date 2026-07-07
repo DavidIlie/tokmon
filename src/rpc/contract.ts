@@ -2,7 +2,6 @@ import { Schema } from 'effect'
 import * as Rpc from 'effect/unstable/rpc/Rpc'
 import * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import type { Config } from '../config-schema'
-import { PROVIDER_IDS } from '../providers/types'
 import type { WebSnapshot } from '../web/contract'
 
 export const TOKMON_WS_PATH = '/ws'
@@ -26,37 +25,13 @@ export const RefreshScopeSchema = Schema.Literals([
 
 export type RefreshScope = typeof RefreshScopeSchema.Type
 
-export const ProviderIdSchema = Schema.Literals(PROVIDER_IDS)
-
-export const AccountSchema = Schema.Struct({
-  id: Schema.String,
-  providerId: ProviderIdSchema,
-  name: Schema.String,
-  homeDir: Schema.String,
-  color: Schema.optionalKey(Schema.String),
-})
-
 type RuntimeSchema<T> = Schema.Codec<T, T, never, never> & {
   readonly '~type.make.in': T
 }
 
 const jsonSafePassthrough = <T>() => Schema.Unknown as unknown as RuntimeSchema<T>
 
-export const ConfigSchema = (Schema.Struct({
-  interval: Schema.Number,
-  billingInterval: Schema.Number,
-  clearScreen: Schema.Boolean,
-  timezone: Schema.NullOr(Schema.String),
-  accounts: Schema.mutable(Schema.Array(AccountSchema)),
-  activeAccountId: Schema.NullOr(Schema.String),
-  disabledProviders: Schema.mutable(Schema.Array(ProviderIdSchema)),
-  onboarded: Schema.Boolean,
-  dashboardLayout: Schema.Literals(['grid', 'single'] as const),
-  defaultFocus: Schema.Literals(['all', 'last'] as const),
-  ascii: Schema.Literals(['auto', 'on', 'off'] as const),
-  knownProviders: Schema.mutable(Schema.Array(ProviderIdSchema)),
-}) as unknown) as RuntimeSchema<Config>
-
+export const ConfigSchema = jsonSafePassthrough<Config>()
 export const ConfigResultSchema = jsonSafePassthrough<Config>()
 
 export const FsEntrySchema = Schema.Struct({

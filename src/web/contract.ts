@@ -19,6 +19,7 @@ export type { Config, Account, TrackedAccountRow, TrackedAccountSource } from '.
 export type { TrackedAccountCandidate } from '../config-schema'
 export {
   normalizeConfig,
+  repairConfig,
   DEFAULTS,
   generateAccountId,
   pickAccentColor,

@@ -28,6 +28,12 @@ export interface Config {
   knownProviders: ProviderId[]
 }
 
+export interface ConfigRepair {
+  config: Config
+  repaired: boolean
+  reasons: string[]
+}
+
 export type TrackedAccountSource = 'auto' | 'configured'
 
 export interface TrackedAccountRow {
@@ -184,34 +190,115 @@ export function isValidTimezone(tz: string): boolean {
   }
 }
 
-export function normalizeConfig(parsed: Record<string, unknown>): Config {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function validProvider(value: unknown): value is ProviderId {
+  return PROVIDER_IDS.includes(value as ProviderId)
+}
+
+function sameJson(a: unknown, b: unknown): boolean {
   try {
-    const accounts: Account[] = (Array.isArray(parsed.accounts) ? parsed.accounts : [])
-      .map((a: Account) => ({ ...a, providerId: a.providerId ?? 'claude' }))
-      .filter((a: Account) => typeof a?.id === 'string' && typeof a?.name === 'string' && PROVIDER_IDS.includes(a.providerId))
-      // homeDir must survive normalization as a string — the daemon's AccountSchema requires it.
-      .map((a: Account) => ({ ...a, homeDir: typeof a.homeDir === 'string' && a.homeDir.trim() ? a.homeDir : '~' }))
-    return {
-      ...DEFAULTS,
-      interval: clampNum(parsed.interval, DEFAULTS.interval, 1),
-      billingInterval: clampNum(parsed.billingInterval, DEFAULTS.billingInterval, 1),
-      clearScreen: typeof parsed.clearScreen === 'boolean' ? parsed.clearScreen : DEFAULTS.clearScreen,
-      privacyMode: typeof parsed.privacyMode === 'boolean' ? parsed.privacyMode : DEFAULTS.privacyMode,
-      timezone: typeof parsed.timezone === 'string' && parsed.timezone.trim() && isValidTimezone(parsed.timezone.trim())
-        ? parsed.timezone.trim()
-        : null,
-      accounts,
-      activeAccountId: typeof parsed.activeAccountId === 'string' ? parsed.activeAccountId : null,
-      disabledProviders: (Array.isArray(parsed.disabledProviders) ? parsed.disabledProviders : [])
-        .filter((p: unknown): p is ProviderId => PROVIDER_IDS.includes(p as ProviderId)),
-      onboarded: parsed.onboarded === true,
-      dashboardLayout: parsed.dashboardLayout === 'single' ? 'single' : 'grid',
-      defaultFocus: parsed.defaultFocus === 'last' ? 'last' : 'all',
-      ascii: parsed.ascii === 'on' ? 'on' : parsed.ascii === 'off' ? 'off' : 'auto',
-      knownProviders: Array.isArray(parsed.knownProviders)
-        ? parsed.knownProviders.filter((p: unknown): p is ProviderId => PROVIDER_IDS.includes(p as ProviderId))
-        : (parsed.onboarded === true ? [...LEGACY_KNOWN] : []),
+    return JSON.stringify(a) === JSON.stringify(b)
+  } catch {
+    return false
+  }
+}
+
+export function repairConfig(input: unknown): ConfigRepair {
+  const reasons: string[] = []
+  const parsed = isRecord(input) ? input : {}
+  if (parsed !== input) reasons.push('config root was not an object')
+
+  const rawAccounts = Array.isArray(parsed.accounts) ? parsed.accounts : []
+  if (!Array.isArray(parsed.accounts) && parsed.accounts !== undefined) reasons.push('accounts was not an array')
+  const accounts: Account[] = []
+  const accountIds = new Set<string>()
+  rawAccounts.forEach((raw, index) => {
+    if (!isRecord(raw)) {
+      reasons.push(`accounts[${index}] was not an object`)
+      return
     }
+    const providerId = raw.providerId ?? 'claude'
+    if (!validProvider(providerId)) {
+      reasons.push(`accounts[${index}].providerId was invalid`)
+      return
+    }
+    const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : ''
+    const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : ''
+    if (!id || !name) {
+      reasons.push(`accounts[${index}] was missing id or name`)
+      return
+    }
+    if (accountIds.has(id)) {
+      reasons.push(`accounts[${index}].id was duplicated`)
+      return
+    }
+    accountIds.add(id)
+    accounts.push({
+      id,
+      providerId,
+      name,
+      homeDir: typeof raw.homeDir === 'string' && raw.homeDir.trim() ? raw.homeDir : '~',
+      ...(typeof raw.color === 'string' && raw.color.trim() ? { color: raw.color } : {}),
+    })
+  })
+
+  const disabledProviders = (Array.isArray(parsed.disabledProviders) ? parsed.disabledProviders : [])
+    .filter(validProvider)
+  if (parsed.disabledProviders !== undefined && !Array.isArray(parsed.disabledProviders)) {
+    reasons.push('disabledProviders was not an array')
+  }
+
+  const knownProviders = Array.isArray(parsed.knownProviders)
+    ? parsed.knownProviders.filter(validProvider)
+    : (parsed.onboarded === true ? [...LEGACY_KNOWN] : [])
+  if (parsed.knownProviders !== undefined && !Array.isArray(parsed.knownProviders)) {
+    reasons.push('knownProviders was not an array')
+  }
+
+  const activeAccountId = typeof parsed.activeAccountId === 'string' && (accountIds.has(parsed.activeAccountId) || PROVIDER_IDS.includes(parsed.activeAccountId as ProviderId))
+    ? parsed.activeAccountId
+    : null
+  if (parsed.activeAccountId !== undefined && parsed.activeAccountId !== null && activeAccountId === null) {
+    reasons.push('activeAccountId did not match a known account/provider')
+  }
+
+  const timezone = typeof parsed.timezone === 'string' && parsed.timezone.trim() && isValidTimezone(parsed.timezone.trim())
+    ? parsed.timezone.trim()
+    : null
+  if (parsed.timezone !== undefined && parsed.timezone !== null && timezone === null) {
+    reasons.push('timezone was invalid')
+  }
+
+  const config: Config = {
+    ...DEFAULTS,
+    interval: clampNum(parsed.interval, DEFAULTS.interval, 1),
+    billingInterval: clampNum(parsed.billingInterval, DEFAULTS.billingInterval, 1),
+    clearScreen: typeof parsed.clearScreen === 'boolean' ? parsed.clearScreen : DEFAULTS.clearScreen,
+    privacyMode: typeof parsed.privacyMode === 'boolean' ? parsed.privacyMode : DEFAULTS.privacyMode,
+    timezone,
+    accounts,
+    activeAccountId,
+    disabledProviders,
+    onboarded: parsed.onboarded === true,
+    dashboardLayout: parsed.dashboardLayout === 'single' ? 'single' : 'grid',
+    defaultFocus: parsed.defaultFocus === 'last' ? 'last' : 'all',
+    ascii: parsed.ascii === 'on' ? 'on' : parsed.ascii === 'off' ? 'off' : 'auto',
+    knownProviders,
+  }
+
+  for (const key of Object.keys(DEFAULTS) as (keyof Config)[]) {
+    if (!(key in parsed)) reasons.push(`missing ${key}`)
+  }
+
+  return { config, repaired: reasons.length > 0 || !sameJson(parsed, config), reasons }
+}
+
+export function normalizeConfig(parsed: unknown): Config {
+  try {
+    return repairConfig(parsed).config
   } catch {
     return { ...DEFAULTS }
   }
