@@ -2,13 +2,15 @@ import type { WebSnapshot } from '@shared'
 import { PERIODS, type Derived, type Filters } from '../lib/derive'
 import { shortModel } from '../lib/colors'
 import { X } from './icons'
+import { PrivacyLabel, privacyText } from './privacy-label'
 import { Dropdown, Menu, MenuItem, Segmented } from './ui/controls'
 
-export function FilterBar({ snapshot, derived, filters, setFilters }: {
+export function FilterBar({ snapshot, derived, filters, setFilters, privacyMode = true }: {
   snapshot: WebSnapshot | null
   derived: Derived
   filters: Filters
   setFilters: (next: Filters | ((p: Filters) => Filters)) => void
+  privacyMode?: boolean
 }) {
   const providers = snapshot?.providers ?? []
   const accounts = snapshot?.accounts ?? []
@@ -80,7 +82,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
 
         <div className="flex w-full flex-wrap items-center gap-2 md:ml-auto md:w-auto">
           {acctOptions.length > 1 ? (
-            <Dropdown label="account" value={filters.account === 'all' ? 'all' : (selectedAccount ? acctLabel(selectedAccount) : 'all')}>
+            <Dropdown label="account" value={filters.account === 'all' ? 'all' : (selectedAccount ? privacyText(acctLabel(selectedAccount), privacyMode) : 'all')}>
               {close => (
                 <Menu>
                   <MenuItem active={filters.account === 'all'} onClick={() => { setFilters(f => ({ ...f, account: 'all' })); close() }}>
@@ -90,7 +92,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
                   <div className="max-h-64 overflow-y-auto">
                     {acctOptions.map(a => (
                       <MenuItem key={a.id} active={filters.account === a.id} onClick={() => { setFilters(f => ({ ...f, account: a.id })); close() }}>
-                        <span style={{ color: a.color }} aria-hidden>●</span> <span className="truncate">{acctLabel(a)}</span>
+                        <span style={{ color: a.color }} aria-hidden>●</span> <PrivacyLabel value={acctLabel(a)} privacyMode={privacyMode} className="truncate" />
                       </MenuItem>
                     ))}
                   </div>
@@ -99,7 +101,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters }: {
             </Dropdown>
           ) : acctOptions.length === 1 ? (
             <span className="rounded border border-line bg-bg-1 px-2 py-1 text-xs text-fg-dim">
-              account: <span className="text-fg">{acctLabel(acctOptions[0])}</span>
+              account: <PrivacyLabel value={acctLabel(acctOptions[0])} privacyMode={privacyMode} className="text-fg" />
             </span>
           ) : null}
 

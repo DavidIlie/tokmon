@@ -1,6 +1,7 @@
 import { getTrackedAccountRows, PROVIDER_META, type Account, type Config, type TrackedAccountRow, type WebAccount, type WebSnapshot } from '@shared'
 import { namedColorHex } from '../../lib/colors'
 import { ChevronUp, ChevronDown, Pencil, Plus, Trash } from '../icons'
+import { PrivacyLabel } from '../privacy-label'
 import { FOCUS } from './use-dialog-trap'
 import { Section, IconBtn } from './primitives'
 
@@ -71,7 +72,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                 <span className="size-2.5 shrink-0 rounded-full" style={{ background: hex }} aria-hidden />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate text-sm text-fg-bright">{identity}</span>
+                    <PrivacyLabel value={identity} privacyMode={draft.privacyMode} className="truncate text-sm text-fg-bright" />
                     <span className="shrink-0 rounded bg-bg-3 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fg-dim">{meta.name}</span>
                     {plan && (
                       <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-dim">{plan}</span>

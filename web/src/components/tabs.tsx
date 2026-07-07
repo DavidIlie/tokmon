@@ -8,6 +8,7 @@ import { CalendarHeatmap } from './charts/calendar'
 import { ModelLeaderboard } from './charts/models'
 import { ExploreTable } from './explore'
 import { useShare } from './share-provider'
+import { privacyText } from './privacy-label'
 
 const timelineMod = () => import('./charts/timeline')
 const breakdownMod = () => import('./charts/breakdown')
@@ -38,11 +39,12 @@ const GRAN_OPTIONS: { value: Granularity; label: string }[] = [
   { value: 'monthly', label: 'monthly' },
 ]
 
-export function OverviewTab({ derived, periodLabel, scopeLabel, providers }: {
+export function OverviewTab({ derived, periodLabel, scopeLabel, providers, privacyMode }: {
   derived: Derived
   periodLabel: string
   scopeLabel?: string
   providers: WebProviderInfo[]
+  privacyMode: boolean
 }) {
   const nameOf = (id: string) => providers.find(p => p.id === id)?.name ?? id
   return (
@@ -51,7 +53,7 @@ export function OverviewTab({ derived, periodLabel, scopeLabel, providers }: {
       <Suspense fallback={<Spacer className="h-[clamp(320px,42vh,560px)]" />}>
         <CostTimeline derived={derived} periodLabel={scopeLabel} heightClass="h-[clamp(320px,42vh,560px)]" />
       </Suspense>
-      <ProviderCards accounts={derived.cardAccounts} nameOf={nameOf} />
+      <ProviderCards accounts={derived.cardAccounts} nameOf={nameOf} privacyMode={privacyMode} />
     </div>
   )
 }
@@ -84,10 +86,11 @@ export function ModelsTab({ derived, scopeLabel }: { derived: Derived; scopeLabe
   )
 }
 
-export function ExploreTab({ snapshot, filters, periodLabel }: {
+export function ExploreTab({ snapshot, filters, periodLabel, privacyMode }: {
   snapshot: WebSnapshot | null
   filters: Filters
   periodLabel: string
+  privacyMode: boolean
 }) {
   const [q, setQ] = useState('')
   const [gran, setGran] = useState<Granularity>('daily')
@@ -133,6 +136,7 @@ export function ExploreTab({ snapshot, filters, periodLabel }: {
               tz: snapshot?.tz ?? '',
               version: snapshot?.version ?? '',
               ...modelShare,
+              accounts: modelShare.accounts.map(a => ({ ...a, name: privacyText(a.name, privacyMode) })),
             })}
             className="flex items-center gap-1.5 rounded border border-line bg-bg-1 px-2.5 py-1 text-xs text-fg-dim transition hover:border-accent/60 hover:text-accent active:scale-[0.97] max-sm:py-2"
             title="Create a shareable model image"

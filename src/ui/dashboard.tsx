@@ -7,6 +7,7 @@ import type { UsageSummary, DashboardData } from '../types'
 import type { AccountStats } from '../stats'
 import { Bar, sparkline, metricValueText, truncateName } from './shared'
 import { glyphs } from '../glyphs'
+import { redactEmail } from '../config'
 
 type Item = { account: Account; s: AccountStats | undefined }
 
@@ -113,7 +114,7 @@ export function computeDashLayout(
   return chooseLayout(content, budget, groups.length, single, cols, heights)
 }
 
-export const DashboardView = memo(function DashboardView({ groups, stats, cols, budget, focusId, layout, page = 0 }: {
+export const DashboardView = memo(function DashboardView({ groups, stats, cols, budget, focusId, layout, page = 0, privacyMode = false }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
   stats: Map<string, AccountStats>
   cols: number
@@ -121,6 +122,7 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
   focusId: string | null
   layout: 'grid' | 'single'
   page?: number
+  privacyMode?: boolean
 }) {
   if (groups.length === 0) {
     return <Text dimColor>No providers enabled {glyphs().emDash} press s to pick providers.</Text>
@@ -142,7 +144,7 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
       <Box width={content} flexWrap="wrap" columnGap={GAP} rowGap={1} alignItems="flex-start">
         {visible.map(g => (
           <Box key={g.provider} flexShrink={0}>
-            <ProviderCard provider={g.provider} accounts={g.accounts} stats={stats} width={cardW} variant={variant} />
+            <ProviderCard provider={g.provider} accounts={g.accounts} stats={stats} width={cardW} variant={variant} privacyMode={privacyMode} />
           </Box>
         ))}
       </Box>
@@ -159,6 +161,7 @@ function ProviderCard({ provider, accounts, stats, width, variant }: {
   stats: Map<string, AccountStats>
   width: number
   variant: Variant
+  privacyMode?: boolean
 }) {
   const meta = PROVIDERS[provider]
   const items: Item[] = accounts.map(a => ({ account: a, s: stats.get(a.id) }))
@@ -197,11 +200,11 @@ function ProviderCard({ provider, accounts, stats, width, variant }: {
       {meta.hasBilling && showBars && (
         <>
           {meta.hasUsage && <Rule inner={inner} />}
-          <LimitsBlock items={items} inner={inner} />
+          <LimitsBlock items={items} inner={inner} privacyMode={privacyMode} />
         </>
       )}
       {meta.hasBilling && !showBars && !meta.hasUsage && (
-        <CompactBilling items={items} />
+        <CompactBilling items={items} privacyMode={privacyMode} />
       )}
 
       {hasSpark && showSpark && (
@@ -225,10 +228,10 @@ function ProviderCard({ provider, accounts, stats, width, variant }: {
   )
 }
 
-function CompactBilling({ items }: { items: Item[] }) {
+function CompactBilling({ items, privacyMode }: { items: Item[]; privacyMode?: boolean }) {
   const billing = items.map(i => i.s?.billing).find(Boolean)
   if (!billing) return <Text dimColor>Fetching{glyphs().ellipsis}</Text>
-  if (billing.error) return <Text color="red">{billing.error}</Text>
+  if (billing.error) return <Text color="red">{privacyMode ? redactEmail(billing.error) : billing.error}</Text>
   const m = billing.metrics.find(x => x.primary) ?? billing.metrics[0]
   if (!m) return <Text dimColor>No data</Text>
   return <Text bold color="yellow">{metricValueText(m)}</Text>
@@ -265,12 +268,13 @@ function KpiLine({ agg }: { agg: DashboardData }) {
   )
 }
 
-function accountTitle(account: Account, billing: BillingResult | null | undefined): string {
+function accountTitle(account: Account, billing: BillingResult | null | undefined, privacyMode = false): string {
   const email = billing?.email
-  return email && !account.name.includes('@') ? `${account.name} ${email}` : account.name
+  const title = email && !account.name.includes('@') ? `${account.name} ${email}` : account.name
+  return privacyMode ? redactEmail(title) : title
 }
 
-function LimitsBlock({ items, inner }: { items: Item[]; inner: number }) {
+function LimitsBlock({ items, inner, privacyMode }: { items: Item[]; inner: number; privacyMode?: boolean }) {
   const showName = items.length > 1
   // Shared label gutter so values/bars align across every metric row in the card.
   const labels = items.flatMap(i => i.s?.billing?.metrics ?? []).map(m => m.label.length)
@@ -283,12 +287,12 @@ function LimitsBlock({ items, inner }: { items: Item[]; inner: number }) {
         return (
           <Box key={account.id} flexDirection="column" marginTop={showName && idx > 0 ? 1 : 0}>
             {showName && (
-              <Box><Text color={account.color}>{glyphs().dot} </Text><Text bold>{truncateName(accountTitle(account, billing), Math.max(22, inner - 2))}</Text></Box>
+              <Box><Text color={account.color}>{glyphs().dot} </Text><Text bold>{truncateName(accountTitle(account, billing, privacyMode), Math.max(22, inner - 2))}</Text></Box>
             )}
             {!billing ? (
               <Text dimColor>Fetching{glyphs().ellipsis}</Text>
             ) : billing.error ? (
-              <Text color="red" wrap="truncate-end">{billing.error}</Text>
+              <Text color="red" wrap="truncate-end">{privacyMode ? redactEmail(billing.error) : billing.error}</Text>
             ) : billing.metrics.length === 0 ? (
               <Text dimColor>No data</Text>
             ) : (

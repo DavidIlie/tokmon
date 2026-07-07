@@ -7,6 +7,7 @@ import type { AccountFetchState } from '../web/contract'
 import type { AccountStats } from '../stats'
 import { glyphs } from '../glyphs'
 import * as fmt from '../format'
+import { redactEmail } from '../config'
 import { truncateName, metricValueText } from './shared'
 
 type Group = { provider: ProviderId; accounts: Account[] }
@@ -42,12 +43,12 @@ function groupTodayCost(items: (AccountStats | undefined)[]): number {
   }, 0)
 }
 
-function headlineFor(group: Group, items: (AccountStats | undefined)[]): string {
+function headlineFor(group: Group, items: (AccountStats | undefined)[], privacyMode = false): string {
   const meta = PROVIDERS[group.provider]
   if (meta.hasUsage) return `${fmt.currency(groupTodayCost(items))} today`
   const billing = items.map(s => s?.billing).find(Boolean)
   if (!billing) return 'no data'
-  if (billing.error) return billing.error
+  if (billing.error) return privacyMode ? redactEmail(billing.error) : billing.error
   const m = billing.metrics[0]
   if (m) return metricValueText(m)
   return billing.plan ?? 'no data'
@@ -55,12 +56,13 @@ function headlineFor(group: Group, items: (AccountStats | undefined)[]): string 
 
 const STAGGER_FRAMES = 2
 
-export function LoadingView({ groups, stats, cols, rows, readyInput }: {
+export function LoadingView({ groups, stats, cols, rows, readyInput, privacyMode = false }: {
   groups: Group[]
   stats: Map<string, AccountStats>
   cols: number
   rows: number
   readyInput?: (id: string) => ReadyInput | undefined
+  privacyMode?: boolean
 }) {
   const resolveReady = readyInput ?? ((id: string) => statsReadyInput(stats.get(id)))
   const sp = glyphs().spinner
@@ -121,9 +123,9 @@ export function LoadingView({ groups, stats, cols, rows, readyInput }: {
                 <Text color="green">{sp[frame % sp.length]} </Text>
               )}
               {errored ? (
-                <Text color="red">{headlineFor(g, items)}</Text>
+                <Text color="red">{headlineFor(g, items, privacyMode)}</Text>
               ) : ready ? (
-                <Text>{headlineFor(g, items)}</Text>
+                <Text>{headlineFor(g, items, privacyMode)}</Text>
               ) : (
                 <Text dimColor>loading{glyphs().ellipsis}</Text>
               )}

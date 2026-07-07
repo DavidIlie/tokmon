@@ -160,7 +160,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     return statsReadyInput(statsLocal.get(id))
   }, [connected, snapshot, statsLocal])
 
-  const slots: Slot[] = useMemo(() => deriveSlots(accounts), [accounts])
+  const slots: Slot[] = useMemo(() => deriveSlots(accounts, cfg.privacyMode), [accounts, cfg.privacyMode])
   const { activeSlotIdx, focusId } = useMemo(
     () => findActiveSlot(slots, cfg.activeAccountId),
     [slots, cfg.activeAccountId],
@@ -501,7 +501,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   if (showLoader) {
     return (
       <Box flexDirection="column" paddingX={2} paddingY={1} height={rows} overflow="hidden">
-        <LoadingView groups={allGroups} stats={stats} cols={cols} rows={rows} readyInput={readyInputFor} />
+        <LoadingView groups={allGroups} stats={stats} cols={cols} rows={rows} readyInput={readyInputFor} privacyMode={cfg.privacyMode} />
       </Box>
     )
   }
@@ -555,7 +555,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
           </Box>
           {tab === 0 && (
             <>
-              <DashboardView groups={groups} stats={stats} cols={cols} budget={gridBudget} focusId={focusId} layout={cfg.dashboardLayout} page={dashPage} />
+              <DashboardView groups={groups} stats={stats} cols={cols} budget={gridBudget} focusId={focusId} layout={cfg.dashboardLayout} page={dashPage} privacyMode={cfg.privacyMode} />
               {slots.length > 1 && (
                 <Box marginTop={1}>
                   <Text dimColor>focus  </Text>

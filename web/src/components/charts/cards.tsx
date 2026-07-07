@@ -4,6 +4,7 @@ import { fmtCost, fmtNum, fmtTokens } from '../../lib/format'
 import { providerHex, shortModel } from '../../lib/colors'
 import { Panel } from '../ui/panel'
 import { Sparkline } from '../ui/primitives'
+import { PrivacyLabel, privacyText } from '../privacy-label'
 
 export function KpiStrip({ derived, periodLabel }: { derived: Derived; periodLabel: string }) {
   const t = derived.totals
@@ -41,7 +42,7 @@ function Kpi({ label, value, accent = 'text-fg-bright', spark, sparkColor }: {
   )
 }
 
-export function ProviderCards({ accounts, nameOf }: { accounts: WebAccount[]; nameOf: (id: string) => string }) {
+export function ProviderCards({ accounts, nameOf, privacyMode }: { accounts: WebAccount[]; nameOf: (id: string) => string; privacyMode: boolean }) {
   if (accounts.length === 0) {
     return (
       <Panel title="accounts">
@@ -51,12 +52,12 @@ export function ProviderCards({ accounts, nameOf }: { accounts: WebAccount[]; na
   }
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fit,minmax(min(340px,100%),1fr))]">
-      {accounts.map((a, i) => <ProviderCard key={a.id} account={a} index={i} providerName={nameOf(a.providerId)} />)}
+      {accounts.map((a, i) => <ProviderCard key={a.id} account={a} index={i} providerName={nameOf(a.providerId)} privacyMode={privacyMode} />)}
     </div>
   )
 }
 
-function ProviderCard({ account, index, providerName }: { account: WebAccount; index: number; providerName: string }) {
+function ProviderCard({ account, index, providerName, privacyMode }: { account: WebAccount; index: number; providerName: string; privacyMode: boolean }) {
   const d = account.dashboard
   const metrics = account.billing?.metrics ?? []
   const modelSpend = account.billing?.modelSpend ?? []
@@ -72,7 +73,12 @@ function ProviderCard({ account, index, providerName }: { account: WebAccount; i
         <div className="flex min-w-0 items-center gap-2">
           <span style={{ color: providerColor }}>●</span>
           <span className="font-display text-sm tracking-wide text-fg-bright">{providerName}</span>
-          {showSub && <span className="truncate text-xs text-fg-faint">· {account.name}</span>}
+          {showSub && (
+            <span className="flex min-w-0 items-center gap-1 text-xs text-fg-faint">
+              <span aria-hidden>·</span>
+              <PrivacyLabel value={account.name} privacyMode={privacyMode} className="truncate text-fg-faint" />
+            </span>
+          )}
         </div>
         {account.billing?.plan && (
           <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-dim">{account.billing.plan}</span>
@@ -127,7 +133,7 @@ function ProviderCard({ account, index, providerName }: { account: WebAccount; i
 
       {metrics.length === 0 && account.billing?.error && (
         <div className={`flex items-start gap-1.5 text-xs text-warning ${d ? 'mt-3 border-t border-line-faint pt-3' : 'mt-4'}`}>
-          <span aria-hidden>⚠</span><span>{account.billing.error}</span>
+          <span aria-hidden>⚠</span><span>{privacyText(account.billing.error, privacyMode)}</span>
         </div>
       )}
 

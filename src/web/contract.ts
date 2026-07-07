@@ -19,6 +19,7 @@ export type { Config, Account, TrackedAccountRow, TrackedAccountSource } from '.
 export type { TrackedAccountCandidate } from '../config-schema'
 export {
   normalizeConfig,
+  DEFAULTS,
   generateAccountId,
   pickAccentColor,
   isValidTimezone,
@@ -27,6 +28,8 @@ export {
   PROVIDER_ORDER,
   getTrackedAccountRows,
   sanitizeTyped,
+  containsEmail,
+  redactEmail,
 } from '../config-schema'
 
 export type AccountFetchState = 'pending' | 'ready' | 'error'

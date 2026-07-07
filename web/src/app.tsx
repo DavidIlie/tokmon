@@ -3,7 +3,7 @@ import {
   createHashHistory, createRootRoute, createRoute, createRouter,
   Link, Outlet, RouterProvider, useRouterState,
 } from '@tanstack/react-router'
-import type { WebSnapshot } from '@shared'
+import { DEFAULTS, type WebSnapshot } from '@shared'
 
 import { FilterBar } from './components/filter-bar'
 import { ShareControl } from './components/share-card'
@@ -14,6 +14,7 @@ import { deriveAll, hasBillingSignal, PERIODS, type Derived, type Filters } from
 import { fmtAgo } from './lib/format'
 import { useFilters } from './lib/useFilters'
 import { useSnapshot, type ConnState } from './lib/useSnapshot'
+import { subscribeConfig } from './lib/config-client'
 
 const pathOf = (k: TabKey) => `/${k}`
 
@@ -23,6 +24,7 @@ interface DashCtx {
   derived: Derived
   periodLabel: string
   scopeLabel?: string
+  privacyMode: boolean
 }
 const DashboardContext = createContext<DashCtx | null>(null)
 const useDashboard = (): DashCtx => {
@@ -115,6 +117,9 @@ function RootLayout() {
   const [filters, setFilters] = useFilters()
   const [theme, toggleTheme] = useTheme()
   const [showSettings, setShowSettings] = useState(false)
+  const [privacyMode, setPrivacyMode] = useState(DEFAULTS.privacyMode)
+
+  useEffect(() => subscribeConfig(c => setPrivacyMode(c.privacyMode)), [])
 
   const derived = useMemo(() => deriveAll(snapshot, filters), [snapshot, filters])
   const periodLabel = PERIODS.find(p => p.key === filters.period)?.label ?? filters.period
@@ -149,8 +154,8 @@ function RootLayout() {
   const ready = !hasUsage || tablesReady || everReady.current || graceOver
 
   const ctx = useMemo<DashCtx | null>(
-    () => (snapshot ? { snapshot, filters, derived, periodLabel, scopeLabel } : null),
-    [snapshot, filters, derived, periodLabel, scopeLabel],
+    () => (snapshot ? { snapshot, filters, derived, periodLabel, scopeLabel, privacyMode } : null),
+    [snapshot, filters, derived, periodLabel, scopeLabel, privacyMode],
   )
 
   return (
@@ -188,7 +193,7 @@ function RootLayout() {
             ))}
           </nav>
         </div>
-        <FilterBar snapshot={snapshot} derived={derived} filters={filters} setFilters={setFilters} />
+        <FilterBar snapshot={snapshot} derived={derived} filters={filters} setFilters={setFilters} privacyMode={privacyMode} />
       </header>
 
       <main className="mx-auto max-w-[1600px] px-5 2xl:max-w-[1920px] py-5">
@@ -227,8 +232,8 @@ function RootLayout() {
 }
 
 function OverviewRoute() {
-  const { derived, periodLabel, scopeLabel, snapshot } = useDashboard()
-  return <div><OverviewTab derived={derived} periodLabel={periodLabel} scopeLabel={scopeLabel} providers={snapshot.providers} /></div>
+  const { derived, periodLabel, scopeLabel, snapshot, privacyMode } = useDashboard()
+  return <div><OverviewTab derived={derived} periodLabel={periodLabel} scopeLabel={scopeLabel} providers={snapshot.providers} privacyMode={privacyMode} /></div>
 }
 function AnalyticsRoute() {
   const { derived, scopeLabel } = useDashboard()
@@ -239,8 +244,8 @@ function ModelsRoute() {
   return <div><ModelsTab derived={derived} scopeLabel={scopeLabel} /></div>
 }
 function ExploreRoute() {
-  const { snapshot, filters, periodLabel } = useDashboard()
-  return <div><ExploreTab snapshot={snapshot} filters={filters} periodLabel={periodLabel} /></div>
+  const { snapshot, filters, periodLabel, privacyMode } = useDashboard()
+  return <div><ExploreTab snapshot={snapshot} filters={filters} periodLabel={periodLabel} privacyMode={privacyMode} /></div>
 }
 
 const rootRoute = createRootRoute({ component: RootLayout })

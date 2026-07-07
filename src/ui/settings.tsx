@@ -1,12 +1,12 @@
 import { memo } from 'react'
 import { Box, Text } from 'ink'
 import { glyphs } from '../glyphs'
-import { configLocation, generateAccountId, COLOR_PALETTE, type Config, type Account, type TrackedAccountRow } from '../config'
+import { configLocation, generateAccountId, COLOR_PALETTE, redactEmail, type Config, type Account, type TrackedAccountRow } from '../config'
 import { PROVIDER_ORDER, PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
 import { truncateName } from './shared'
 
-export const GENERAL_ROWS = 6
+export const GENERAL_ROWS = 7
 
 export const SETTINGS_TABS = ['general', 'providers', 'accounts'] as const
 export type SettingsTab = typeof SETTINGS_TABS[number]
@@ -81,20 +81,23 @@ export const SettingsView = memo(function SettingsView({
           <Row cursor={cursor} idx={2} label="Clear screen">
             <Text bold color={config.clearScreen ? 'green' : 'red'}>{config.clearScreen ? 'on' : 'off'}</Text>
           </Row>
-          <Row cursor={cursor} idx={3} label="Timezone">
+          <Row cursor={cursor} idx={3} label="Privacy mode">
+            <Text bold color={config.privacyMode ? 'green' : 'red'}>{config.privacyMode ? 'on' : 'off'}</Text>
+          </Row>
+          <Row cursor={cursor} idx={4} label="Timezone">
             {editingTz ? (
               <><Text dimColor>[</Text><CaretText value={tzEdit ?? ''} caret={tzCaret} color="cyan" /><Text dimColor>]</Text></>
             ) : (
               <Text bold color="yellow">{tzDisplay}</Text>
             )}
           </Row>
-          {cursor === 3 && tzError && <Text color="red">  {tzError}</Text>}
-          <Row cursor={cursor} idx={4} label="Dashboard">
+          {cursor === 4 && tzError && <Text color="red">  {tzError}</Text>}
+          <Row cursor={cursor} idx={5} label="Dashboard">
             <Text dimColor>{glyphs().caretL} </Text>
             <Text bold color="yellow">{config.dashboardLayout === 'grid' ? 'grid (all)' : 'single (cycle)'}</Text>
             <Text dimColor> {glyphs().caretR}</Text>
           </Row>
-          <Row cursor={cursor} idx={5} label="Default focus">
+          <Row cursor={cursor} idx={6} label="Default focus">
             <Text dimColor>{glyphs().caretL} </Text>
             <Text bold color="yellow">{config.defaultFocus === 'all' ? 'All' : 'Last account'}</Text>
             <Text dimColor> {glyphs().caretR}</Text>
@@ -133,7 +136,8 @@ export const SettingsView = memo(function SettingsView({
             const isActive = acc.id === activeAccountId
             const provider = PROVIDERS[acc.providerId]
             const identity = accountIdentities.get(acc.id)
-            const identityLabel = identity?.email || identity?.displayName || acc.name
+            const rawIdentityLabel = identity?.email || identity?.displayName || acc.name
+            const identityLabel = config.privacyMode ? redactEmail(rawIdentityLabel) : rawIdentityLabel
             const plan = identity?.plan ?? null
             return (
               <Box key={`${acc.source}:${acc.id}`}>

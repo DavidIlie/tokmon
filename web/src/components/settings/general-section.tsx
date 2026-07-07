@@ -18,6 +18,11 @@ export function GeneralSection({ draft, patch }: { draft: Config; patch: (fn: (c
           options={[{ value: 'on', label: 'on' }, { value: 'off', label: 'off' }]}
           value={draft.clearScreen ? 'on' : 'off'} onChange={v => patch(c => ({ ...c, clearScreen: v === 'on' }))} />
       </FieldRow>
+      <FieldRow label="Privacy mode" hint="hide email addresses by default">
+        <Segmented<'on' | 'off'> size="xs" ariaLabel="privacy mode"
+          options={[{ value: 'on', label: 'on' }, { value: 'off', label: 'off' }]}
+          value={draft.privacyMode ? 'on' : 'off'} onChange={v => patch(c => ({ ...c, privacyMode: v === 'on' }))} />
+      </FieldRow>
       <FieldRow label="Timezone" hint="IANA name · empty = System">
         <TimezoneField value={draft.timezone} onChange={tz => patch(c => ({ ...c, timezone: tz }))} />
       </FieldRow>

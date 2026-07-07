@@ -1,11 +1,13 @@
 import type { Account } from '../providers'
 import type { Slot } from '../app.logic'
+import { redactEmail } from '../config'
 import { truncateName } from './shared'
 
-export function deriveSlots(accounts: Account[]): Slot[] {
+export function deriveSlots(accounts: Account[], privacyMode = false): Slot[] {
+  const label = (name: string) => privacyMode ? redactEmail(name) : name
   return accounts.length > 1
-    ? [{ id: null, name: 'All', color: 'whiteBright' }, ...accounts.map(a => ({ id: a.id, name: a.name, color: a.color }))]
-    : accounts.map(a => ({ id: a.id, name: a.name, color: a.color }))
+    ? [{ id: null, name: 'All', color: 'whiteBright' }, ...accounts.map(a => ({ id: a.id, name: label(a.name), color: a.color }))]
+    : accounts.map(a => ({ id: a.id, name: label(a.name), color: a.color }))
 }
 
 export function findActiveSlot(slots: Slot[], activeAccountId: string | null): { activeSlotIdx: number; focusId: string | null } {

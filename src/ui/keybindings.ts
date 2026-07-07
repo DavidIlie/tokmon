@@ -271,16 +271,19 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
       if (settingsCursor === 2 && (key.leftArrow || key.rightArrow || key.return)) {
         updateConfig(c => ({ ...c, clearScreen: !c.clearScreen })); return
       }
-      if (settingsCursor === 3) {
+      if (settingsCursor === 3 && (key.leftArrow || key.rightArrow || key.return)) {
+        updateConfig(c => ({ ...c, privacyMode: !c.privacyMode })); return
+      }
+      if (settingsCursor === 4) {
         if (key.return) { const init = cfg.timezone ?? ''; setTzEdit(init); setTzCaret(init.length); setTzError(null) }
         if (key.leftArrow || key.rightArrow) updateConfig(c => ({ ...c, timezone: c.timezone === null ? systemTimezone() : null }))
         return
       }
-      if (settingsCursor === 4 && (key.leftArrow || key.rightArrow || key.return)) {
+      if (settingsCursor === 5 && (key.leftArrow || key.rightArrow || key.return)) {
         updateConfig(c => ({ ...c, dashboardLayout: c.dashboardLayout === 'grid' ? 'single' : 'grid' }))
         return
       }
-      if (settingsCursor === 5 && (key.leftArrow || key.rightArrow || key.return)) {
+      if (settingsCursor === 6 && (key.leftArrow || key.rightArrow || key.return)) {
         updateConfig(c => ({ ...c, defaultFocus: c.defaultFocus === 'all' ? 'last' : 'all' }))
         return
       }

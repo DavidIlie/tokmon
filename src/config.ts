@@ -19,6 +19,8 @@ export {
   generateAccountId,
   pickAccentColor,
   sanitizeTyped,
+  containsEmail,
+  redactEmail,
 } from './config-schema'
 
 export function envDir(name: string): string | undefined {

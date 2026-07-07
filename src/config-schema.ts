@@ -16,6 +16,7 @@ export interface Config {
   interval: number
   billingInterval: number
   clearScreen: boolean
+  privacyMode: boolean
   timezone: string | null
   accounts: Account[]
   activeAccountId: string | null
@@ -52,6 +53,7 @@ export const DEFAULTS: Config = {
   interval: 2,
   billingInterval: 5,
   clearScreen: true,
+  privacyMode: true,
   timezone: null,
   accounts: [],
   activeAccountId: null,
@@ -83,6 +85,17 @@ export const PROVIDER_META: Record<ProviderId, { name: string; color: string }> 
   opencode: { name: 'opencode', color: 'yellow' },
   antigravity: { name: 'Antigravity', color: 'red' },
   gemini: { name: 'Gemini', color: 'greenBright' },
+}
+
+const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
+const EMAIL_RE_GLOBAL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi
+
+export function containsEmail(value: string | null | undefined): boolean {
+  return typeof value === 'string' && EMAIL_RE.test(value)
+}
+
+export function redactEmail(value: string): string {
+  return value.replace(EMAIL_RE_GLOBAL, '[redacted]')
 }
 
 export function getTrackedAccountRows(
@@ -183,6 +196,7 @@ export function normalizeConfig(parsed: Record<string, unknown>): Config {
       interval: clampNum(parsed.interval, DEFAULTS.interval, 1),
       billingInterval: clampNum(parsed.billingInterval, DEFAULTS.billingInterval, 1),
       clearScreen: typeof parsed.clearScreen === 'boolean' ? parsed.clearScreen : DEFAULTS.clearScreen,
+      privacyMode: typeof parsed.privacyMode === 'boolean' ? parsed.privacyMode : DEFAULTS.privacyMode,
       timezone: typeof parsed.timezone === 'string' && parsed.timezone.trim() && isValidTimezone(parsed.timezone.trim())
         ? parsed.timezone.trim()
         : null,
