@@ -155,7 +155,7 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
   )
 })
 
-function ProviderCard({ provider, accounts, stats, width, variant }: {
+function ProviderCard({ provider, accounts, stats, width, variant, privacyMode = false }: {
   provider: ProviderId
   accounts: Account[]
   stats: Map<string, AccountStats>
