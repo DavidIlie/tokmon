@@ -129,6 +129,7 @@ The dashboard is a prebuilt static bundle shipped in the package — no build st
 | scroll / `↑` `↓` / `[` `]` | (Dashboard) move between pages when paginated |
 | `a` `A` | Cycle account focus forward / back |
 | `0`–`9` | Jump to an account focus slot |
+| `p` | Toggle privacy mode (configurable in settings) |
 | `w` `W` | Toggle the web dashboard (opens in your browser) |
 | `s` | Open settings |
 | `q` | Quit |
@@ -137,7 +138,7 @@ The dashboard is a prebuilt static bundle shipped in the package — no build st
 
 | Key | Action |
 |-----|--------|
-| `p` `P` | Cycle provider forward / back |
+| `P` | Cycle provider back |
 | `/` | Search (Esc clears) |
 | `o` | Cycle sort |
 | `d` `w` `m` | Daily / Weekly / Monthly *(Claude/Codex)* |
@@ -169,6 +170,8 @@ Press `s` to open.
 - **Refresh interval** — dashboard poll rate (default: 2s)
 - **Billing poll** — rate-limit / spend API poll rate (default: 5m, min 1m to avoid rate limiting)
 - **Clear screen** — clears the terminal on launch (like `watch`)
+- **Privacy mode** — hides email addresses by default
+- **Privacy key** — one-key dashboard toggle for privacy mode (default: `p`)
 - **Timezone** — IANA timezone, or `System`
 - **Dashboard layout** — `grid` (all providers at once) or `single` (one at a time)
 - **Default focus** — start on `all`, or remember your `last` focused account

@@ -275,15 +275,23 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
         updateConfig(c => ({ ...c, privacyMode: !c.privacyMode })); return
       }
       if (settingsCursor === 4) {
+        if (isPrintable(input, key)) {
+          const clean = sanitizeTyped(input)
+          if (clean.length === 1) updateConfig(c => ({ ...c, privacyToggleKey: clean }))
+        }
+        if (key.backspace || key.delete) updateConfig(c => ({ ...c, privacyToggleKey: 'p' }))
+        return
+      }
+      if (settingsCursor === 5) {
         if (key.return) { const init = cfg.timezone ?? ''; setTzEdit(init); setTzCaret(init.length); setTzError(null) }
         if (key.leftArrow || key.rightArrow) updateConfig(c => ({ ...c, timezone: c.timezone === null ? systemTimezone() : null }))
         return
       }
-      if (settingsCursor === 5 && (key.leftArrow || key.rightArrow || key.return)) {
+      if (settingsCursor === 6 && (key.leftArrow || key.rightArrow || key.return)) {
         updateConfig(c => ({ ...c, dashboardLayout: c.dashboardLayout === 'grid' ? 'single' : 'grid' }))
         return
       }
-      if (settingsCursor === 6 && (key.leftArrow || key.rightArrow || key.return)) {
+      if (settingsCursor === 7 && (key.leftArrow || key.rightArrow || key.return)) {
         updateConfig(c => ({ ...c, defaultFocus: c.defaultFocus === 'all' ? 'last' : 'all' }))
         return
       }
@@ -316,6 +324,10 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
     return
   }
 
+  if (input === cfg.privacyToggleKey) {
+    updateConfig(c => ({ ...c, privacyMode: !c.privacyMode }))
+    return
+  }
   if (input === 's') { setSettingsTab('general'); setShowSettings(true); setSettingsCursor(-1); return }
   if (input === 'a') { cycleAccount(1); return }
   if (input === 'A') { cycleAccount(-1); return }

@@ -17,6 +17,7 @@ export interface Config {
   billingInterval: number
   clearScreen: boolean
   privacyMode: boolean
+  privacyToggleKey: string
   timezone: string | null
   accounts: Account[]
   activeAccountId: string | null
@@ -60,6 +61,7 @@ export const DEFAULTS: Config = {
   billingInterval: 5,
   clearScreen: true,
   privacyMode: true,
+  privacyToggleKey: 'p',
   timezone: null,
   accounts: [],
   activeAccountId: null,
@@ -278,6 +280,9 @@ export function repairConfig(input: unknown): ConfigRepair {
     billingInterval: clampNum(parsed.billingInterval, DEFAULTS.billingInterval, 1),
     clearScreen: typeof parsed.clearScreen === 'boolean' ? parsed.clearScreen : DEFAULTS.clearScreen,
     privacyMode: typeof parsed.privacyMode === 'boolean' ? parsed.privacyMode : DEFAULTS.privacyMode,
+    privacyToggleKey: typeof parsed.privacyToggleKey === 'string' && parsed.privacyToggleKey.length === 1
+      ? parsed.privacyToggleKey
+      : DEFAULTS.privacyToggleKey,
     timezone,
     accounts,
     activeAccountId,

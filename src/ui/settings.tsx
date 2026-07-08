@@ -6,7 +6,7 @@ import { PROVIDER_ORDER, PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
 import { truncateName } from './shared'
 
-export const GENERAL_ROWS = 7
+export const GENERAL_ROWS = 8
 
 export const SETTINGS_TABS = ['general', 'providers', 'accounts'] as const
 export type SettingsTab = typeof SETTINGS_TABS[number]
@@ -84,20 +84,23 @@ export const SettingsView = memo(function SettingsView({
           <Row cursor={cursor} idx={3} label="Privacy mode">
             <Text bold color={config.privacyMode ? 'green' : 'red'}>{config.privacyMode ? 'on' : 'off'}</Text>
           </Row>
-          <Row cursor={cursor} idx={4} label="Timezone">
+          <Row cursor={cursor} idx={4} label="Privacy key">
+            <Text bold color="yellow">{config.privacyToggleKey === ' ' ? 'space' : config.privacyToggleKey}</Text>
+          </Row>
+          <Row cursor={cursor} idx={5} label="Timezone">
             {editingTz ? (
               <><Text dimColor>[</Text><CaretText value={tzEdit ?? ''} caret={tzCaret} color="cyan" /><Text dimColor>]</Text></>
             ) : (
               <Text bold color="yellow">{tzDisplay}</Text>
             )}
           </Row>
-          {cursor === 4 && tzError && <Text color="red">  {tzError}</Text>}
-          <Row cursor={cursor} idx={5} label="Dashboard">
+          {cursor === 5 && tzError && <Text color="red">  {tzError}</Text>}
+          <Row cursor={cursor} idx={6} label="Dashboard">
             <Text dimColor>{glyphs().caretL} </Text>
             <Text bold color="yellow">{config.dashboardLayout === 'grid' ? 'grid (all)' : 'single (cycle)'}</Text>
             <Text dimColor> {glyphs().caretR}</Text>
           </Row>
-          <Row cursor={cursor} idx={6} label="Default focus">
+          <Row cursor={cursor} idx={7} label="Default focus">
             <Text dimColor>{glyphs().caretL} </Text>
             <Text bold color="yellow">{config.defaultFocus === 'all' ? 'All' : 'Last account'}</Text>
             <Text dimColor> {glyphs().caretR}</Text>
