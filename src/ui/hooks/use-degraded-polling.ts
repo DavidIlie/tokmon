@@ -75,7 +75,8 @@ export function useDegradedPolling({ degraded, configReady, showPicker, accounts
     const load = async () => {
       try {
         const peakP = accountsRef.current.some(a => a.providerId === 'claude')
-          ? fetchPeak() : Promise.resolve(null)
+          ? withTimeout(fetchPeak()).catch(() => null)
+          : Promise.resolve(null)
         await Promise.all(accountsRef.current.map(async (acc) => {
           const provider = PROVIDERS[acc.providerId]
           if (!provider.hasBilling || !provider.fetchBilling) return
@@ -84,7 +85,7 @@ export function useDegradedPolling({ degraded, configReady, showPicker, accounts
             if (active) setStats(prev => upsert(prev, acc, { billing }))
           } catch {}
         }))
-        const p = await withTimeout(peakP)
+        const p = await peakP
         if (active && p) setPeak(p)
       } finally {
         if (active) timer = setTimeout(load, billingMs)
