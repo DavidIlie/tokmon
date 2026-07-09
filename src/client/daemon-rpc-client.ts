@@ -117,7 +117,6 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
         onDisconnect: Effect.sync(() => {
           if (!closed) {
             setConn('reconnecting')
-            resetSession()
           }
         }),
       }),

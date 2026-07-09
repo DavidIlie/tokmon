@@ -172,14 +172,14 @@ async function tokenIdentity(token: string): Promise<TokenIdentity | null | unde
 
 interface ResolvedAuth {
   auth: ClaudeAuth | null
-  // Set when every available credential belongs to a different account than this one.
-  wrongAccountEmail?: string | null
+  // Set when the shared macOS keychain holds a credential for another account.
+  sharedAccountEmail?: string | null
   expired?: boolean
 }
 
 async function getAuth(homeDir: string | undefined, expectedUuid: string | undefined): Promise<ResolvedAuth> {
   const candidates = await authCandidates(homeDir)
-  let wrongAccountEmail: string | null | undefined
+  let sharedAccountEmail: string | null | undefined
   let sawExpired = false
   let sawExpiredOwn = false
   for (const { auth, shared } of candidates) {
@@ -195,12 +195,12 @@ async function getAuth(homeDir: string | undefined, expectedUuid: string | undef
     if (identity === undefined) return { auth } // verification unavailable — keep old behavior
     if (identity === null) continue // dead token
     if (identity.accountUuid === expectedUuid) return { auth }
-    wrongAccountEmail = identity.email
+    sharedAccountEmail = identity.email
   }
   // The account's OWN (non-shared) creds being expired is the actionable state;
   // reporting the shared keychain's foreign identity instead would mis-diagnose.
   if (sawExpiredOwn) return { auth: null, expired: true }
-  if (wrongAccountEmail !== undefined) return { auth: null, wrongAccountEmail }
+  if (sharedAccountEmail !== undefined) return { auth: null, sharedAccountEmail }
   return { auth: null, expired: sawExpired }
 }
 
@@ -324,10 +324,10 @@ function decimalScale(value: unknown): number {
 
 export async function claudeBilling(account: Account): Promise<BillingResult> {
   const identity = readClaudeIdentity(account.homeDir)
-  const { auth, wrongAccountEmail, expired } = await getAuth(account.homeDir, identity.accountUuid)
+  const { auth, sharedAccountEmail, expired } = await getAuth(account.homeDir, identity.accountUuid)
   if (!auth) {
-    const error = wrongAccountEmail !== undefined
-      ? `Signed in as ${wrongAccountEmail ?? 'another account'} — run claude in this home to refresh`
+    const error = sharedAccountEmail !== undefined
+      ? `This Claude home is logged out — shared keychain is ${sharedAccountEmail ?? 'another account'}; run claude here`
       : expired
         ? 'Token expired — run claude to refresh'
         : 'No OAuth token — run claude and log in'

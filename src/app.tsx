@@ -45,6 +45,7 @@ import { usePaste } from './ui/hooks/use-paste'
 import { useLoader } from './ui/hooks/use-loader'
 import { useDegradedPolling } from './ui/hooks/use-degraded-polling'
 import { useAccountForm } from './ui/hooks/use-account-form'
+import { withTimeout } from './async'
 
 export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsToken = null, mode = 'degraded' }: {
   interval?: number
@@ -269,10 +270,10 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     const fetchOnce = async () => {
       try {
         if (tableIsCursor) {
-          const s = await cursorModelSpend(tableAccounts[0]?.homeDir)
+          const s = await withTimeout(cursorModelSpend(tableAccounts[0]?.homeDir))
           if (active) setCursorRows(s?.models ?? [])
         } else {
-          const r = await fetchScopeTable(tableAccounts, tz)
+          const r = await withTimeout(fetchScopeTable(tableAccounts, tz))
           if (active) setTable(r)
         }
       } catch {}

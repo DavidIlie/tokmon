@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import type { DashboardData, TableData } from '../types'
 import type { BillingResult } from '../providers/types'
 import { cacheDir, snapshotCacheFile } from '../config'
+import { withTimeout } from '../async'
 import { fetchPeak } from '../peak'
 import {
   assembleSnapshot, fetchAccountBilling, fetchAccountSummary, fetchAccountTable,
@@ -16,15 +17,6 @@ const IDLE_PAUSE_MS = 60_000
 const SNAPSHOT_CACHE_THROTTLE_MS = 20_000
 const REVEAL_THROTTLE_MS = 500
 const FETCH_TIMEOUT_MS = 30_000
-
-const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
-  Promise.race([
-    p,
-    new Promise<T>((_, reject) => {
-      const t = setTimeout(() => reject(new Error('fetch timeout')), ms)
-      t.unref?.()
-    }),
-  ])
 
 export type RefreshScope = 'all' | 'summary' | 'table' | 'billing' | 'peak'
 

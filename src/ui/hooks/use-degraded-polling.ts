@@ -4,6 +4,7 @@ import { PROVIDERS, type Account } from '../../providers'
 import { loadSeedSnapshot } from '../../client/seed-cache'
 import { upsert } from '../../app.logic'
 import type { AccountStats } from '../../stats'
+import { withTimeout } from '../../async'
 
 export function useDegradedPolling({ degraded, configReady, showPicker, accountsKey, accountsRef, interval, billingMs, tz }: {
   degraded: boolean
@@ -54,7 +55,7 @@ export function useDegradedPolling({ degraded, configReady, showPicker, accounts
           const provider = PROVIDERS[acc.providerId]
           if (!provider.hasUsage || !provider.fetchSummary) return
           try {
-            const dashboard = await provider.fetchSummary(acc, tz)
+            const dashboard = await withTimeout(provider.fetchSummary(acc, tz))
             if (active) setStats(prev => upsert(prev, acc, { dashboard }))
           } catch {}
         }))
@@ -79,11 +80,11 @@ export function useDegradedPolling({ degraded, configReady, showPicker, accounts
           const provider = PROVIDERS[acc.providerId]
           if (!provider.hasBilling || !provider.fetchBilling) return
           try {
-            const billing = await provider.fetchBilling(acc, tz)
+            const billing = await withTimeout(provider.fetchBilling(acc, tz))
             if (active) setStats(prev => upsert(prev, acc, { billing }))
           } catch {}
         }))
-        const p = await peakP
+        const p = await withTimeout(peakP)
         if (active && p) setPeak(p)
       } finally {
         if (active) timer = setTimeout(load, billingMs)
