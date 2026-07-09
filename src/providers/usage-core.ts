@@ -15,6 +15,8 @@ export interface Entry {
   ts: number
   id?: string
   model: string
+  /** Requests represented by this entry; defaults to 1 in groupBy. */
+  count?: number
   cost: number
   input: number
   output: number
@@ -276,24 +278,25 @@ function groupBy(entries: Entry[], keyFn: (e: Entry) => string): TableRow[] {
     const byModel = new Map<string, ModelDetail>()
 
     for (const e of group) {
+      const n = e.count ?? 1
       input += e.input
       output += e.output
       cacheCreate += e.cacheCreate
       cacheRead += e.cacheRead
       cacheSavings += e.cacheSavings
       cost += e.cost
-      count += 1
+      count += n
 
       const m = byModel.get(e.model)
       if (m) {
         m.input += e.input; m.output += e.output
         m.cacheCreate += e.cacheCreate; m.cacheRead += e.cacheRead
-        m.cacheSavings += e.cacheSavings; m.cost += e.cost; m.count += 1
+        m.cacheSavings += e.cacheSavings; m.cost += e.cost; m.count += n
       } else {
         byModel.set(e.model, {
           name: e.model, input: e.input, output: e.output,
           cacheCreate: e.cacheCreate, cacheRead: e.cacheRead,
-          cacheSavings: e.cacheSavings, cost: e.cost, count: 1,
+          cacheSavings: e.cacheSavings, cost: e.cost, count: n,
         })
       }
     }

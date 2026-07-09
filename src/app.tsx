@@ -16,8 +16,7 @@ import * as fmt from './format'
 import type { WebServerController } from './web/server'
 import { Spinner, TabBar, PeakBadge, dispatchLinkClicks } from './ui/shared'
 import { DashboardView, computeDashLayout, TotalsRow } from './ui/dashboard'
-import { TableProviderBar, ControlBar, TokenTable, CursorSpendTable } from './ui/table'
-import { cursorModelSpend, type CursorModelSpend } from './providers/cursor/composer'
+import { TableProviderBar, ControlBar, TokenTable } from './ui/table'
 import { Onboarding, type OnboardItem } from './ui/onboarding'
 import { LoadingView, accountReady, statsReadyInput, type ReadyInput } from './ui/loading'
 import {
@@ -30,12 +29,12 @@ import { AccountStrip } from './ui/account-strip'
 import { Footer } from './ui/footer'
 import { TinyFallback } from './ui/tiny-fallback'
 import { useDaemon } from './client/use-daemon'
-import { toStatsMap, toCursorRows, pickTable } from './client/snapshot-adapter'
+import { toStatsMap, pickTable } from './client/snapshot-adapter'
 import {
-  TABS, VIEWS, SORTS, CURSOR_SORTS,
+  TABS, VIEWS, SORTS,
   type Slot,
   acctKey, clampCaret, spliceInsert, applyStartup,
-  fetchScopeTable, sortLabel, sortRows, filterTokenRows, filterCursorRows, sortCursorRows,
+  fetchScopeTable, sortLabel, sortRows, filterTokenRows,
   tableModelOptions, cycleTableModel, filterRowsByModel,
 } from './app.logic'
 import { openUrl, IS_TTY } from './ui/terminal'
@@ -71,7 +70,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const [tableModel, setTableModel] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [searchMode, setSearchMode] = useState(false)
-  const [cursorRowsLocal, setCursorRows] = useState<CursorModelSpend[] | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general')
   const [settingsCursor, setSettingsCursor] = useState(0)
@@ -175,7 +173,10 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     () => focusId === null ? allGroups : accountsByProvider(visibleAccounts),
     [allGroups, visibleAccounts, focusId],
   )
-  const tableProvs = useMemo(() => allGroups.map(g => g.provider), [allGroups])
+  const tableProvs = useMemo(
+    () => allGroups.map(g => g.provider).filter(pid => PROVIDERS[pid].hasUsage),
+    [allGroups],
+  )
 
   const TOO_SMALL = cols < 40 || rows < 12
 
@@ -218,21 +219,16 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const { handlePasteData, isPasteInput } = usePaste(insertText)
 
   const effTableProvider = (tableProvider && tableProvs.includes(tableProvider)) ? tableProvider : (tableProvs[0] ?? null)
-  const tableIsCursor = !!effTableProvider && !PROVIDERS[effTableProvider].hasUsage
   const tableAccounts = useMemo(
     () => effTableProvider ? accounts.filter(a => a.providerId === effTableProvider) : [],
     [accounts, effTableProvider],
   )
-  const SORTS_FOR = tableIsCursor ? CURSOR_SORTS : SORTS
+  const SORTS_FOR = SORTS
 
   const tableAccountIds = useMemo(() => tableAccounts.map(a => a.id), [tableAccounts])
   const table = useMemo(
     () => connected ? pickTable(snapshot, tableAccountIds) : tableLocal,
     [connected, snapshot, tableAccountIds, tableLocal],
-  )
-  const cursorRows = useMemo(
-    () => connected ? toCursorRows(snapshot, tableAccounts[0]?.id) : cursorRowsLocal,
-    [connected, snapshot, tableAccounts, cursorRowsLocal],
   )
 
   const { showLoader } = useLoader({
@@ -256,10 +252,10 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     [effTableProvider, tableAccounts, tz],
   )
   useEffect(() => {
-    setTable(null); setCursorRows(null)
+    setTable(null)
     setCursor(0); setExpanded(-1)
     setTableModel(null)
-    setSort(tableIsCursor ? 0 : 1)
+    setSort(1)
     setTableLoading(false)
   }, [tableKey])
 
@@ -269,13 +265,8 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     let timer: ReturnType<typeof setTimeout>
     const fetchOnce = async () => {
       try {
-        if (tableIsCursor) {
-          const s = await withTimeout(cursorModelSpend(tableAccounts[0]?.homeDir))
-          if (active) setCursorRows(s?.models ?? [])
-        } else {
-          const r = await withTimeout(fetchScopeTable(tableAccounts, tz))
-          if (active) setTable(r)
-        }
+        const r = await withTimeout(fetchScopeTable(tableAccounts, tz))
+        if (active) setTable(r)
       } catch {}
     }
     const run = async () => {
@@ -402,8 +393,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     const cur = effTableProvider ? tableProvs.indexOf(effTableProvider) : 0
     const nextProv = tableProvs[(cur + dir + tableProvs.length) % tableProvs.length]
     setTableProvider(nextProv)
-    const nextIsCursor = !!nextProv && !PROVIDERS[nextProv].hasUsage
-    setSort(nextIsCursor ? 0 : 1)
+    setSort(1)
     setCursor(0); setExpanded(-1); setTableModel(null); setSearch(''); setSearchCaret(0); setSearchMode(false)
   }, [tableProvs, effTableProvider])
 
@@ -441,11 +431,10 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const onRowClickToken = useCallback((idx: number) => {
     if (idx === cursor) setExpanded(e => e === idx ? -1 : idx); else setCursor(idx)
   }, [cursor])
-  const onRowClickCursor = useCallback((idx: number) => setCursor(idx), [])
 
   const rawTokenRows = useMemo(
-    () => tab === 1 && !tableIsCursor ? (table ? [table.daily, table.weekly, table.monthly][view] : []) : [],
-    [tab, tableIsCursor, table, view],
+    () => tab === 1 ? (table ? [table.daily, table.weekly, table.monthly][view] : []) : [],
+    [tab, table, view],
   )
   const tokenModelOptions = useMemo(() => tableModelOptions(rawTokenRows), [rawTokenRows])
   useEffect(() => {
@@ -457,16 +446,10 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   }, [tokenModelOptions, resetView])
   const activeTableModel = tableModel && tokenModelOptions.includes(tableModel) ? tableModel : null
   const tokenRows = useMemo(
-    () => tab === 1 && !tableIsCursor
+    () => tab === 1
       ? sortRows(filterTokenRows(filterRowsByModel(rawTokenRows, activeTableModel), search), sort)
       : [],
-    [tab, tableIsCursor, rawTokenRows, activeTableModel, search, sort],
-  )
-  const cursorTableRows = useMemo(
-    () => tab === 1 && tableIsCursor
-      ? sortCursorRows(filterCursorRows(cursorRows ?? [], search), sort)
-      : [],
-    [tab, tableIsCursor, cursorRows, search, sort],
+    [tab, rawTokenRows, activeTableModel, search, sort],
   )
 
   useInput((input, key) => handleKey(input, key, {
@@ -477,7 +460,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     showLoader, configReady, toggleWeb, settingsCursor, settingsTab, setSettingsTab, setShowSettings, cfg, trackedAccountRows, moveAccount,
     setSettingsCursor, toggleProvider, openEditAccount, openConfigureAccount, deleteAccount, openAddAccount, cycleAccount, setTab,
     resetView, slots, dashPaginated, dashPageCount, setDashPage, cycleTableProvider, setExpanded, setSort,
-    SORTS_FOR, tableIsCursor, cycleTableModel: cycleTableModelFilter, setView, cursor, rowCountRef, rows, setCursor, clampRow,
+    SORTS_FOR, cycleTableModel: cycleTableModelFilter, setView, cursor, rowCountRef, rows, setCursor, clampRow,
   }), { isActive: IS_TTY })
 
   if (error) return <Box padding={1}><Text color="red">{error}</Text></Box>
@@ -511,7 +494,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     return <TinyFallback groups={groups} stats={stats} rows={rows} cols={cols} />
   }
 
-  rowCountRef.current = tableIsCursor ? cursorTableRows.length : tokenRows.length
+  rowCountRef.current = tokenRows.length
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1} height={rows} overflow="hidden">
@@ -578,17 +561,12 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
               <Box height={1} />
               <ControlBar views={VIEWS} period={view} sort={sortLabel(SORTS_FOR[sort % SORTS_FOR.length])}
                 model={activeTableModel} search={search} searchCaret={searchCaret} searching={searchMode}
-                showPeriod={!tableIsCursor} showModel={!tableIsCursor} />
+                showPeriod showModel />
               <Box height={1} />
               {!effTableProvider ? (
                 <Text dimColor>No providers enabled {glyphs().emDash} press s to pick providers.</Text>
-              ) : tableLoading && !table && !cursorRows ? (
+              ) : tableLoading && !table ? (
                 <Spinner label="Loading history" />
-              ) : tableIsCursor ? (
-                <CursorSpendTable
-                  rows={cursorTableRows} cursor={cursor} maxRows={Math.max(1, rows - 16)}
-                  onRowClick={onRowClickCursor}
-                />
               ) : (
                 <TokenTable
                   rows={tokenRows} cursor={cursor} expanded={expanded}

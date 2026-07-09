@@ -7,6 +7,7 @@ import { opencodeProvider } from './opencode'
 import { copilotProvider } from './copilot'
 import { antigravityProvider } from './antigravity'
 import { geminiProvider } from './gemini'
+import { grokProvider } from './grok'
 import { installSignals } from './detect'
 
 export * from './types'
@@ -22,6 +23,7 @@ export const PROVIDERS: Record<ProviderId, Provider> = {
   copilot: copilotProvider,
   antigravity: antigravityProvider,
   gemini: geminiProvider,
+  grok: grokProvider,
 }
 
 export async function detectProviders(): Promise<ProviderId[]> {

@@ -39,7 +39,7 @@ for (let i = 0; i < args.length; i++) {
   if (args[i] === '--no-ascii') asciiFlag = 'off'
   if (args[i] === '--help' || args[i] === '-h') {
     console.log('tokmon - Terminal usage dashboard for your AI coding tools\n')
-    console.log('  Claude · Codex · Cursor · Copilot · opencode · pi · Antigravity · Gemini\n')
+    console.log('  Claude · Codex · Cursor · Copilot · opencode · pi · Antigravity · Gemini · Grok\n')
     console.log('Usage: tokmon [options]')
     console.log('       tokmon serve [--port <n>] [--no-open]   Launch the web dashboard\n')
     console.log('Options:')

@@ -93,6 +93,7 @@ export const PROVIDER_META: Record<ProviderId, { name: string; color: string }> 
   opencode: { name: 'opencode', color: 'yellow' },
   antigravity: { name: 'Antigravity', color: 'red' },
   gemini: { name: 'Gemini', color: 'greenBright' },
+  grok: { name: 'Grok', color: 'yellowBright' },
 }
 
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i

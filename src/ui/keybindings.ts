@@ -88,7 +88,6 @@ export interface KeyContext {
   setExpanded: Dispatch<SetStateAction<number>>
   setSort: Dispatch<SetStateAction<number>>
   SORTS_FOR: readonly { label: string; dir: 'up' | 'down' | null }[]
-  tableIsCursor: boolean
   cycleTableModel: (dir: 1 | -1) => void
   setView: Dispatch<SetStateAction<number>>
   cursor: number
@@ -107,7 +106,7 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
     showLoader, configReady, toggleWeb, settingsCursor, settingsTab, setSettingsTab, setShowSettings, cfg, trackedAccountRows, moveAccount,
     setSettingsCursor, toggleProvider, openEditAccount, openConfigureAccount, deleteAccount, openAddAccount, cycleAccount, setTab,
     resetView, slots, dashPaginated, dashPageCount, setDashPage, cycleTableProvider, setExpanded, setSort,
-    SORTS_FOR, tableIsCursor, cycleTableModel, setView, cursor, rowCountRef, rows, setCursor, clampRow,
+    SORTS_FOR, cycleTableModel, setView, cursor, rowCountRef, rows, setCursor, clampRow,
   } = ctx
 
   if (showPicker) {
@@ -351,23 +350,18 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
     if (input === '/') { setSearchMode(true); setSearchCaret(search.length); return }
     if (key.escape) { if (search) { setSearch(''); setSearchCaret(0) } else setExpanded(-1); return }
     if (input === 'o') { setSort(s => (s + 1) % SORTS_FOR.length); resetView(); return }
-    if (!tableIsCursor) {
-      if (input === 'd') { setView(0); resetView(); return }
-      if (input === 'w') { setView(1); resetView(); return }
-      if (input === 'm') { cycleTableModel(1); return }
-      if (input === 'M') { cycleTableModel(-1); return }
-      if (key.leftArrow) { setView(v => (v - 1 + VIEWS.length) % VIEWS.length); resetView(); return }
-      if (key.rightArrow) { setView(v => (v + 1) % VIEWS.length); resetView(); return }
-      if (key.return) { setExpanded(e => e === cursor ? -1 : cursor); return }
-    }
-  } else {
-    if (key.leftArrow || key.rightArrow) { setTab(t => (t + 1) % TABS.length); resetView(); return }
-  }
-
-  if (tab === 1 && !tableIsCursor) {
+    if (input === 'd') { setView(0); resetView(); return }
+    if (input === 'w') { setView(1); resetView(); return }
+    if (input === 'm') { cycleTableModel(1); return }
+    if (input === 'M') { cycleTableModel(-1); return }
+    if (key.leftArrow) { setView(v => (v - 1 + VIEWS.length) % VIEWS.length); resetView(); return }
+    if (key.rightArrow) { setView(v => (v + 1) % VIEWS.length); resetView(); return }
+    if (key.return) { setExpanded(e => e === cursor ? -1 : cursor); return }
     if (key.upArrow) { setCursor(c => Math.max(0, c - 1)); return }
     if (key.downArrow) { setCursor(c => clampRow(c + 1)); return }
     if (key.pageDown || input === 'G') { setCursor(c => clampRow(input === 'G' ? rowCountRef.current - 1 : c + Math.max(1, rows - 12))); return }
     if (key.pageUp || input === 'g') { setCursor(c => input === 'g' ? 0 : Math.max(0, c - Math.max(1, rows - 12))); return }
+  } else {
+    if (key.leftArrow || key.rightArrow) { setTab(t => (t + 1) % TABS.length); resetView(); return }
   }
 }

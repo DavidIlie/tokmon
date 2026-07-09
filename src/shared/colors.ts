@@ -30,6 +30,7 @@ export const PROVIDER_HEX: Record<ProviderId, string> = {
   opencode: NAMED_HEX.yellow,
   antigravity: NAMED_HEX.red,
   gemini: NAMED_HEX.greenBright,
+  grok: NAMED_HEX.yellowBright,
 }
 
 export function namedHex(name: string | undefined | null): string {

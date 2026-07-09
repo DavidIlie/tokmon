@@ -1,7 +1,6 @@
 import { glyphs } from './glyphs'
 import { PROVIDERS, type Account } from './providers'
 import { coalesceTables } from './providers/usage-core'
-import type { CursorModelSpend } from './providers/cursor/composer'
 import type { Config } from './config'
 import type { AccountStats } from './stats'
 import type { TableData, TableRow } from './types'
@@ -13,11 +12,6 @@ export const SORTS = [
   { label: 'date', dir: 'down' as const },
   { label: 'cost', dir: 'up' as const },
   { label: 'cost', dir: 'down' as const },
-] as const
-export const CURSOR_SORTS = [
-  { label: 'cost', dir: 'down' as const },
-  { label: 'amount', dir: 'down' as const },
-  { label: 'model', dir: null },
 ] as const
 
 export type Slot = { id: string | null; name: string; color: string }
@@ -123,19 +117,4 @@ export function filterTokenRows(rows: TableRow[], q: string): TableRow[] {
   if (!q) return rows
   const s = q.toLowerCase()
   return rows.filter(r => r.label.toLowerCase().includes(s) || r.models.some(m => m.toLowerCase().includes(s)))
-}
-
-export function filterCursorRows(rows: CursorModelSpend[], q: string): CursorModelSpend[] {
-  if (!q) return rows
-  const s = q.toLowerCase()
-  return rows.filter(r => r.name.toLowerCase().includes(s))
-}
-
-export function sortCursorRows(rows: CursorModelSpend[], sortIdx: number): CursorModelSpend[] {
-  const out = [...rows]
-  switch (sortIdx % CURSOR_SORTS.length) {
-    case 1: return out.sort((a, b) => b.requests - a.requests)
-    case 2: return out.sort((a, b) => a.name.localeCompare(b.name))
-    default: return out.sort((a, b) => b.usd - a.usd)
-  }
 }

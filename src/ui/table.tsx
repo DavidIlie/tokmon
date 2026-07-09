@@ -4,7 +4,6 @@ import * as fmt from '../format'
 import { PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
 import type { TableRow } from '../types'
-import type { CursorModelSpend } from '../providers/cursor/composer'
 import { ClickableBox } from './shared'
 import { CaretText } from './settings'
 import { glyphs } from '../glyphs'
@@ -172,58 +171,6 @@ function RowDetail({ row, indent }: { row: TableRow; indent: number }) {
     </Box>
   )
 }
-
-export const CursorSpendTable = memo(function CursorSpendTable({ rows, cursor, maxRows, onRowClick }: {
-  rows: CursorModelSpend[]
-  cursor: number
-  maxRows: number
-  onRowClick: (idx: number) => void
-}) {
-  if (rows.length === 0) return <Text dimColor>No Cursor spend recorded locally.</Text>
-
-  const total = rows.reduce((a, r) => a + r.usd, 0)
-  const totalAmt = rows.reduce((a, r) => a + r.requests, 0)
-  const clamped = Math.min(cursor, rows.length - 1)
-  const scrollStart = Math.max(0, Math.min(clamped - Math.floor(maxRows / 2), rows.length - maxRows))
-  const visible = rows.slice(scrollStart, scrollStart + maxRows)
-  const W = { model: 34, cost: 12, amount: 12, share: 8 }
-
-  return (
-    <Box flexDirection="column">
-      <Text>
-        <Text bold>  {fmt.col('Model', W.model, 'left')}</Text>
-        <Text bold>{fmt.col('Cost', W.cost)}</Text>
-        <Text bold>{fmt.col('Amount', W.amount)}</Text>
-        <Text bold>{fmt.col('Share', W.share)}</Text>
-      </Text>
-      <Text dimColor>{glyphs().rule.repeat(W.model + W.cost + W.amount + W.share + 2)}</Text>
-      {visible.map((r, vi) => {
-        const idx = scrollStart + vi
-        const selected = idx === clamped
-        const share = total > 0 ? (r.usd / total) * 100 : 0
-        return (
-          <ClickableBox key={r.name} onClick={() => onRowClick(idx)}>
-            <Text inverse={selected}>
-              <Text color={selected ? undefined : 'magenta'}>{selected ? `${glyphs().caretR} ` : '  '}{fmt.col(r.name, W.model, 'left')}</Text>
-              <Text bold color={selected ? undefined : 'yellow'}>{fmt.col(fmt.currency(r.usd), W.cost)}</Text>
-              <Text>{fmt.col(fmt.tokens(r.requests), W.amount)}</Text>
-              <Text dimColor>{fmt.col(share.toFixed(1) + '%', W.share)}</Text>
-            </Text>
-          </ClickableBox>
-        )
-      })}
-      <Text dimColor>{glyphs().rule.repeat(W.model + W.cost + W.amount + W.share + 2)}</Text>
-      <Text>
-        <Text bold color="greenBright">  {fmt.col('Total', W.model, 'left')}</Text>
-        <Text bold color="yellowBright">{fmt.col(fmt.currency(total), W.cost)}</Text>
-        <Text bold color="yellow">{fmt.col(fmt.tokens(totalAmt), W.amount)}</Text>
-        <Text dimColor>{fmt.col('100%', W.share)}</Text>
-      </Text>
-      <Box height={1} />
-      <Text dimColor>local spend by model (composerData) {glyphs().middot} est. API-equivalent {glyphs().middot} {clamped + 1}/{rows.length}</Text>
-    </Box>
-  )
-})
 
 function fmtLabel(label: string): string {
   if (label.length === 7 && label[4] === '-') {

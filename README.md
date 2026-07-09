@@ -1,6 +1,6 @@
 # tokmon
 
-Terminal dashboard for **Claude Code**, **Codex**, **Cursor**, **Copilot**, **opencode**, **pi**, **Antigravity**, and **Gemini** — usage, costs, and rate limits, all in one place.
+Terminal dashboard for **Claude Code**, **Codex**, **Cursor**, **Copilot**, **opencode**, **pi**, **Antigravity**, **Gemini**, and **Grok** — usage, costs, and rate limits, all in one place.
 
 Built with [Ink](https://github.com/vadimdemedes/ink) and TypeScript.
 
@@ -34,14 +34,15 @@ Then run `tokmon`. On first launch you'll pick which providers to track; press `
 |----------|---------------|--------------|
 | **Claude** | `~/.claude/projects/**/*.jsonl` | Cost & token history, plan (e.g. Max 20x), live 5h / weekly / Sonnet limits |
 | **Codex** | `~/.codex/sessions/**/rollout-*.jsonl` | Cost & token history, plan, live 5h / weekly limits, credit balance |
+| **Cursor** | Cursor API usage events + local `composerData` | Cost & token history (Today / Week / Month), plan, period spend, on-demand caps |
 | **opencode** | `~/.local/share/opencode/opencode.db` | Cost & token history across whatever providers opencode routes to (uses its own recorded cost) |
 | **pi** | `~/.pi/agent/sessions/**/*.jsonl` | Cost & token history (uses pi's own recorded cost) |
+| **Grok** | `~/.grok/logs/unified.jsonl` (+ session model join) | Cost & token history from Grok CLI turns, SuperGrok / credits billing when signed in |
 
 **Billing / quota providers** — plan + live quota or spend (no local token history):
 
 | Provider | What it reads | What you get |
 |----------|---------------|--------------|
-| **Cursor** | `state.vscdb` + local tracking DBs | Plan, current-period spend, on-demand caps, per-model spend, AI-code activity |
 | **Copilot** | GitHub token (gh / VS Code) | Plan + premium-request & chat quota |
 | **Antigravity** | its `state.vscdb` OAuth → Google Cloud Code | Plan + per-pool (Gemini Pro/Flash/Claude) quota |
 | **Gemini** | `~/.gemini/oauth_creds.json` → Google Cloud Code | Plan + quota (re-run `gemini` to refresh an expired token) |
@@ -70,15 +71,13 @@ A **Peak / Off-Peak** badge appears in the header (Claude only), fetched from [p
 
 Per-provider history with a provider selector (`p` / `P`), search (`/`), and sorting (`o`).
 
-For **Claude / Codex** — Daily, Weekly, and Monthly breakdowns (6 months of history). Each row shows models used, input/output/cache tokens, and cost. Press `Enter` to expand a per-model breakdown:
+For **Claude / Codex / Cursor / Grok** — Daily, Weekly, and Monthly breakdowns (6 months of history). Each row shows models used, input/output/cache tokens, and cost. Press `Enter` to expand a per-model breakdown:
 
 ```
 ▸ Apr  7  haiku-4-5, op~  7.6K 487.0K  10.1M    1.1B  $603.89
           ├─ opus-4-6          7.5K    485.0K    10.0M      1.1B  $601.50
           └─ haiku-4-5          100     2.0K     100K      5.0M    $2.39
 ```
-
-For **Cursor** — a per-model spend table (cost, request count, share of total, all-time), sourced from Cursor's local conversation data.
 
 ## Web Dashboard
 

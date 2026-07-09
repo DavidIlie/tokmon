@@ -100,6 +100,13 @@ export function installSignals(id: ProviderId): boolean {
       ])
     case 'gemini':
       return onPath(['gemini'])
+    case 'grok':
+      return onPath(['grok']) || anyExists([
+        join(home, '.grok', 'bin', 'grok'),
+        join(home, '.grok', 'bin', 'grok.exe'),
+      ]) || existsSync(join(home, '.grok', 'auth.json'))
+        || existsSync(join(home, '.grok', 'sessions'))
+        || existsSync(join(home, '.grok', 'logs', 'unified.jsonl'))
     default:
       return false
   }
