@@ -179,6 +179,158 @@ function waitForExit(child: ChildProcess, timeoutMs = 5_000): Promise<void> {
   })
 }
 
+function incompatibleDaemon(root: string, version: string): { child: ChildProcess; handshake: Promise<Handshake> } {
+  const child = spawn(process.execPath, ['--input-type=module', '--eval', `
+    import { createServer } from 'node:http'
+    import { mkdir, unlink, writeFile } from 'node:fs/promises'
+    import { join } from 'node:path'
+    const cachePath = process.env.TOKMON_DAEMON_CACHE_DIR
+    const token = process.env.TOKMON_TEST_TOKEN
+    const ownerId = process.env.TOKMON_TEST_OWNER
+    const version = process.env.TOKMON_TEST_VERSION
+    const lockPath = join(cachePath, 'daemon.json')
+    const server = createServer((req, res) => {
+      const owner = req.headers['x-tokmon-token'] === token
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ ok: true, owner, version }))
+    })
+    server.listen(0, '127.0.0.1', async () => {
+      const address = server.address()
+      const lock = {
+        pid: process.pid,
+        port: address.port,
+        url: 'http://127.0.0.1:' + address.port,
+        wsToken: token,
+        version,
+        startedAt: Date.now(),
+        ownerId,
+        state: 'ready',
+      }
+      await mkdir(cachePath, { recursive: true, mode: 0o700 })
+      await writeFile(lockPath, JSON.stringify(lock), { mode: 0o600 })
+      process.stdout.write(JSON.stringify({ ready: 1, url: lock.url, port: lock.port, wsToken: token, version }) + '\\n')
+    })
+    const shutdown = () => server.close(async () => {
+      await unlink(lockPath).catch(() => {})
+      process.exit(0)
+    })
+    process.once('SIGTERM', shutdown)
+    process.once('SIGINT', shutdown)
+  `], {
+    env: {
+      ...process.env,
+      TOKMON_DAEMON_CACHE_DIR: join(root, 'cache'),
+      TOKMON_TEST_TOKEN: 'u'.repeat(43),
+      TOKMON_TEST_OWNER: 'v'.repeat(43),
+      TOKMON_TEST_VERSION: version,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  const handshake = new Promise<Handshake>((resolve, reject) => {
+    let stdout = ''
+    let stderr = ''
+    const timer = setTimeout(() => reject(new Error(`incompatible daemon handshake timed out: ${stderr}`)), 5_000)
+    child.stderr?.setEncoding('utf8')
+    child.stderr?.on('data', chunk => { stderr += chunk })
+    child.stdout?.setEncoding('utf8')
+    child.stdout?.on('data', chunk => {
+      stdout += chunk
+      const newline = stdout.indexOf('\n')
+      if (newline === -1) return
+      clearTimeout(timer)
+      try { resolve(JSON.parse(stdout.slice(0, newline)) as Handshake) } catch (error) { reject(error) }
+    })
+    child.once('error', error => { clearTimeout(timer); reject(error) })
+    child.once('exit', code => {
+      if (!stdout.includes('\n')) {
+        clearTimeout(timer)
+        reject(new Error(`incompatible daemon exited before handshake (${code}): ${stderr}`))
+      }
+    })
+  })
+  return { child, handshake }
+}
+
+test('a new client replaces an authenticated incompatible daemon instead of degrading', { timeout: 20_000 }, async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('signal-based upgrade assertion is POSIX-specific')
+    return
+  }
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-daemon-upgrade-'))
+  await mkdir(join(root, 'home'), { recursive: true })
+  const old = incompatibleDaemon(root, '0.22.7')
+  let replacementPid: number | null = null
+  try {
+    await old.handshake
+    const handle = await attachOrSpawn({
+      cachePath: join(root, 'cache'),
+      entry: join(process.cwd(), 'src/cli.tsx'),
+      execArgv: ['--import', 'tsx'],
+      env: {
+        ...process.env,
+        HOME: join(root, 'home'),
+        TOKMON_WEB_MODE: 'prod',
+      },
+      timeoutMs: 5_000,
+    })
+    assert.equal(handle.kind, 'spawned')
+    await waitForExit(old.child, 3_000)
+    const replacement = readLock({ cachePath: join(root, 'cache') })
+    assert.ok(replacement)
+    assert.notEqual(replacement.version, '0.22.7')
+    replacementPid = replacement.pid
+  } finally {
+    if (old.child.exitCode === null && old.child.signalCode === null) old.child.kill('SIGKILL')
+    await waitForExit(old.child).catch(() => {})
+    if (replacementPid) {
+      try { process.kill(replacementPid, 'SIGTERM') } catch {}
+      for (let i = 0; i < 50 && readLock({ cachePath: join(root, 'cache') }); i++) {
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('an incompatible daemon is never signalled when owner authentication fails', { timeout: 10_000 }, async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('signal-based upgrade assertion is POSIX-specific')
+    return
+  }
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-daemon-unverified-'))
+  await mkdir(join(root, 'home'), { recursive: true })
+  const old = incompatibleDaemon(root, '0.22.7')
+  try {
+    await old.handshake
+    const cachePath = join(root, 'cache')
+    const current = readLock({ cachePath })
+    assert.ok(current)
+    await writeFile(lockfilePath({ cachePath }), JSON.stringify({
+      ...current,
+      wsToken: 'w'.repeat(43),
+    }), { mode: 0o600 })
+
+    const handle = await attachOrSpawn({
+      cachePath,
+      entry: join(process.cwd(), 'src/cli.tsx'),
+      execArgv: ['--import', 'tsx'],
+      env: {
+        ...process.env,
+        HOME: join(root, 'home'),
+        TOKMON_WEB_MODE: 'prod',
+      },
+      timeoutMs: 500,
+    })
+    assert.equal(handle.kind, 'degraded')
+    assert.equal(old.child.exitCode, null)
+  } finally {
+    if (old.child.exitCode === null && old.child.signalCode === null) old.child.kill('SIGKILL')
+    await waitForExit(old.child).catch(() => {})
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 function openWebSocket(port: number, token?: string, host = `127.0.0.1`): Promise<Socket> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, '127.0.0.1')
@@ -227,6 +379,7 @@ test('real daemon is singleton, host/token guarded, durable, and bounded on webs
   await mkdir(join(root, 'home'), { recursive: true })
   const contenders: ReturnType<typeof daemonProcess>[] = []
   let owner: ChildProcess | null = null
+  let tui: ChildProcess | null = null
   let socket: Socket | null = null
   try {
     contenders.push(...Array.from({ length: 4 }, () => daemonProcess(root)))
@@ -251,6 +404,25 @@ test('real daemon is singleton, host/token guarded, durable, and bounded on webs
       await rpc.close()
     }
 
+    tui = spawn(process.execPath, ['--import', 'tsx', join(process.cwd(), 'src/cli.tsx')], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: join(root, 'home'),
+        TOKMON_DAEMON_CACHE_DIR: join(root, 'cache'),
+        TOKMON_WEB_MODE: 'prod',
+      },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    })
+    await new Promise(resolve => setTimeout(resolve, 300))
+    assert.equal(tui.exitCode, null, 'TUI should remain active after attaching')
+    const tuiExitStarted = Date.now()
+    tui.kill('SIGINT')
+    await waitForExit(tui, 3_000)
+    assert.ok(Date.now() - tuiExitStarted < 3_000, 'Ctrl-C should close the TUI promptly')
+    assert.equal(owner.exitCode, null, 'Ctrl-C should leave the background daemon running')
+    assert.equal(await probeHealth(ready.url, ready.wsToken, ready.version), true)
+
     assert.equal((await fetch(`${ready.url}/healthz`)).status, 200)
     assert.equal(await requestStatus(`${ready.url}/healthz`, { host: 'evil.example' }), 403)
     assert.equal(await requestStatus(`${ready.url}/api/data`, { host: 'evil.example' }), 403)
@@ -271,6 +443,10 @@ test('real daemon is singleton, host/token guarded, durable, and bounded on webs
     assert.equal(await readFile(join(root, 'cache', 'daemon.json'), 'utf8').then(() => true, () => false), false)
   } finally {
     socket?.destroy()
+    if (tui && tui.exitCode === null && tui.signalCode === null) {
+      tui.kill('SIGKILL')
+      await waitForExit(tui).catch(() => {})
+    }
     await Promise.all(contenders.map(async ({ child }) => {
       if (child.exitCode !== null || child.signalCode !== null) return
       child.kill('SIGKILL')

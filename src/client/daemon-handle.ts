@@ -1,10 +1,18 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { extname } from 'node:path'
 import { appVersion } from '../web/static'
-import { readLock, verifyLock, type LockfileOptions } from '../web/lockfile'
+import {
+  isAlive,
+  probeHealth,
+  readLock,
+  reclaimDeadLock,
+  verifyLock,
+  type LockfileOptions,
+} from '../web/lockfile'
 import { browserUrl } from '../web/open'
 
 const HANDSHAKE_TIMEOUT_MS = process.platform === 'win32' ? 15_000 : 10_000
+const UPGRADE_SHUTDOWN_TIMEOUT_MS = 5_000
 
 export type DaemonKind = 'spawned' | 'degraded'
 
@@ -20,6 +28,8 @@ export interface AttachOrSpawnOptions extends LockfileOptions {
   entry?: string
   execPath?: string
   execArgv?: string[]
+  /** Test-only environment override for the spawned daemon. */
+  env?: NodeJS.ProcessEnv
   timeoutMs?: number
 }
 
@@ -58,21 +68,70 @@ function connected(url: string, wsToken: string): DaemonHandle {
   return { kind: 'spawned', baseUrl: browserUrl(url, wsToken), wsToken, stop: () => {} }
 }
 
-async function attach(opts: LockfileOptions): Promise<DaemonHandle | null> {
-  const lock = await verifyLock(readLock(opts), appVersion())
+async function attach(opts: LockfileOptions, version: string): Promise<DaemonHandle | null> {
+  const lock = await verifyLock(readLock(opts), version)
   return lock ? connected(lock.url, lock.wsToken) : null
 }
 
+const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
+/**
+ * An authenticated older daemon cannot serve a newer RPC contract. Retire that
+ * exact owner before entering the normal singleton startup race. An unverified
+ * lock is never signalled: degraded mode remains the safe fallback in that case.
+ */
+async function retireIncompatibleDaemon(
+  opts: LockfileOptions,
+  version: string,
+  timeoutMs: number,
+): Promise<void> {
+  const lock = readLock(opts)
+  if (
+    !lock || lock.state !== 'ready' || lock.version === version ||
+    lock.pid === process.pid || !isAlive(lock.pid)
+  ) return
+
+  const authenticated = await probeHealth(
+    lock.url,
+    lock.wsToken,
+    lock.version,
+    Math.min(1_000, timeoutMs),
+  )
+  if (!authenticated) return
+
+  try { process.kill(lock.pid, 'SIGTERM') } catch {
+    if (!isAlive(lock.pid)) reclaimDeadLock(opts)
+    return
+  }
+
+  const deadline = Date.now() + Math.min(timeoutMs, UPGRADE_SHUTDOWN_TIMEOUT_MS)
+  while (Date.now() < deadline) {
+    const current = readLock(opts)
+    if (!current || current.ownerId !== lock.ownerId) return
+    if (!isAlive(lock.pid)) {
+      reclaimDeadLock(opts)
+      return
+    }
+    await delay(50)
+  }
+}
+
 export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<DaemonHandle> {
-  const existing = await attach(opts)
+  const version = appVersion()
+  const timeoutMs = opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS
+  const existing = await attach(opts, version)
   if (existing) return existing
+
+  await retireIncompatibleDaemon(opts, version, timeoutMs)
+  const upgraded = await attach(opts, version)
+  if (upgraded) return upgraded
 
   const entry = opts.entry ?? process.argv[1]
   if (!entry) return degraded()
   const execPath = opts.execPath ?? process.execPath
-  const timeoutMs = opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS
   const args = ['__daemon', '--port', '0', '--no-open']
-  const env = opts.cachePath ? { ...process.env, TOKMON_DAEMON_CACHE_DIR: opts.cachePath } : process.env
+  const baseEnv = opts.env ?? process.env
+  const env = opts.cachePath ? { ...baseEnv, TOKMON_DAEMON_CACHE_DIR: opts.cachePath } : baseEnv
 
   return new Promise<DaemonHandle>((resolve) => {
     let child: ChildProcess
@@ -97,7 +156,7 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
       child.unref()
       resolve(handle)
     }
-    const tryAttach = (final = false) => { void attach(opts).then(found => {
+    const tryAttach = (final = false) => { void attach(opts, version).then(found => {
       if (found) { finish(found); return }
       if (final) { finish(degraded()); return }
       if (!settled && !pollTimer) {
@@ -119,7 +178,7 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
         const line = stdout.slice(0, newline).trim()
         stdout = stdout.slice(newline + 1)
         const handshake = parseHandshake(line)
-        if (!handshake || handshake.version !== appVersion()) continue
+        if (!handshake || handshake.version !== version) continue
         // A handshake alone is not authority. Re-read the owner-only lock and health-check it.
         tryAttach()
         return
