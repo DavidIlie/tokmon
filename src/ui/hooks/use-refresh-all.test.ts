@@ -23,8 +23,15 @@ test('awaitRefreshCompletion forwards transport failures', async () => {
 })
 
 test('awaitRefreshCompletion times out without claiming the daemon work was cancelled', async () => {
-  await assert.rejects(
-    awaitRefreshCompletion(() => new Promise<void>(() => {}), 8),
-    /still running after .* may finish in the background/,
-  )
+  // Production intentionally unrefs the timeout so it cannot keep the CLI alive.
+  // Keep this test process alive independently until that timeout is observed.
+  const keepAlive = setTimeout(() => {}, 100)
+  try {
+    await assert.rejects(
+      awaitRefreshCompletion(() => new Promise<void>(() => {}), 8),
+      /still running after .* may finish in the background/,
+    )
+  } finally {
+    clearTimeout(keepAlive)
+  }
 })
