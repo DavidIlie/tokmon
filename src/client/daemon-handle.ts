@@ -9,7 +9,6 @@ import {
   verifyLock,
   type LockfileOptions,
 } from '../web/lockfile'
-import { browserUrl } from '../web/open'
 
 const HANDSHAKE_TIMEOUT_MS = process.platform === 'win32' ? 15_000 : 10_000
 const UPGRADE_SHUTDOWN_TIMEOUT_MS = 5_000
@@ -19,7 +18,6 @@ export type DaemonKind = 'spawned' | 'degraded'
 export interface DaemonHandle {
   kind: DaemonKind
   baseUrl: string | null
-  wsToken: string | null
   /** The daemon is deliberately independent of a TUI, so this only releases local client resources. */
   stop(): void
 }
@@ -62,21 +60,19 @@ function parseHandshake(line: string): Handshake | null {
   } catch { return null }
 }
 
-function connected(url: string, wsToken: string): DaemonHandle {
-  // Ink's existing web-toggle opens baseUrl directly. A fragment bootstraps the
-  // browser without sending the capability in an HTTP request or Referer.
-  return { kind: 'spawned', baseUrl: browserUrl(url, wsToken), wsToken, stop: () => {} }
+function connected(url: string): DaemonHandle {
+  return { kind: 'spawned', baseUrl: url, stop: () => {} }
 }
 
 async function attach(opts: LockfileOptions, version: string): Promise<DaemonHandle | null> {
   const lock = await verifyLock(readLock(opts), version)
-  return lock ? connected(lock.url, lock.wsToken) : null
+  return lock ? connected(lock.url) : null
 }
 
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
 /**
- * An authenticated older daemon cannot serve a newer RPC contract. Retire that
+ * An owner-verified older daemon cannot serve a newer RPC contract. Retire that
  * exact owner before entering the normal singleton startup race. An unverified
  * lock is never signalled: degraded mode remains the safe fallback in that case.
  */
@@ -190,5 +186,5 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
 }
 
 function degraded(): DaemonHandle {
-  return { kind: 'degraded', baseUrl: null, wsToken: null, stop: () => {} }
+  return { kind: 'degraded', baseUrl: null, stop: () => {} }
 }

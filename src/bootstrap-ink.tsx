@@ -36,7 +36,6 @@ export async function bootstrapInk({ interval, config, daemon, mode }: Bootstrap
         interval={interval}
         initialConfig={config}
         baseUrl={daemon.baseUrl}
-        wsToken={daemon.wsToken}
         mode={mode}
       />
     </MouseProvider>,

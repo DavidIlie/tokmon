@@ -109,8 +109,6 @@ function ConnDot({ conn, freshAt }: { conn: ConnState; freshAt: number | null })
   const label = conn === 'live' ? (age ?? 'live')
     : conn === 'connecting' ? 'connecting…'
     : conn === 'reconnecting' ? (age ? `reconnecting · ${age}` : 'reconnecting…')
-    : conn === 'auth-required' ? 'authorization required'
-    : conn === 'unavailable' ? 'daemon unavailable'
     : (age ? `offline · ${age}` : 'offline')
   return (
     <span className="flex items-center gap-1.5 text-xs" role="status" aria-live="polite">
@@ -133,9 +131,7 @@ function Connecting({ label }: { label: string }) {
 }
 
 function connectionMessage(conn: ConnState, fallback: string): string {
-  if (conn === 'auth-required') return 'This dashboard link is missing or expired — return to tokmon and press W.'
-  if (conn === 'unavailable') return 'The tokmon daemon is unavailable — return to tokmon and press W.'
-  if (conn === 'error' || conn === 'reconnecting') return 'Connection lost — return to tokmon and press W for a fresh link.'
+  if (conn === 'error' || conn === 'reconnecting') return 'Connection lost — waiting for the local tokmon daemon…'
   return fallback
 }
 
@@ -166,10 +162,14 @@ function RootLayout() {
   const [theme, toggleTheme] = useTheme()
   const [showSettings, setShowSettings] = useState(false)
   const [privacyMode, setPrivacyMode] = useState(DEFAULTS.privacyMode)
+  const [allowNetworkAccess, setAllowNetworkAccess] = useState(DEFAULTS.allowNetworkAccess)
 
   useEffect(() => {
     if (conn !== 'live') return
-    return subscribeConfig(state => setPrivacyMode(state.config.privacyMode))
+    return subscribeConfig(state => {
+      setPrivacyMode(state.config.privacyMode)
+      setAllowNetworkAccess(state.config.allowNetworkAccess)
+    })
   }, [conn])
 
   const derived = useMemo(() => deriveAll(snapshot, filters), [snapshot, filters])
@@ -239,7 +239,6 @@ function RootLayout() {
               <Link
                 key={t.key}
                 to={pathOf(t.key)}
-                hash={true}
                 aria-current={activeKey === t.key ? 'page' : undefined}
                 onMouseEnter={() => preloadTab(t.key)}
                 onFocus={() => preloadTab(t.key)}
@@ -256,6 +255,11 @@ function RootLayout() {
       </header>
 
       <main id="dashboard-content" tabIndex={-1} className="mx-auto max-w-[1600px] px-5 2xl:max-w-[1920px] py-5 focus:outline-none">
+        {allowNetworkAccess && (
+          <div className="mb-4 rounded border border-warning/60 bg-warning/10 px-3 py-2 text-xs text-warning" role="alert">
+            Unsafe network access is enabled. This dashboard may be reachable from your LAN after the daemon restarts.
+          </div>
+        )}
         {snapshot && conn !== 'live' && (
           <div className="mb-4 rounded border border-line bg-bg-1 px-3 py-2 text-xs text-fg-dim" role="status" aria-live="polite">
             {connectionMessage(conn, 'Reconnecting…')}

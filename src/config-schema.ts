@@ -28,6 +28,8 @@ export interface Config {
   dashboardLayout: 'grid' | 'single'
   defaultFocus: 'all' | 'last'
   ascii: 'auto' | 'on' | 'off'
+  /** Bind the dashboard to all interfaces instead of loopback on next daemon start. */
+  allowNetworkAccess: boolean
   knownProviders: ProviderId[]
 }
 
@@ -73,6 +75,7 @@ export const DEFAULTS: Config = {
   dashboardLayout: 'grid',
   defaultFocus: 'all',
   ascii: 'auto',
+  allowNetworkAccess: false,
   knownProviders: [],
 }
 
@@ -298,6 +301,7 @@ export function repairConfig(input: unknown): ConfigRepair {
     dashboardLayout: parsed.dashboardLayout === 'single' ? 'single' : 'grid',
     defaultFocus: parsed.defaultFocus === 'last' ? 'last' : 'all',
     ascii: parsed.ascii === 'on' ? 'on' : parsed.ascii === 'off' ? 'off' : 'auto',
+    allowNetworkAccess: parsed.allowNetworkAccess === true,
     knownProviders,
   }
 

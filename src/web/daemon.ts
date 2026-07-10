@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { loadConfig } from '../config'
 import { flushDisk } from '../providers/usage-core'
 import { startWebServer, type WebServerController } from './server'
-import { browserUrl, openBrowser } from './open'
+import { openBrowser } from './open'
 import { appVersion } from './static'
 import {
   acquireLock,
@@ -33,7 +33,7 @@ function parseDaemonArgs(args: string[]): DaemonArgs {
   return { port, open, help }
 }
 
-const SERVE_HELP = `tokmon serve - Launch the tokmon web dashboard (local, loopback only)
+const SERVE_HELP = `tokmon serve - Launch the tokmon web dashboard
 
 Usage: tokmon serve [options]
 
@@ -50,11 +50,10 @@ function handshake(lock: DaemonLock): void {
 }
 
 function describeExisting(lock: DaemonLock, open: boolean): void {
-  const displayUrl = open ? lock.url : browserUrl(lock.url, lock.wsToken)
-  process.stdout.write(`\n  ◆ tokmon web  →  ${displayUrl}\n`)
+  process.stdout.write(`\n  ◆ tokmon web  →  ${lock.url}\n`)
   process.stdout.write('    reusing the live singleton daemon\n\n')
   if (open) {
-    openBrowser(lock.url, lock.wsToken)
+    openBrowser(lock.url)
     process.stdout.write('    opening browser…\n')
   }
 }
@@ -158,11 +157,13 @@ export async function runDaemon(args: string[], opts: RunDaemonOptions): Promise
     process.once('SIGTERM', () => { void shutdown(0) })
 
     if (opts.foreground) {
-      const displayUrl = open ? controller.url : controller.browserUrl
-      process.stdout.write(`\n  ◆ tokmon web  →  ${displayUrl}\n`)
+      process.stdout.write(`\n  ◆ tokmon web  →  ${controller.url}\n`)
       process.stdout.write('    live dashboard · Ctrl-C to stop\n\n')
+      if (config.allowNetworkAccess) {
+        process.stdout.write('    ⚠ unsafe network access enabled — dashboard is reachable from your LAN\n\n')
+      }
       if (open) {
-        openBrowser(controller.url, token)
+        openBrowser(controller.url)
         process.stdout.write('    opening browser…\n')
       }
     } else {

@@ -18,21 +18,20 @@ export interface UseDaemon {
   config: ConfigState | null
 }
 
-export function useDaemon(baseUrl: string | null, wsToken: string | null): UseDaemon {
+export function useDaemon(baseUrl: string | null): UseDaemon {
   const [snapshot, setSnapshot] = useState<WebSnapshot | null>(null)
   const [conn, setConn] = useState<ConnState>('connecting')
   const [config, setConfigState] = useState<ConfigState | null>(null)
 
   const client = useMemo(() => {
-    if (!baseUrl || !wsToken) return null
+    if (!baseUrl) return null
     return createDaemonRpcClient(baseUrl, {
       transport: 'node',
-      wsToken,
       onConn: (state) => {
         if (state !== 'closed') setConn(state)
       },
     })
-  }, [baseUrl, wsToken])
+  }, [baseUrl])
   const clientRef = useRef(client)
   clientRef.current = client
 

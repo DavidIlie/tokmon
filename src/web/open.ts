@@ -1,12 +1,8 @@
 import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 
-export function browserUrl(url: string, wsToken?: string): string {
-  return wsToken ? `${url}#/#tokmonToken=${encodeURIComponent(wsToken)}` : url
-}
-
-export function openBrowser(url: string, wsToken?: string): void {
-  const target = browserUrl(url, wsToken)
+export function openBrowser(url: string): void {
+  const target = url
   if (process.env.TOKMON_OPENLOG) {
     try { appendFileSync(process.env.TOKMON_OPENLOG, target + '\n') } catch {}
     return

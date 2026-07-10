@@ -41,6 +41,17 @@ export function GeneralSection({ draft, patch }: { draft: Config; patch: (fn: (c
           options={[{ value: 'auto', label: 'auto' }, { value: 'on', label: 'on' }, { value: 'off', label: 'off' }]}
           value={draft.ascii} onChange={v => patch(c => ({ ...c, ascii: v }))} />
       </FieldRow>
+      <FieldRow label="Network access" hint="applies on daemon restart">
+        <Segmented<'local' | 'network'> size="xs" ariaLabel="network access"
+          options={[{ value: 'local', label: 'local only' }, { value: 'network', label: 'LAN' }]}
+          value={draft.allowNetworkAccess ? 'network' : 'local'}
+          onChange={v => patch(c => ({ ...c, allowNetworkAccess: v === 'network' }))} />
+      </FieldRow>
+      {draft.allowNetworkAccess && (
+        <p className="rounded border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-warning" role="alert">
+          Unsafe: after the daemon restarts, usage data and settings will be reachable from your local network.
+        </p>
+      )}
     </Section>
   )
 }

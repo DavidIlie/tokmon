@@ -6,6 +6,7 @@ export interface DaemonLock {
   pid: number
   port: number
   url: string
+  /** Process-owner proof for lock discovery only; never sent to browsers or RPC clients. */
   wsToken: string
   version: string
   startedAt: number

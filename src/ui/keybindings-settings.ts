@@ -125,6 +125,10 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
     }
     if (index === 7 && (inputKey.leftArrow || inputKey.rightArrow || inputKey.return)) {
       updateConfig(current => ({ ...current, defaultFocus: current.defaultFocus === 'all' ? 'last' : 'all' }))
+      return
+    }
+    if (index === 8 && (inputKey.leftArrow || inputKey.rightArrow || inputKey.return)) {
+      updateConfig(current => ({ ...current, allowNetworkAccess: !current.allowNetworkAccess }))
     }
   }
 }

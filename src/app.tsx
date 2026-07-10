@@ -45,16 +45,15 @@ import { useRefreshAll } from './ui/hooks/use-refresh-all'
 import { useConfigState } from './ui/hooks/use-config-state'
 import { useAccountForm } from './ui/hooks/use-account-form'
 
-export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsToken = null, mode = 'degraded' }: {
+export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode = 'degraded' }: {
   interval?: number
   initialConfig?: Config
   baseUrl?: string | null
-  wsToken?: string | null
   mode?: 'connected' | 'degraded'
 }) {
-  const connected = mode === 'connected' && baseUrl !== null && wsToken !== null
+  const connected = mode === 'connected' && baseUrl !== null
   const degraded = !connected
-  const daemon = useDaemon(connected ? baseUrl : null, connected ? wsToken : null)
+  const daemon = useDaemon(connected ? baseUrl : null)
 
   const { config, configSaveError, updateConfig } = useConfigState({
     initialConfig,
@@ -387,14 +386,14 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       if (baseUrl) openUrl(baseUrl)
       return
     }
-    if (webRef.current) { openUrl(webRef.current.browserUrl); return }
+    if (webRef.current) { openUrl(webRef.current.url); return }
     if (webStartingRef.current) return
     webStartingRef.current = true
     try {
       const { startWebServer } = await import('./web/server')
       const ctrl = await startWebServer({ config: cfg, log: false })
       webRef.current = ctrl
-      openUrl(ctrl.browserUrl)
+      openUrl(ctrl.url)
     } catch {} finally {
       webStartingRef.current = false
     }
@@ -530,6 +529,10 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
 
       {connected && daemon.conn !== 'live' && (
         <Text dimColor>{glyphs().warn} reconnecting {glyphs().middot} showing last known data</Text>
+      )}
+
+      {cfg.allowNetworkAccess && (
+        <Text color="red">{glyphs().warn} unsafe network access enabled {glyphs().middot} dashboard may be reachable from your LAN after daemon restart</Text>
       )}
 
       {configSaveError && (

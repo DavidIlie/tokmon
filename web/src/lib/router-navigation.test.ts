@@ -17,7 +17,7 @@ function fakeWindow() {
     location: {
       pathname: '/',
       search: '?period=30d&p=codex',
-      hash: '#/analytics#tokmonToken=copy-me',
+      hash: '#/analytics',
     },
     history,
     addEventListener() {},
@@ -25,21 +25,21 @@ function fakeWindow() {
   }
 }
 
-test('TanStack hash navigation preserves outer filters and the capability separately', () => {
+test('TanStack hash navigation preserves outer filters with ordinary local routes', () => {
   const history = createHashHistory({ window: fakeWindow() })
   assert.equal(history.location.pathname, '/analytics')
   assert.equal(history.location.search, '?period=30d&p=codex')
-  assert.equal(history.location.hash, '#tokmonToken=copy-me')
+  assert.equal(history.location.hash, '')
 
   const root = createRootRoute()
   const models = createRoute({ getParentRoute: () => root, path: '/models' })
   const router = createRouter({ routeTree: root.addChildren([models]), history })
-  const destination = router.buildLocation({ to: '/models', hash: true })
+  const destination = router.buildLocation({ to: '/models' })
 
-  assert.equal(destination.href, '/models#tokmonToken=copy-me')
+  assert.equal(destination.href, '/models')
   assert.equal(
     history.createHref(destination.href),
-    '/?period=30d&p=codex#/models#tokmonToken=copy-me',
+    '/?period=30d&p=codex#/models',
   )
   history.destroy()
 })

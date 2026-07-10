@@ -331,7 +331,7 @@ test('an incompatible daemon is never signalled when owner authentication fails'
   }
 })
 
-function openWebSocket(port: number, token?: string, host = `127.0.0.1`): Promise<Socket> {
+function openWebSocket(port: number, host = '127.0.0.1', origin?: string): Promise<Socket> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, '127.0.0.1')
     let response = ''
@@ -345,10 +345,10 @@ function openWebSocket(port: number, token?: string, host = `127.0.0.1`): Promis
       else { socket.destroy(); reject(new Error(response.split('\r\n')[0])) }
     })
     socket.once('connect', () => {
-      const query = token ? `?wsToken=${encodeURIComponent(token)}` : ''
       socket.write([
-        `GET /ws${query} HTTP/1.1`,
+        'GET /ws HTTP/1.1',
         `Host: ${host}:${port}`,
+        ...(origin ? [`Origin: ${origin}`] : []),
         'Connection: Upgrade',
         'Upgrade: websocket',
         'Sec-WebSocket-Version: 13',
@@ -370,7 +370,7 @@ function requestStatus(url: string, headers: Record<string, string> = {}): Promi
   })
 }
 
-test('real daemon is singleton, host/token guarded, durable, and bounded on websocket shutdown', { timeout: 30_000 }, async (t) => {
+test('real daemon is singleton, loopback/same-origin guarded, durable, and bounded on websocket shutdown', { timeout: 30_000 }, async (t) => {
   if (process.platform === 'win32') {
     t.skip('signal-based lifecycle assertion is POSIX-specific')
     return
@@ -395,9 +395,9 @@ test('real daemon is singleton, host/token guarded, durable, and bounded on webs
 
     const handle = await attachOrSpawn({ cachePath: join(root, 'cache') })
     assert.equal(handle.kind, 'spawned')
-    assert.match(handle.baseUrl ?? '', /^http:\/\/127\.0\.0\.1:\d+#\/#tokmonToken=/)
+    assert.match(handle.baseUrl ?? '', /^http:\/\/127\.0\.0\.1:\d+$/)
     assert.equal(new URL(handle.baseUrl ?? 'http://invalid').search, '')
-    const rpc = createDaemonRpcClient(handle.baseUrl!, { transport: 'node', wsToken: handle.wsToken! })
+    const rpc = createDaemonRpcClient(handle.baseUrl!, { transport: 'node' })
     try {
       assert.equal((await rpc.getConfig()).protocol.version, TOKMON_PROTOCOL_VERSION)
     } finally {
@@ -426,15 +426,14 @@ test('real daemon is singleton, host/token guarded, durable, and bounded on webs
     assert.equal((await fetch(`${ready.url}/healthz`)).status, 200)
     assert.equal(await requestStatus(`${ready.url}/healthz`, { host: 'evil.example' }), 403)
     assert.equal(await requestStatus(`${ready.url}/api/data`, { host: 'evil.example' }), 403)
-    assert.equal((await fetch(`${ready.url}/api/config`)).status, 403)
-    assert.equal((await fetch(`${ready.url}/api/config`, { headers: { 'x-tokmon-token': ready.wsToken } })).status, 200)
+    assert.equal((await fetch(`${ready.url}/api/config`)).status, 200)
     assert.equal((await fetch(`${ready.url}/api/config`, {
-      headers: { 'x-tokmon-token': ready.wsToken, origin: 'https://evil.example' },
+      headers: { origin: 'https://evil.example' },
     })).status, 403)
 
-    await assert.rejects(openWebSocket(ready.port), /HTTP\/1\.1 403/)
-    await assert.rejects(openWebSocket(ready.port, ready.wsToken, 'evil.example'), /HTTP\/1\.1 403/)
-    socket = await openWebSocket(ready.port, ready.wsToken)
+    await assert.rejects(openWebSocket(ready.port, 'evil.example'), /HTTP\/1\.1 403/)
+    await assert.rejects(openWebSocket(ready.port, '127.0.0.1', 'https://evil.example'), /HTTP\/1\.1 403/)
+    socket = await openWebSocket(ready.port)
 
     const started = Date.now()
     owner.kill('SIGTERM')

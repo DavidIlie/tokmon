@@ -6,7 +6,7 @@ import { PROVIDER_ORDER, PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
 import { truncateName } from './shared'
 
-export const GENERAL_ROWS = 8
+export const GENERAL_ROWS = 9
 
 export const SETTINGS_TABS = ['general', 'providers', 'accounts'] as const
 export type SettingsTab = typeof SETTINGS_TABS[number]
@@ -105,6 +105,14 @@ export const SettingsView = memo(function SettingsView({
             <Text bold color="yellow">{config.defaultFocus === 'all' ? 'All' : 'Last account'}</Text>
             <Text dimColor> {glyphs().caretR}</Text>
           </Row>
+          <Row cursor={cursor} idx={8} label="Network access">
+            <Text bold color={config.allowNetworkAccess ? 'red' : 'green'}>
+              {config.allowNetworkAccess ? 'LAN (unsafe)' : 'local only'}
+            </Text>
+          </Row>
+          {config.allowNetworkAccess && (
+            <Text color="red">  Warning: dashboard data and settings will be exposed to your local network after daemon restart.</Text>
+          )}
         </>
       )}
 

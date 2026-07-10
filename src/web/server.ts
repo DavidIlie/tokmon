@@ -3,22 +3,21 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { type Config } from '../config'
 import { resolveAccounts, tzFor } from './data'
 import { appVersion, send, sendJson, serveStatic, findWebRoot } from './static'
-import { browserUrl } from './open'
 import { isDevMode, createViteDevServer, MISSING_BUILD_HTML, type ViteDevServerLike } from './vite-dev'
 import { createDataEngine } from './data-engine'
 import type { WebSnapshot } from './contract'
 import { billingIntervalFor, summaryIntervalFor } from './config-control'
 import { mountWsRpc } from './ws'
+import { isAllowedHostHeader, isSameOriginRequest } from './request-guard'
 
-const HOST = '127.0.0.1'
+const LOOPBACK_HOST = '127.0.0.1'
+const NETWORK_HOST = '0.0.0.0'
 
 const DEFAULT_PORT = 4317
 const MAX_PORT_TRIES = 20
 export interface WebServerController {
   url: string
-  browserUrl: string
   port: number
-  wsToken: string
   snapshot(): WebSnapshot | null
   config(): Config
   stop(): Promise<void>
@@ -30,23 +29,6 @@ export interface StartOptions {
   log?: boolean
   /** Injected by the daemon so the lock can be published before web resources start. */
   wsToken?: string
-}
-
-function isLoopbackHostHeader(value: string | undefined): boolean {
-  if (!value) return false
-  const host = value.trim().toLowerCase()
-  return /^(?:127\.0\.0\.1|localhost)(?::\d{1,5})?$/.test(host)
-    || /^\[::1\](?::\d{1,5})?$/.test(host)
-}
-
-function isLoopbackOrigin(origin: string | undefined): boolean {
-  if (!origin || origin === 'null') return true
-  try {
-    const u = new URL(origin)
-    return isLoopbackHostHeader(u.host)
-  } catch {
-    return false
-  }
 }
 
 function header(req: IncomingMessage, name: string): string | undefined {
@@ -61,22 +43,14 @@ function tokenMatches(given: string | undefined, expected: string): boolean {
   return actual.length === token.length && timingSafeEqual(actual, token)
 }
 
-function guardHost(req: IncomingMessage, res: ServerResponse): boolean {
-  if (isLoopbackHostHeader(header(req, 'host'))) return true
+function guardHost(req: IncomingMessage, res: ServerResponse, allowNetworkAccess: boolean): boolean {
+  if (isAllowedHostHeader(header(req, 'host'), allowNetworkAccess)) return true
   sendJson(res, 403, { error: 'forbidden' })
   return false
 }
 
-function guardPrivileged(req: IncomingMessage, res: ServerResponse, wsToken: string): boolean {
-  const header = (n: string) => {
-    const v = req.headers[n]
-    return Array.isArray(v) ? v[0] : v
-  }
-  if (!tokenMatches(header('x-tokmon-token'), wsToken)) {
-    sendJson(res, 403, { error: 'forbidden' })
-    return false
-  }
-  if (!isLoopbackOrigin(header('origin'))) {
+function guardSameOrigin(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!isSameOriginRequest(req)) {
     sendJson(res, 403, { error: 'forbidden' })
     return false
   }
@@ -98,7 +72,7 @@ function createRouter(
 
     // Check Host before every response, including static and Vite middleware. Binding
     // to loopback alone does not prevent DNS-rebinding requests from a hostile Host.
-    if (!guardHost(req, res)) return
+    if (!guardHost(req, res, state.config.allowNetworkAccess)) return
 
     if (path === '/api/data') {
       engine.touch()
@@ -118,7 +92,7 @@ function createRouter(
     }
 
     if (path === '/api/config') {
-      if (!guardPrivileged(req, res, wsToken)) return
+      if (!guardSameOrigin(req, res)) return
       if (method === 'GET') {
         sendJson(res, 200, state.config)
         return
@@ -163,9 +137,10 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
 
     engine = createDataEngine({ version, config: state.config, tz, summaryIntervalMs, billingIntervalMs, resolved })
     server.addListener('request', createRouter(engine, state, vite, webRoot, wsToken, version))
-    closeWsRpc = await mountWsRpc(server, { engine, state, wsToken })
-    const port = await listenWithFallback(server, opts.port ?? DEFAULT_PORT)
-    const serverUrl = `http://${HOST}:${port}`
+    closeWsRpc = await mountWsRpc(server, { engine, state })
+    const bindHost = state.config.allowNetworkAccess ? NETWORK_HOST : LOOPBACK_HOST
+    const port = await listenWithFallback(server, opts.port ?? DEFAULT_PORT, bindHost)
+    const serverUrl = `http://${LOOPBACK_HOST}:${port}`
 
     if (vite?.warmupRequest) {
       try { await Promise.race([vite.warmupRequest('/src/main.tsx'), delay(5000)]) } catch {}
@@ -175,9 +150,7 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
     let stopped = false
     return {
       url: serverUrl,
-      browserUrl: browserUrl(serverUrl, wsToken),
       port,
-      wsToken,
       snapshot: engine.snapshot,
       config: () => state.config,
       stop: async () => {
@@ -213,11 +186,11 @@ function closeServer(server: Server, timeoutMs = 1_000): Promise<void> {
   })
 }
 
-function listenWithFallback(server: Server, startPort: number): Promise<number> {
+function listenWithFallback(server: Server, startPort: number, host: string): Promise<number> {
   return new Promise((resolve, reject) => {
     if (startPort === 0) {
       server.once('error', reject)
-      server.listen(0, HOST, () => {
+      server.listen(0, host, () => {
         const addr = server.address()
         resolve(typeof addr === 'object' && addr ? addr.port : 0)
       })
@@ -233,7 +206,7 @@ function listenWithFallback(server: Server, startPort: number): Promise<number> 
           reject(err)
         }
       })
-      server.listen(port, HOST, () => resolve(port))
+      server.listen(port, host, () => resolve(port))
     }
     attempt()
   })

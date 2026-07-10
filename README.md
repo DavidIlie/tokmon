@@ -81,7 +81,7 @@ For **Claude / Codex / Cursor / Grok** — Daily, Weekly, and Monthly breakdowns
 
 ## Web Dashboard
 
-Prefer a browser? `tokmon serve` starts a local web dashboard with the same data as the TUI — charts, global filtering, and shareable images — in a terminal-styled UI. Press `w` (or `W`) inside the TUI to open its authenticated local URL.
+Prefer a browser? `tokmon serve` starts a local web dashboard with the same data as the TUI — charts, global filtering, and shareable images — in a terminal-styled UI. Press `w` (or `W`) inside the TUI to open its ordinary local URL.
 
 ```bash
 tokmon serve            # opens http://127.0.0.1:4317 in your browser
@@ -89,9 +89,7 @@ tokmon serve --port 8080
 tokmon serve --no-open  # don't auto-open the browser
 ```
 
-It binds to `127.0.0.1` only and reads the same data read-only — nothing leaves your machine. It renders instantly from a cached snapshot, then streams live updates over an authenticated WebSocket, and goes idle when no tab is open. Filter by provider, model, account, and period, flip between dark and light, and export any panel — or a summary card — as a PNG with the **Share** button.
-
-The URL opened by `W` contains a capability in its fragment. Fragments are not sent with normal page requests or referrers, but keeping it in the address makes the complete URL copyable into another local browser while that daemon is running. Treat that URL as private; after the daemon restarts, press `W` again for a fresh one.
+It binds to `127.0.0.1` by default and reads the same local daemon state — nothing leaves your machine. The browser connects directly over a same-origin WebSocket; dashboard URLs have no token or login step. Optional LAN access can be enabled in settings, with an explicit unsafe-access warning, and takes effect after the daemon restarts. The dashboard renders instantly from a cached snapshot, then streams live updates and goes idle when no tab is open. Filter by provider, model, account, and period, flip between dark and light, and export any panel — or a summary card — as a PNG with the **Share** button.
 
 ### Overview
 
@@ -224,7 +222,7 @@ tokmon runs entirely on your machine and reads everything **read-only**:
 
 ## How It Works
 
-tokmon runs a small local **daemon** that does all the data collection. The terminal UI and the web dashboard are both thin clients of it, talking over a loopback-only WebSocket — so a single process does the work and the TUI and web always show the same numbers. The daemon starts automatically with the TUI (and standalone via `tokmon serve`), and idle-pauses when nothing is watching.
+tokmon runs a small local **daemon** that does all the data collection. The terminal UI and the web dashboard are both thin clients of it, talking over a local WebSocket — loopback-only by default — so a single process does the work and the TUI and web always show the same numbers. The daemon starts automatically with the TUI (and standalone via `tokmon serve`), and idle-pauses when nothing is watching.
 
 **Usage & cost**
 - Parses each tool's local session logs — Claude / Codex / pi `JSONL`, Cursor / opencode `SQLite` — and aggregates cost and token usage per day, week, and month.

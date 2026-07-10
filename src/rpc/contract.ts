@@ -58,6 +58,7 @@ export const ConfigSchema = Schema.Struct({
   dashboardLayout: Schema.Literals(['grid', 'single'] as const),
   defaultFocus: Schema.Literals(['all', 'last'] as const),
   ascii: Schema.Literals(['auto', 'on', 'off'] as const),
+  allowNetworkAccess: Schema.Boolean,
   knownProviders: Schema.Array(ProviderIdSchema),
 })
 

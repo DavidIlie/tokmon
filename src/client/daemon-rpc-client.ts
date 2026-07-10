@@ -17,7 +17,6 @@ import {
 export type RpcConnState = 'connecting' | 'live' | 'reconnecting' | 'error' | 'closed'
 
 export interface DaemonRpcClientOptions {
-  readonly wsToken?: string
   readonly transport?: 'auto' | 'node' | 'browser'
   readonly reconnectAttempts?: number
   readonly reconnectBaseDelayMs?: number
@@ -51,7 +50,7 @@ interface Session {
 
 const dynamicImport = new Function('specifier', 'return import(specifier)') as <T>(specifier: string) => Promise<T>
 
-function toWsUrl(baseUrl: string, token: string | undefined): string {
+function toWsUrl(baseUrl: string): string {
   const base = typeof window === 'undefined' ? undefined : window.location.origin
   const url = new URL(baseUrl, base)
   if (url.protocol === 'http:') url.protocol = 'ws:'
@@ -59,12 +58,11 @@ function toWsUrl(baseUrl: string, token: string | undefined): string {
   if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
     throw new Error(`unsupported daemon RPC protocol: ${url.protocol}`)
   }
-  // Browser bootstrap capabilities belong in the fragment and must never be
-  // copied into the WebSocket URL. Node clients receive their token explicitly.
+  // Strip authentication parameters emitted by older dashboard releases.
   url.hash = ''
   url.searchParams.delete('tokmonToken')
+  url.searchParams.delete('wsToken')
   url.pathname = TOKMON_WS_PATH
-  if (token) url.searchParams.set('wsToken', token)
   return url.toString()
 }
 
@@ -98,7 +96,7 @@ function retryPolicy(options: DaemonRpcClientOptions) {
 }
 
 export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientOptions = {}): DaemonRpcClient {
-  const url = toWsUrl(baseUrl, options.wsToken)
+  const url = toWsUrl(baseUrl)
   const fibers = new Set<Fiber.Fiber<unknown, unknown>>()
   let session: Session | null = null
   let sessionPromise: Promise<Session> | null = null

@@ -1,6 +1,5 @@
 import type { IncomingMessage, Server } from 'node:http'
 import type { Duplex } from 'node:stream'
-import { timingSafeEqual } from 'node:crypto'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
 import { NodeWS } from '@effect/platform-node/NodeSocket'
 import { Effect, Exit, Layer, Queue, Scope, Stream } from 'effect'
@@ -16,24 +15,11 @@ import {
 } from './config-control'
 import type { DataEngine } from './data-engine'
 import { listHomeDirectory } from './fs'
+import { isAllowedLocalRequest } from './request-guard'
 
 interface MountWsRpcDeps {
   readonly engine: DataEngine
   readonly state: { config: Config }
-  readonly wsToken: string
-}
-
-function header(req: IncomingMessage, name: string): string | undefined {
-  const value = req.headers[name.toLowerCase()]
-  return Array.isArray(value) ? value[0] : value
-}
-
-function isLoopbackHost(value: string | undefined): boolean {
-  if (!value) return false
-  const host = value.trim().toLowerCase()
-  if (!host) return false
-  return /^(?:127\.0\.0\.1|localhost)(?::\d{1,5})?$/.test(host)
-    || /^\[::1\](?::\d{1,5})?$/.test(host)
 }
 
 function isWsPath(req: IncomingMessage): boolean {
@@ -42,28 +28,6 @@ function isWsPath(req: IncomingMessage): boolean {
   } catch {
     return false
   }
-}
-
-function wsToken(req: IncomingMessage): string | null {
-  try {
-    return new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('wsToken')
-  } catch {
-    return null
-  }
-}
-
-function tokenMatches(actual: string | null, expected: string): boolean {
-  if (!actual) return false
-  const left = Buffer.from(actual)
-  const right = Buffer.from(expected)
-  return left.length === right.length && timingSafeEqual(left, right)
-}
-
-function isAuthorized(req: IncomingMessage, token: string): boolean {
-  if (!isLoopbackHost(header(req, 'host'))) return false
-  // Origin and same-origin headers are caller-controlled metadata. Every RPC,
-  // including reads, requires the owner token carried in the WS URL.
-  return tokenMatches(wsToken(req), token)
 }
 
 function rejectUpgrade(socket: Duplex, status = 403, message = 'Forbidden'): void {
@@ -149,17 +113,13 @@ export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<
   )
 
   const onUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    if (!isLoopbackHost(header(req, 'host'))) {
+    if (!isAllowedLocalRequest(req, deps.state.config.allowNetworkAccess)) {
       rejectUpgrade(socket)
       return
     }
     // Vite owns its HMR upgrade path in dev mode. Only intercept tokmon RPC;
     // rejecting every other upgrade here destroys valid HMR connections.
     if (!isWsPath(req)) return
-    if (!isAuthorized(req, deps.wsToken)) {
-      rejectUpgrade(socket)
-      return
-    }
     upgradeHandler(req, socket, head)
   }
 

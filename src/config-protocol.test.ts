@@ -194,7 +194,7 @@ test('RPC transports revisions and typed conflicts end to end', async (t) => {
       }
       throw cause
     }
-    client = createDaemonRpcClient(server.url, { transport: 'node', wsToken: token })
+    client = createDaemonRpcClient(server.url, { transport: 'node' })
     const initial = await client.getConfig()
     assert.equal(initial.protocol.version, 2)
     assert.equal(initial.config.revision, 0)
