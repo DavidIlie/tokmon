@@ -357,12 +357,12 @@ function SparkFooter({ series, month, color }: { series: number[]; month: number
 }
 
 function aggregate(list: DashboardData[]): DashboardData {
-  const zero = () => ({ cost: 0, tokens: 0, cacheRead: 0, cacheSavings: 0 })
+  const zero = () => ({ cost: 0, tokens: 0, input: 0, cacheRead: 0, cacheSavings: 0 })
   const z: DashboardData = { today: zero(), week: zero(), month: zero(), burnRate: 0, series: [] }
   for (const d of list) {
     for (const k of ['today', 'week', 'month'] as const) {
       z[k].cost += d[k].cost; z[k].tokens += d[k].tokens
-      z[k].cacheRead += d[k].cacheRead; z[k].cacheSavings += d[k].cacheSavings
+      z[k].input += d[k].input ?? 0; z[k].cacheRead += d[k].cacheRead; z[k].cacheSavings += d[k].cacheSavings
     }
     z.burnRate += d.burnRate
     d.series.forEach((v, i) => { z.series[i] = (z.series[i] ?? 0) + v })
@@ -375,25 +375,27 @@ export const TotalsRow = memo(function TotalsRow({ groups, stats, cols }: {
   stats: Map<string, AccountStats>
   cols: number
 }) {
-  const zero = (): UsageSummary => ({ cost: 0, tokens: 0, cacheRead: 0, cacheSavings: 0 })
+  const zero = (): UsageSummary => ({ cost: 0, tokens: 0, input: 0, cacheRead: 0, cacheSavings: 0 })
   const t = zero(), w = zero(), m = zero()
   for (const g of groups) {
     if (!PROVIDERS[g.provider].hasUsage) continue
     for (const a of g.accounts) {
       const d = stats.get(a.id)?.dashboard
       if (!d) continue
-      t.cost += d.today.cost; t.tokens += d.today.tokens
-      w.cost += d.week.cost;  w.tokens += d.week.tokens
-      m.cost += d.month.cost; m.tokens += d.month.tokens
+      t.cost += d.today.cost; t.tokens += d.today.tokens; t.input += d.today.input ?? 0
+      w.cost += d.week.cost;  w.tokens += d.week.tokens;  w.input += d.week.input ?? 0
+      m.cost += d.month.cost; m.tokens += d.month.tokens; m.input += d.month.input ?? 0
     }
   }
 
   const inner = cols - 4
   const dot = glyphs().middot
-  const full = `${glyphs().dotAll}  Today ${fmt.currency(t.cost)} (${fmt.tokens(t.tokens)} tok)  ${dot}  Week ${fmt.currency(w.cost)} (${fmt.tokens(w.tokens)} tok)  ${dot}  Month ${fmt.currency(m.cost)} (${fmt.tokens(m.tokens)} tok)`
-  const noTok = `${glyphs().dotAll}  Today ${fmt.currency(t.cost)}  ${dot}  Week ${fmt.currency(w.cost)}  ${dot}  Month ${fmt.currency(m.cost)}`
+  const monthNonCached = m.input > 0 ? `, ${fmt.tokens(m.input)} non-cached` : ''
+  const full = `${glyphs().dotAll}  Today ${fmt.currency(t.cost)} (${fmt.tokens(t.tokens)} tok)  ${dot}  Week ${fmt.currency(w.cost)} (${fmt.tokens(w.tokens)} tok)  ${dot}  Month ${fmt.currency(m.cost)} (${fmt.tokens(m.tokens)} tok${monthNonCached})`
+  const monthOnly = `${glyphs().dotAll}  This Month ${fmt.currency(m.cost)} (${fmt.tokens(m.tokens)} tok${monthNonCached})`
+  const noTok = `${glyphs().dotAll}  Today ${fmt.currency(t.cost)}  ${dot}  Week ${fmt.currency(w.cost)}  ${dot}  Month ${fmt.currency(m.cost)}${m.input > 0 ? ` (${fmt.tokens(m.input)} non-cached)` : ''}`
   const tight = `${glyphs().dotAll}  ${fmt.currency(t.cost)}  ${dot}  ${fmt.currency(w.cost)}  ${dot}  ${fmt.currency(m.cost)}`
-  const text = full.length <= inner ? full : noTok.length <= inner ? noTok : tight
+  const text = full.length <= inner ? full : monthOnly.length <= inner ? monthOnly : noTok.length <= inner ? noTok : tight
 
   return (
     <Box marginTop={1}>

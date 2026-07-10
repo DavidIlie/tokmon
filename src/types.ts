@@ -1,6 +1,7 @@
 export interface UsageSummary {
   cost: number
   tokens: number
+  input: number
   cacheRead: number
   cacheSavings: number
 }

@@ -134,6 +134,7 @@ export type FsListing = typeof FsListingSchema.Type
 const UsageSummarySchema = Schema.Struct({
   cost: Schema.Finite,
   tokens: Schema.Finite,
+  input: Schema.Finite,
   cacheRead: Schema.Finite,
   cacheSavings: Schema.Finite,
 })

@@ -258,9 +258,9 @@ export function summarize(entries: Entry[], tz: string): DashboardData {
   const weekStart = startOfWeek(now, tz)
   const monthStart = startOfMonth(now, tz)
 
-  const today: UsageSummary = { cost: 0, tokens: 0, cacheRead: 0, cacheSavings: 0 }
-  const week: UsageSummary = { cost: 0, tokens: 0, cacheRead: 0, cacheSavings: 0 }
-  const month: UsageSummary = { cost: 0, tokens: 0, cacheRead: 0, cacheSavings: 0 }
+  const today: UsageSummary = { cost: 0, tokens: 0, input: 0, cacheRead: 0, cacheSavings: 0 }
+  const week: UsageSummary = { cost: 0, tokens: 0, input: 0, cacheRead: 0, cacheSavings: 0 }
+  const month: UsageSummary = { cost: 0, tokens: 0, input: 0, cacheRead: 0, cacheSavings: 0 }
   const byDay = new Map<string, number>()
   let oldestToday = now
   let hadToday = false
@@ -268,6 +268,7 @@ export function summarize(entries: Entry[], tz: string): DashboardData {
   const add = (s: UsageSummary, e: Entry) => {
     s.cost += e.cost
     s.tokens += e.input + e.output + e.cacheCreate + e.cacheRead
+    s.input += e.input
     s.cacheRead += e.cacheRead
     s.cacheSavings += e.cacheSavings
   }
