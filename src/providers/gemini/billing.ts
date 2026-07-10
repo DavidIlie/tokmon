@@ -6,11 +6,11 @@ import { decodeBase64UrlJson } from '../_shared/jwt'
 import { cloudCodeBucketsToMetrics, fetchCloudCodeQuota } from '../cloud-code'
 import { geminiTmpDir } from './usage'
 
-function geminiCredsPath(homeDir?: string): string {
+export function geminiCredsPath(homeDir?: string): string {
   return join(homeDir ?? homedir(), '.gemini', 'oauth_creds.json')
 }
 
-function geminiDir(homeDir?: string): string {
+export function geminiDir(homeDir?: string): string {
   return join(homeDir ?? homedir(), '.gemini')
 }
 

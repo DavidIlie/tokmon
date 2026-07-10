@@ -21,7 +21,7 @@ async function firstExisting(paths: string[]): Promise<string> {
   return paths[0]
 }
 
-async function antigravityStateDb(homeDir?: string): Promise<string> {
+export async function antigravityStateDb(homeDir?: string): Promise<string> {
   const base = homeDir ?? homedir()
   const tail = ['User', 'globalStorage', 'state.vscdb']
   if (process.platform === 'darwin') {

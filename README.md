@@ -26,6 +26,22 @@ npm install -g tokmon
 
 Then run `tokmon`. On first launch you'll pick which providers to track; press `q` to quit any time.
 
+## CLI Data Queries
+
+Scripts and coding agents can query the same daemon directly without opening the interactive dashboard:
+
+```bash
+tokmon usage                              # current-month usage by provider/account/model
+tokmon usage --period week --provider codex
+tokmon usage --model opus --json          # stable machine-readable schema
+tokmon usage --period all --json --compact
+tokmon providers --json                   # accounts plus local config/auth/usage paths
+tokmon snapshot --refresh                 # complete raw daemon snapshot
+tokmon config path                        # tokmon config file location
+```
+
+`usage` refreshes local history by default; use `--cached` for the fastest cached answer or `--refresh` to refresh billing as well. JSON reports include `schemaVersion`, exact provider/account source IDs, per-model token and cost fields, and a `sources` collection that maps every model row to its provider home and discovered local paths. Run `tokmon usage --help` or `tokmon providers --help` for every filter and example.
+
 ## Providers
 
 **Usage providers** — full cost & token history (Today / Week / Month, sparkline, per-model table):
@@ -186,6 +202,10 @@ Press `s` to open.
 ```
 tokmon [options]            Launch the terminal dashboard
 tokmon serve [options]      Launch the web dashboard (http://127.0.0.1:4317)
+tokmon usage [options]      Query usage by model (human or JSON)
+tokmon providers [options]  Show accounts and local provider paths
+tokmon snapshot [options]   Print the raw daemon snapshot as JSON
+tokmon config [path]        Print the tokmon config file location
 
 Options:
 -i, --interval <seconds>  Refresh interval in seconds (default: from config, or 2)

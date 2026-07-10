@@ -42,6 +42,24 @@ function validateServeArgs(serveArgs: string[]): void {
 }
 
 async function main(): Promise<void> {
+  if (subcommand && ['usage', 'models', 'query', 'providers', 'snapshot', 'config'].includes(subcommand)) {
+    const { runQueryCommand } = await import('./cli-command')
+    try {
+      const output = await runQueryCommand(
+        subcommand as 'usage' | 'models' | 'query' | 'providers' | 'snapshot' | 'config',
+        args.slice(1),
+      )
+      process.stdout.write(output)
+      process.exitCode ??= 0
+    } catch (error) {
+      const message = describeError(error)
+      if (args.includes('--json')) process.stderr.write(JSON.stringify({ error: message }) + '\n')
+      else process.stderr.write(`tokmon ${subcommand}: ${message}\nRun tokmon ${subcommand} --help for usage.\n`)
+      process.exitCode = 1
+    }
+    return
+  }
+
   if (subcommand === '__daemon') {
     const { runDaemon } = await import('./web/daemon')
     await runDaemon(args.slice(1), { foreground: false })
@@ -76,6 +94,12 @@ async function main(): Promise<void> {
       console.log('  Claude · Codex · Cursor · Copilot · opencode · pi · Antigravity · Gemini · Grok\n')
       console.log('Usage: tokmon [options]')
       console.log('       tokmon serve [--port <n>] [--no-open]   Launch the web dashboard\n')
+      console.log('Data commands:')
+      console.log('  tokmon usage [--period month] [--json]       Query usage by model')
+      console.log('  tokmon providers [--json]                    Show providers and local paths')
+      console.log('  tokmon snapshot [--refresh]                  Print the raw daemon snapshot')
+      console.log('  tokmon config [path]                         Print the config file location')
+      console.log('  Run tokmon <command> --help for all filters and examples.\n')
       console.log('Options:')
       console.log('  -i, --interval <seconds>  Refresh interval (default: from config or 2)')
       console.log('      --ascii               Force ASCII glyphs (also: TOKMON_ASCII=1)')

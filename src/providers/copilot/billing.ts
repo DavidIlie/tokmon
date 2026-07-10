@@ -63,9 +63,7 @@ export function ghHostsPath(homeDir?: string): string {
   return join(ghConfigDir(homeDir), 'hosts.yml')
 }
 
-// gh being installed (or even authenticated) only means "GitHub user" — require
-// Copilot-specific state so non-Copilot developers don't get a spurious card.
-export async function detectCopilot(homeDir?: string): Promise<boolean> {
+export function copilotStateDirs(homeDir?: string): string[] {
   const home = homeDir ?? homedir()
   const candidates = [
     join(home, '.config', 'github-copilot'),
@@ -76,7 +74,13 @@ export async function detectCopilot(homeDir?: string): Promise<boolean> {
   if (process.platform === 'win32') {
     candidates.push(join(envDir('LOCALAPPDATA') ?? join(home, 'AppData', 'Local'), 'github-copilot'))
   }
-  for (const path of candidates) {
+  return candidates
+}
+
+// gh being installed (or even authenticated) only means "GitHub user" — require
+// Copilot-specific state so non-Copilot developers don't get a spurious card.
+export async function detectCopilot(homeDir?: string): Promise<boolean> {
+  for (const path of copilotStateDirs(homeDir)) {
     try { await access(path); return true } catch {}
   }
   return false
