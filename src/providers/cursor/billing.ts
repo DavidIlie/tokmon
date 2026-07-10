@@ -1,7 +1,6 @@
 import { access } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { resetIn } from '../../format'
 import { envDir } from '../../config'
 import { readJson } from '../../http'
 import type { Account, BillingResult, Metric } from '../types'
@@ -215,7 +214,7 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
   const rawEnd = usage.billingCycleEnd
   const endMs = timestampMs(rawEnd)
   const iso = endMs === null ? null : msToIso(endMs)
-  const resets = iso ? resetIn(iso) : null
+  const resets = iso
 
   const limit = numberValue(pu.limit)
   const planUsedCents = numberValue(pu.totalSpend)

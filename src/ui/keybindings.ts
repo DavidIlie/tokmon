@@ -14,10 +14,9 @@ export function terminalFocusEvent(input: string): TerminalFocusEvent | null {
   return null
 }
 
-export function handleTerminalFocusInput(input: string, onFocusIn: () => void): boolean {
+export function handleTerminalFocusInput(input: string): boolean {
   const event = terminalFocusEvent(input)
   if (!event) return false
-  if (event === 'in') onFocusIn()
   return true
 }
 

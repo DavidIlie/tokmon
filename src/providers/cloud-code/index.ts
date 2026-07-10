@@ -1,4 +1,3 @@
-import { resetIn } from '../../format'
 import type { Metric } from '../types'
 import { sqliteStatusMessage, type SqliteStatus } from '../cursor/sqlite'
 import type { CloudCodeBucket } from './api'
@@ -56,7 +55,9 @@ export function cloudCodeBucketsToMetrics(buckets: CloudCodeBucket[], options: {
         used: Math.round((1 - clamped) * 100),
         limit: 100,
         format: { kind: 'percent' },
-        resetsAt: bucket.resetTime && Number.isFinite(Date.parse(bucket.resetTime)) ? resetIn(bucket.resetTime) : null,
+        resetsAt: bucket.resetTime && Number.isFinite(Date.parse(bucket.resetTime))
+          ? new Date(bucket.resetTime).toISOString()
+          : null,
         primary: i === 0,
       }
     })

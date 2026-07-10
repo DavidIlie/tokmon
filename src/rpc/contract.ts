@@ -59,6 +59,7 @@ export const ConfigSchema = Schema.Struct({
   defaultFocus: Schema.Literals(['all', 'last'] as const),
   ascii: Schema.Literals(['auto', 'on', 'off'] as const),
   allowNetworkAccess: Schema.Boolean,
+  resetDisplay: Schema.Literals(['relative', 'absolute'] as const),
   knownProviders: Schema.Array(ProviderIdSchema),
 })
 
@@ -250,6 +251,7 @@ export const WebSnapshotSchema = Schema.Struct({
     // The upstream clock is only normalized to a finite number; do not make
     // the wire contract narrower than the producer's declared type.
     minutesUntilChange: Schema.NullOr(Schema.Finite),
+    changesAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   })),
 })
 

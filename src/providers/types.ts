@@ -22,6 +22,7 @@ export interface Metric {
   used: number
   limit: number | null
   format: MetricFormat
+  /** ISO-8601 instant; clients choose relative or absolute presentation. */
   resetsAt?: string | null
   primary?: boolean
 }

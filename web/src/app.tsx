@@ -1,4 +1,4 @@
-import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createHashHistory, createRootRoute, createRoute, createRouter,
   Link, Outlet, RouterProvider, useRouterState,
@@ -7,14 +7,15 @@ import { DEFAULTS, type WebSnapshot } from '@shared'
 
 import { FilterBar } from './components/filter-bar'
 import { ShareControl } from './components/share-card'
-import { Moon, Settings, Sun } from './components/icons'
+import { Moon, Refresh, Settings, Sun } from './components/icons'
 import { TABS, type TabKey } from './components/tab-definitions'
 import { deriveAll, hasBillingSignal, PERIODS, type Derived, type Filters } from './lib/derive'
-import { fmtAgo } from './lib/format'
+import { fmtAgo, fmtResetAt } from './lib/format'
 import { cleanUnavailableFilters } from './lib/filter-cleanup'
 import { useFilters } from './lib/useFilters'
 import { useSnapshot, type ConnState } from './lib/useSnapshot'
-import { subscribeConfig } from './lib/config-client'
+import { refreshAllData, subscribeConfig } from './lib/config-client'
+import { isRefreshShortcut } from './lib/refresh-shortcut'
 
 const loadOverview = () => Promise.all([
     import('./components/tabs/overview'),
@@ -55,6 +56,7 @@ interface DashCtx {
   periodLabel: string
   scopeLabel?: string
   privacyMode: boolean
+  resetDisplay: 'relative' | 'absolute'
 }
 const DashboardContext = createContext<DashCtx | null>(null)
 const useDashboard = (): DashCtx => {
@@ -156,6 +158,46 @@ function SettingsButton({ onOpen }: { onOpen: () => void }) {
   )
 }
 
+type RefreshPhase = 'idle' | 'refreshing' | 'success' | 'error'
+
+function RefreshButton({ phase, onRefresh }: { phase: RefreshPhase; onRefresh: () => void }) {
+  const label = phase === 'refreshing' ? 'refreshing…'
+    : phase === 'success' ? 'updated'
+    : phase === 'error' ? 'refresh failed'
+    : 'refresh'
+  return (
+    <button
+      type="button"
+      onClick={onRefresh}
+      disabled={phase === 'refreshing'}
+      title="Refresh all data (R)"
+      aria-label="Refresh all data"
+      className="flex items-center gap-1.5 rounded border border-line bg-bg-1 px-2 py-1.5 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg disabled:cursor-wait focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+    >
+      <Refresh className={`size-3.5 ${phase === 'refreshing' ? 'animate-spin motion-reduce:animate-none' : ''}`} />
+      <span className={phase === 'error' ? 'text-warning' : ''}>{label}</span>
+    </button>
+  )
+}
+
+function PeakStatusBadge({ peak, resetDisplay, tz }: {
+  peak: NonNullable<WebSnapshot['peak']>
+  resetDisplay: 'relative' | 'absolute'
+  tz: string
+}) {
+  const color = peak.state === 'peak' ? 'var(--color-warning)' : 'var(--color-positive)'
+  const changesAt = peak.changesAt ?? (peak.minutesUntilChange != null
+    ? new Date(Date.now() + peak.minutesUntilChange * 60_000).toISOString()
+    : null)
+  return (
+    <span className="hidden items-center gap-1 text-xs text-fg-dim lg:flex">
+      <span aria-hidden style={{ color }}>●</span>
+      <span style={{ color }}>{peak.label}</span>
+      {changesAt && <span className="tnum text-fg-faint">({fmtResetAt(changesAt, resetDisplay, Date.now(), tz)})</span>}
+    </span>
+  )
+}
+
 function RootLayout() {
   const { snapshot, conn } = useSnapshot()
   const [filters, setFilters] = useFilters()
@@ -163,14 +205,48 @@ function RootLayout() {
   const [showSettings, setShowSettings] = useState(false)
   const [privacyMode, setPrivacyMode] = useState(DEFAULTS.privacyMode)
   const [allowNetworkAccess, setAllowNetworkAccess] = useState(DEFAULTS.allowNetworkAccess)
+  const [resetDisplay, setResetDisplay] = useState(DEFAULTS.resetDisplay)
+  const [refreshPhase, setRefreshPhase] = useState<RefreshPhase>('idle')
+  const refreshInFlight = useRef<Promise<void> | null>(null)
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (conn !== 'live') return
     return subscribeConfig(state => {
       setPrivacyMode(state.config.privacyMode)
       setAllowNetworkAccess(state.config.allowNetworkAccess)
+      setResetDisplay(state.config.resetDisplay)
     })
   }, [conn])
+
+  const requestRefresh = useCallback((): void => {
+    if (refreshInFlight.current) return
+    if (refreshTimer.current) clearTimeout(refreshTimer.current)
+    setRefreshPhase('refreshing')
+    const refresh = refreshAllData()
+      .then(() => setRefreshPhase('success'))
+      .catch(() => setRefreshPhase('error'))
+      .finally(() => {
+        refreshInFlight.current = null
+        refreshTimer.current = setTimeout(() => setRefreshPhase('idle'), 3_000)
+      })
+    refreshInFlight.current = refresh
+  }, [])
+
+  useEffect(() => {
+    if (conn !== 'live' || showSettings) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isRefreshShortcut(event)) return
+      event.preventDefault()
+      requestRefresh()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [conn, requestRefresh, showSettings])
+
+  useEffect(() => () => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current)
+  }, [])
 
   const derived = useMemo(() => deriveAll(snapshot, filters), [snapshot, filters])
   const periodLabel = PERIODS.find(p => p.key === filters.period)?.label ?? filters.period
@@ -206,8 +282,8 @@ function RootLayout() {
   const ready = !hasUsage || tablesReady || everReady.current || graceOver
 
   const ctx = useMemo<DashCtx | null>(
-    () => (snapshot ? { snapshot, filters, derived, periodLabel, scopeLabel, privacyMode } : null),
-    [snapshot, filters, derived, periodLabel, scopeLabel, privacyMode],
+    () => (snapshot ? { snapshot, filters, derived, periodLabel, scopeLabel, privacyMode, resetDisplay } : null),
+    [snapshot, filters, derived, periodLabel, scopeLabel, privacyMode, resetDisplay],
   )
 
   return (
@@ -225,7 +301,9 @@ function RootLayout() {
               <span className="cursor-blink text-accent">▋</span>
             </span>
             <div className="ml-auto flex min-w-0 items-center gap-3">
+              {snapshot?.peak && <PeakStatusBadge peak={snapshot.peak} resetDisplay={resetDisplay} tz={snapshot.tz} />}
               <ConnDot conn={conn} freshAt={snapshot?.generatedAt ?? null} />
+              {conn === 'live' && <RefreshButton phase={refreshPhase} onRefresh={requestRefresh} />}
               {conn === 'live' && <SettingsButton onOpen={() => setShowSettings(true)} />}
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
               {ready && (hasUsage || hasBilling) && (
@@ -304,8 +382,8 @@ function RootLayout() {
 }
 
 function OverviewRoute() {
-  const { derived, periodLabel, scopeLabel, snapshot, privacyMode } = useDashboard()
-  return <Suspense fallback={<RouteFallback label="overview" />}><OverviewTab derived={derived} periodLabel={periodLabel} scopeLabel={scopeLabel} providers={snapshot.providers} privacyMode={privacyMode} /></Suspense>
+  const { derived, periodLabel, scopeLabel, snapshot, privacyMode, resetDisplay } = useDashboard()
+  return <Suspense fallback={<RouteFallback label="overview" />}><OverviewTab derived={derived} periodLabel={periodLabel} scopeLabel={scopeLabel} providers={snapshot.providers} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={snapshot.tz} /></Suspense>
 }
 function AnalyticsRoute() {
   const { derived, scopeLabel } = useDashboard()

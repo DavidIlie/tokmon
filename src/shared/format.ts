@@ -104,6 +104,26 @@ export function formatResetIn(iso: string, now = Date.now()): string {
   return `${days}d ${hrs}h`
 }
 
+export function formatResetAt(
+  iso: string,
+  display: 'relative' | 'absolute',
+  now = Date.now(),
+  tz?: string,
+): string {
+  const timestamp = Date.parse(iso)
+  // Snapshot caches from releases before v0.25 stored already-formatted values.
+  // Keep those readable until the next successful provider refresh replaces them.
+  if (!Number.isFinite(timestamp)) return iso
+  if (display === 'relative') return formatResetIn(iso, now)
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: tz,
+  }).format(new Date(timestamp))
+}
+
 export function sumTokens(tokens: { input: number; output: number; cacheCreate: number; cacheRead: number }): number {
   return tokens.input + tokens.output + tokens.cacheCreate + tokens.cacheRead
 }

@@ -1,6 +1,7 @@
 import {
   formatCurrency,
   formatResetIn,
+  formatResetAt,
   formatShortDate,
   formatTime,
   formatTokens,
@@ -21,3 +22,4 @@ export function col(s: string, w: number, align: 'left' | 'right' = 'right'): st
 }
 
 export const resetIn = formatResetIn
+export const resetAt = formatResetAt

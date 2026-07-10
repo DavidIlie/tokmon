@@ -6,7 +6,7 @@ import { PROVIDER_ORDER, PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
 import { truncateName } from './shared'
 
-export const GENERAL_ROWS = 9
+export const GENERAL_ROWS = 10
 
 export const SETTINGS_TABS = ['general', 'providers', 'accounts'] as const
 export type SettingsTab = typeof SETTINGS_TABS[number]
@@ -113,6 +113,11 @@ export const SettingsView = memo(function SettingsView({
           {config.allowNetworkAccess && (
             <Text color="red">  Warning: dashboard data and settings will be exposed to your local network after daemon restart.</Text>
           )}
+          <Row cursor={cursor} idx={9} label="Reset times">
+            <Text dimColor>{glyphs().caretL} </Text>
+            <Text bold color="yellow">{config.resetDisplay === 'relative' ? 'time remaining' : 'exact date/time'}</Text>
+            <Text dimColor> {glyphs().caretR}</Text>
+          </Row>
         </>
       )}
 

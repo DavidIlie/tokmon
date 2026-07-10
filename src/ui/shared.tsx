@@ -5,6 +5,7 @@ import { useOnMouseClick } from '@zenobius/ink-mouse'
 import type { Metric } from '../providers/types'
 import type { PeakStatus } from '../peak'
 import { glyphs } from '../glyphs'
+import { formatResetAt } from '../shared/format'
 
 export function truncateName(s: string, n: number): string {
   const ell = glyphs().ellipsis
@@ -111,25 +112,25 @@ export const TabBar = memo(function TabBar(
   )
 })
 
-export const PeakBadge = memo(function PeakBadge({ peak }: { peak: PeakStatus }) {
+export const PeakBadge = memo(function PeakBadge({ peak, resetDisplay = 'relative', tz }: {
+  peak: PeakStatus
+  resetDisplay?: 'relative' | 'absolute'
+  tz?: string
+}) {
   const color = peak.state === 'peak' ? 'red' : 'green'
+  const changesAt = peak.changesAt ?? (peak.minutesUntilChange !== null
+    ? new Date(Date.now() + peak.minutesUntilChange * 60_000).toISOString()
+    : null)
   return (
     <Box>
       <Text color={color}>{glyphs().dot} </Text>
       <Text bold color={color}>{peak.label}</Text>
-      {peak.minutesUntilChange !== null && peak.minutesUntilChange > 0 && (
-        <Text dimColor> ({fmtMinutes(peak.minutesUntilChange)})</Text>
+      {changesAt && (
+        <Text dimColor> ({formatResetAt(changesAt, resetDisplay, Date.now(), tz)})</Text>
       )}
     </Box>
   )
 })
-
-function fmtMinutes(mins: number): string {
-  if (mins < 60) return `${mins}m`
-  const h = Math.floor(mins / 60)
-  const m = mins % 60
-  return m === 0 ? `${h}h` : `${h}h ${m}m`
-}
 
 function currencySymbol(cur?: string): string {
   return cur === 'EUR' ? glyphs().eur : cur === 'GBP' ? glyphs().gbp : '$'

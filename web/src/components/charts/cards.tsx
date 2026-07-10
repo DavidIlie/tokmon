@@ -1,6 +1,6 @@
 import type { Metric, WebAccount } from '@shared'
 import type { Derived } from '../../lib/derive'
-import { fmtCost, fmtNum, fmtTokens } from '../../lib/format'
+import { fmtCost, fmtNum, fmtResetAt, fmtTokens } from '../../lib/format'
 import { providerHex, shortModel } from '../../lib/colors'
 import { Panel } from '../ui/panel'
 import { Sparkline } from '../ui/primitives'
@@ -42,7 +42,13 @@ function Kpi({ label, value, accent = 'text-fg-bright', spark, sparkColor }: {
   )
 }
 
-export function ProviderCards({ accounts, nameOf, privacyMode }: { accounts: WebAccount[]; nameOf: (id: string) => string; privacyMode: boolean }) {
+export function ProviderCards({ accounts, nameOf, privacyMode, resetDisplay, tz }: {
+  accounts: WebAccount[]
+  nameOf: (id: string) => string
+  privacyMode: boolean
+  resetDisplay: 'relative' | 'absolute'
+  tz: string
+}) {
   if (accounts.length === 0) {
     return (
       <Panel title="accounts">
@@ -52,12 +58,19 @@ export function ProviderCards({ accounts, nameOf, privacyMode }: { accounts: Web
   }
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fit,minmax(min(340px,100%),1fr))]">
-      {accounts.map((a, i) => <ProviderCard key={a.id} account={a} index={i} providerName={nameOf(a.providerId)} privacyMode={privacyMode} />)}
+      {accounts.map((a, i) => <ProviderCard key={a.id} account={a} index={i} providerName={nameOf(a.providerId)} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={tz} />)}
     </div>
   )
 }
 
-function ProviderCard({ account, index, providerName, privacyMode }: { account: WebAccount; index: number; providerName: string; privacyMode: boolean }) {
+function ProviderCard({ account, index, providerName, privacyMode, resetDisplay, tz }: {
+  account: WebAccount
+  index: number
+  providerName: string
+  privacyMode: boolean
+  resetDisplay: 'relative' | 'absolute'
+  tz: string
+}) {
   const d = account.dashboard
   const metrics = account.billing?.metrics ?? []
   const modelSpend = account.billing?.modelSpend ?? []
@@ -101,7 +114,7 @@ function ProviderCard({ account, index, providerName, privacyMode }: { account: 
 
       {metrics.length > 0 && (
         <div className={`flex flex-col gap-2 ${d ? 'mt-3 border-t border-line-faint pt-3' : 'mt-4'}`}>
-          {metrics.slice(0, 8).map((m, i) => <QuotaBar key={`${m.label}${i}`} metric={m} />)}
+          {metrics.slice(0, 8).map((m, i) => <QuotaBar key={`${m.label}${i}`} metric={m} resetDisplay={resetDisplay} tz={tz} />)}
         </div>
       )}
 
@@ -161,7 +174,7 @@ function fmtMetricValue(m: Metric): string {
   return `${Math.round(m.used)}%`
 }
 
-function QuotaBar({ metric }: { metric: Metric }) {
+function QuotaBar({ metric, resetDisplay, tz }: { metric: Metric; resetDisplay: 'relative' | 'absolute'; tz: string }) {
   const ratio = metric.format.kind === 'percent'
     ? Math.min(1, Math.max(0, metric.used / 100))
     : metric.limit != null && metric.limit > 0
@@ -183,7 +196,7 @@ function QuotaBar({ metric }: { metric: Metric }) {
               {' / '}{metric.format.kind === 'dollars' ? fmtCost(metric.limit) : fmtNum(metric.limit)}
             </span>
           )}
-          {metric.resetsAt && <span className="ml-1.5 text-fg-faint">· {metric.resetsAt}</span>}
+          {metric.resetsAt && <span className="ml-1.5 text-fg-faint">· {fmtResetAt(metric.resetsAt, resetDisplay, Date.now(), tz)}</span>}
         </span>
       </div>
       {ratio != null && (

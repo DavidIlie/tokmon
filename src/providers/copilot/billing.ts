@@ -1,7 +1,6 @@
 import { access, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { resetIn } from '../../format'
 import { envDir } from '../../config'
 import { readJson } from '../../http'
 import type { Account, BillingResult, Metric } from '../types'
@@ -201,7 +200,9 @@ function redactToken(token: string): string {
 }
 
 function resetDate(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? resetIn(value) : null
+  if (typeof value !== 'string' || !value.trim()) return null
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null
 }
 
 function boolValue(value: unknown): boolean | undefined {

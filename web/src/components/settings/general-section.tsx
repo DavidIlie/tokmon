@@ -52,6 +52,12 @@ export function GeneralSection({ draft, patch }: { draft: Config; patch: (fn: (c
           Unsafe: after the daemon restarts, usage data and settings will be reachable from your local network.
         </p>
       )}
+      <FieldRow label="Reset times" hint="quota and peak changes">
+        <Segmented<'relative' | 'absolute'> size="xs" ariaLabel="reset time display"
+          options={[{ value: 'relative', label: 'remaining' }, { value: 'absolute', label: 'date/time' }]}
+          value={draft.resetDisplay}
+          onChange={v => patch(c => ({ ...c, resetDisplay: v }))} />
+      </FieldRow>
     </Section>
   )
 }

@@ -18,13 +18,13 @@ const IDLE_PAUSE_MS = 60_000
 const SNAPSHOT_CACHE_THROTTLE_MS = 20_000
 const REVEAL_THROTTLE_MS = 500
 const FETCH_TIMEOUT_MS = 30_000
-export const ATTACH_BILLING_MAX_AGE_MS = 30_000
+export const DEFAULT_BILLING_STALE_MS = 5 * 60_000
 
 export function billingNeedsCatchUp(
   accounts: readonly ResolvedAccount[],
   updatedAt: ReadonlyMap<string, number>,
   now = Date.now(),
-  maxAgeMs = ATTACH_BILLING_MAX_AGE_MS,
+  maxAgeMs = DEFAULT_BILLING_STALE_MS,
 ): boolean {
   return accounts.some(({ account }) => now - (updatedAt.get(account.id) ?? 0) >= maxAgeMs)
 }
@@ -50,6 +50,21 @@ export interface DataEngine {
   setConfig(next: { resolved: ResolvedAccount[]; tz: string; summaryIntervalMs: number; billingIntervalMs: number }): void
   broadcastConfig(config: Config): void
   stop(): void
+}
+
+export async function forEachProviderSequentially<T extends { account: { providerId: string } }>(
+  values: readonly T[],
+  task: (value: T) => Promise<void>,
+): Promise<void> {
+  const groups = new Map<string, T[]>()
+  for (const value of values) {
+    const group = groups.get(value.account.providerId) ?? []
+    group.push(value)
+    groups.set(value.account.providerId, group)
+  }
+  await Promise.all([...groups.values()].map(async group => {
+    for (const value of group) await task(value)
+  }))
 }
 
 function runInBackground(task: Promise<void>): void {
@@ -182,7 +197,8 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     apply: (id: string, value: T) => void
     state: Map<string, AccountFetchState>
     updatedAt: Map<string, number>
-    concurrent?: boolean
+    concurrent?: boolean | 'provider'
+    forceWhileActive?: 'queue' | 'join'
   }): RefreshQueue => createRefreshQueue(
     async () => {
       if (stopped) return
@@ -208,7 +224,14 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
         reveal()
       }
 
-      if (opts.concurrent) {
+      if (opts.concurrent === 'provider') {
+        await forEachProviderSequentially(opts.accounts(), async r => {
+          const result = await fetchOne(r)
+          if (stopped || epoch !== configEpoch) return
+          applyResult(result)
+        })
+        if (stopped || epoch !== configEpoch) return
+      } else if (opts.concurrent) {
         await Promise.all(opts.accounts().map(async r => {
           const result = await fetchOne(r)
           if (stopped || epoch !== configEpoch) return
@@ -227,6 +250,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       throwIfRefreshFailures(opts.scope, failures)
     },
     idle,
+    { forceWhileActive: opts.forceWhileActive },
   )
 
   const refreshSummary = makeRefreshLoop({
@@ -254,8 +278,14 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     apply: (id, result) => { billing.set(id, result) },
     state: billingState,
     updatedAt: billingUpdatedAt,
-    concurrent: true,
+    concurrent: 'provider',
+    forceWhileActive: 'join',
   })
+
+  const refreshBillingIfStale = (): Promise<void> =>
+    billingNeedsCatchUp(billingAccounts, billingUpdatedAt, Date.now(), billingIntervalMs)
+      ? refreshBilling.run(true)
+      : Promise.resolve()
 
   const refreshPeak = createRefreshQueue(
     async () => {
@@ -308,6 +338,8 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       const tasks: Promise<void>[] = []
       if (scope === 'all' || scope === 'summary') tasks.push(refreshSummary.run(true))
       if (scope === 'all' || scope === 'table') tasks.push(refreshTable.run(true))
+      // Explicit refreshes are user intent. Focus/viewer attachment uses the
+      // freshness gate above, while R/CLI --refresh may deliberately re-query.
       if (scope === 'all' || scope === 'billing') tasks.push(refreshBilling.run(true))
       if ((scope === 'all' || scope === 'peak') && hasClaude) tasks.push(refreshPeak.run(true))
       return settleRefreshTasks(tasks)
@@ -348,7 +380,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       rebuild()
       runInBackground(refreshSummary.run(true))
       runInBackground(refreshTable.run(true))
-      runInBackground(refreshBilling.run(true))
+      runInBackground(refreshBillingIfStale())
       if (hasClaude) runInBackground(refreshPeak.run(true))
       startTimers()
     },
@@ -371,9 +403,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
         runInBackground(refreshSummary.run(true))
         runInBackground(refreshTable.run(true))
       }
-      if (billingNeedsCatchUp(billingAccounts, billingUpdatedAt)) {
-        runInBackground(refreshBilling.run())
-      }
+      runInBackground(refreshBillingIfStale())
       return () => { snapshotSubscribers.delete(onSnapshot) }
     },
 

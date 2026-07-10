@@ -129,6 +129,10 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
     }
     if (index === 8 && (inputKey.leftArrow || inputKey.rightArrow || inputKey.return)) {
       updateConfig(current => ({ ...current, allowNetworkAccess: !current.allowNetworkAccess }))
+      return
+    }
+    if (index === 9 && (inputKey.leftArrow || inputKey.rightArrow || inputKey.return)) {
+      updateConfig(current => ({ ...current, resetDisplay: current.resetDisplay === 'relative' ? 'absolute' : 'relative' }))
     }
   }
 }

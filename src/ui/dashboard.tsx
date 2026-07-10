@@ -114,7 +114,7 @@ export function computeDashLayout(
   return chooseLayout(content, budget, groups.length, single, cols, heights)
 }
 
-export const DashboardView = memo(function DashboardView({ groups, stats, cols, budget, focusId, layout, page = 0, privacyMode = false }: {
+export const DashboardView = memo(function DashboardView({ groups, stats, cols, budget, focusId, layout, page = 0, privacyMode = false, resetDisplay = 'relative', tz }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
   stats: Map<string, AccountStats>
   cols: number
@@ -123,6 +123,8 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
   layout: 'grid' | 'single'
   page?: number
   privacyMode?: boolean
+  resetDisplay?: 'relative' | 'absolute'
+  tz?: string
 }) {
   if (groups.length === 0) {
     return <Text dimColor>No providers enabled {glyphs().emDash} press s to pick providers.</Text>
@@ -144,7 +146,7 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
       <Box width={content} flexWrap="wrap" columnGap={GAP} rowGap={1} alignItems="flex-start">
         {visible.map(g => (
           <Box key={g.provider} flexShrink={0}>
-            <ProviderCard provider={g.provider} accounts={g.accounts} stats={stats} width={cardW} variant={variant} privacyMode={privacyMode} />
+            <ProviderCard provider={g.provider} accounts={g.accounts} stats={stats} width={cardW} variant={variant} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={tz} />
           </Box>
         ))}
       </Box>
@@ -155,13 +157,15 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
   )
 })
 
-function ProviderCard({ provider, accounts, stats, width, variant, privacyMode = false }: {
+function ProviderCard({ provider, accounts, stats, width, variant, privacyMode = false, resetDisplay, tz }: {
   provider: ProviderId
   accounts: Account[]
   stats: Map<string, AccountStats>
   width: number
   variant: Variant
   privacyMode?: boolean
+  resetDisplay: 'relative' | 'absolute'
+  tz?: string
 }) {
   const meta = PROVIDERS[provider]
   const items: Item[] = accounts.map(a => ({ account: a, s: stats.get(a.id) }))
@@ -200,7 +204,7 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
       {meta.hasBilling && showBars && (
         <>
           {meta.hasUsage && <Rule inner={inner} />}
-          <LimitsBlock items={items} inner={inner} privacyMode={privacyMode} />
+          <LimitsBlock items={items} inner={inner} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={tz} />
         </>
       )}
       {meta.hasBilling && !showBars && !meta.hasUsage && (
@@ -274,12 +278,19 @@ function accountTitle(account: Account, billing: BillingResult | null | undefine
   return privacyMode ? redactEmail(title) : title
 }
 
-function LimitsBlock({ items, inner, privacyMode }: { items: Item[]; inner: number; privacyMode?: boolean }) {
+function LimitsBlock({ items, inner, privacyMode, resetDisplay, tz }: {
+  items: Item[]
+  inner: number
+  privacyMode?: boolean
+  resetDisplay: 'relative' | 'absolute'
+  tz?: string
+}) {
   const showName = items.length > 1
   // Shared label gutter so values/bars align across every metric row in the card.
   const labels = items.flatMap(i => i.s?.billing?.metrics ?? []).map(m => m.label.length)
   const labelW = Math.min(Math.max(7, ...labels) + 1, 14)
-  const barW = Math.max(10, Math.min(46, inner - labelW - 13))
+  const resetW = resetDisplay === 'absolute' ? 17 : 8
+  const barW = Math.max(10, Math.min(46, inner - labelW - resetW - 5))
   return (
     <Box flexDirection="column">
       {items.map(({ account, s }, idx) => {
@@ -296,7 +307,7 @@ function LimitsBlock({ items, inner, privacyMode }: { items: Item[]; inner: numb
             ) : billing.metrics.length === 0 ? (
               <Text dimColor>No data</Text>
             ) : (
-              billing.metrics.map((m, i) => <MetricRow key={`${m.label}${i}`} m={m} color={account.color} barW={barW} labelW={labelW} />)
+              billing.metrics.map((m, i) => <MetricRow key={`${m.label}${i}`} m={m} color={account.color} barW={barW} labelW={labelW} resetW={resetW} resetDisplay={resetDisplay} tz={tz} />)
             )}
           </Box>
         )
@@ -305,7 +316,15 @@ function LimitsBlock({ items, inner, privacyMode }: { items: Item[]; inner: numb
   )
 }
 
-function MetricRow({ m, color, barW, labelW }: { m: Metric; color: string; barW: number; labelW: number }) {
+function MetricRow({ m, color, barW, labelW, resetW, resetDisplay, tz }: {
+  m: Metric
+  color: string
+  barW: number
+  labelW: number
+  resetW: number
+  resetDisplay: 'relative' | 'absolute'
+  tz?: string
+}) {
   if (m.format.kind === 'percent') {
     const barColor = m.used >= 90 ? 'red' : m.used >= 75 ? 'yellow' : color
     return (
@@ -313,8 +332,8 @@ function MetricRow({ m, color, barW, labelW }: { m: Metric; color: string; barW:
         <Box width={labelW} flexShrink={0}><Text dimColor wrap="truncate">{m.label}</Text></Box>
         <Bar pct={m.used} color={barColor} width={barW} />
         <Box width={5} justifyContent="flex-end"><Text bold>{Math.round(m.used)}%</Text></Box>
-        <Box width={8} justifyContent="flex-end">
-          {m.resetsAt ? <Text dimColor>{m.resetsAt}</Text> : <Text> </Text>}
+        <Box width={resetW} justifyContent="flex-end">
+          {m.resetsAt ? <Text dimColor>{fmt.resetAt(m.resetsAt, resetDisplay, Date.now(), tz)}</Text> : <Text> </Text>}
         </Box>
       </Box>
     )

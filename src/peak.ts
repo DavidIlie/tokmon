@@ -37,6 +37,9 @@ export async function fetchPeak(): Promise<PeakStatus | null> {
       state,
       label: state === 'peak' ? 'Peak' : state === 'weekend' ? 'Weekend' : 'Off-Peak',
       minutesUntilChange,
+      changesAt: minutesUntilChange !== null
+        ? new Date(Date.now() + minutesUntilChange * 60_000).toISOString()
+        : null,
     }
   } catch {
     return null

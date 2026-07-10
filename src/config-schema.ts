@@ -30,6 +30,7 @@ export interface Config {
   ascii: 'auto' | 'on' | 'off'
   /** Bind the dashboard to all interfaces instead of loopback on next daemon start. */
   allowNetworkAccess: boolean
+  resetDisplay: 'relative' | 'absolute'
   knownProviders: ProviderId[]
 }
 
@@ -76,6 +77,7 @@ export const DEFAULTS: Config = {
   defaultFocus: 'all',
   ascii: 'auto',
   allowNetworkAccess: false,
+  resetDisplay: 'relative',
   knownProviders: [],
 }
 
@@ -302,6 +304,7 @@ export function repairConfig(input: unknown): ConfigRepair {
     defaultFocus: parsed.defaultFocus === 'last' ? 'last' : 'all',
     ascii: parsed.ascii === 'on' ? 'on' : parsed.ascii === 'off' ? 'off' : 'auto',
     allowNetworkAccess: parsed.allowNetworkAccess === true,
+    resetDisplay: parsed.resetDisplay === 'absolute' ? 'absolute' : 'relative',
     knownProviders,
   }
 

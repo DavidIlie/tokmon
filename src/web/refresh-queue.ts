@@ -3,6 +3,11 @@ export interface RefreshQueue {
   stop(): void
 }
 
+export interface RefreshQueueOptions {
+  /** Whether a forced request arriving during active work needs one extra pass. */
+  forceWhileActive?: 'queue' | 'join'
+}
+
 type Deferred = {
   promise: Promise<void>
   resolve: () => void
@@ -24,6 +29,7 @@ function deferred(): Deferred {
 export function createRefreshQueue(
   perform: () => Promise<void>,
   skipAutomatic: () => boolean = () => false,
+  options: RefreshQueueOptions = {},
 ): RefreshQueue {
   let activePass: Promise<void> | null = null
   let activeResult: Deferred | null = null
@@ -60,6 +66,7 @@ export function createRefreshQueue(
     if (stopped || (!force && skipAutomatic())) return Promise.resolve()
     if (!activePass) return launch()
     if (!force) return activeResult!.promise
+    if (options.forceWhileActive === 'join') return activeResult!.promise
     if (!queued) queued = deferred()
     return queued.promise
   }

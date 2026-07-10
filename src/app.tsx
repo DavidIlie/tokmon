@@ -430,19 +430,8 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     [tab, rawTokenRows, activeTableModel, search, sort],
   )
 
-  const lastFocusRefreshRef = useRef(Date.now())
-  const refreshOnFocus = useCallback(() => {
-    const now = Date.now()
-    if (now - lastFocusRefreshRef.current < 30_000) return
-    lastFocusRefreshRef.current = now
-    const task = connected
-      ? daemonRefreshRef.current('billing')
-      : degradedRefreshRef.current()
-    void task.catch(() => {})
-  }, [connected])
-
   useInput((input, key) => {
-    if (handleTerminalFocusInput(input, refreshOnFocus)) return
+    if (handleTerminalFocusInput(input)) return
     handleKey(input, key, {
     onboarding: {
       show: showPicker, providers: pickerProviders, cursor: onboardCursor,
@@ -518,7 +507,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
           <Text dimColor>  {glyphs().middot}  usage {intervalLabel}s  {glyphs().middot}  limits {billingIntervalLabel}m</Text>
         </Box>
         <Box>
-          {peak && (<><PeakBadge peak={peak} /><Text dimColor>  {glyphs().middot}  </Text></>)}
+          {peak && (<><PeakBadge peak={peak} resetDisplay={cfg.resetDisplay} tz={tz} /><Text dimColor>  {glyphs().middot}  </Text></>)}
           <Text dimColor>{fmt.time(updated, tz)}</Text>
         </Box>
       </Box>
@@ -563,7 +552,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
           </Box>
           {tab === 0 && (
             <>
-              <DashboardView groups={groups} stats={stats} cols={cols} budget={gridBudget} focusId={focusId} layout={cfg.dashboardLayout} page={dashPage} privacyMode={cfg.privacyMode} />
+              <DashboardView groups={groups} stats={stats} cols={cols} budget={gridBudget} focusId={focusId} layout={cfg.dashboardLayout} page={dashPage} privacyMode={cfg.privacyMode} resetDisplay={cfg.resetDisplay} tz={tz} />
               {slots.length > 1 && (
                 <Box marginTop={1}>
                   <Text dimColor>focus  </Text>

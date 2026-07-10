@@ -40,6 +40,7 @@ export interface PeakStatus {
   state: 'peak' | 'off-peak' | 'weekend'
   label: string
   minutesUntilChange: number | null
+  changesAt?: string | null
 }
 
 export interface WebAccount {

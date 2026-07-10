@@ -76,7 +76,7 @@ A responsive grid of provider cards (or one card at a time — see **Dashboard l
 - **Today / This Week / This Month** — cost and token summaries
 - **Burn rate** — current $/hr
 - **Cache saved** — what caching has saved you
-- **Rate limits** — live utilization bars with reset countdowns
+- **Rate limits** — live utilization bars with reset countdowns or exact reset dates
 - **Sparkline** — recent daily activity
 
 The grid reflows to fit your terminal — more columns when it's wide, compacting cards when it's short. With more providers than fit on screen, it splits into **pages**; **scroll** (mouse wheel) to move between them (or `↑`/`↓` / `[` `]`). When you track more than one account, a focus strip lets you view **All** together or zoom into a single account.
@@ -105,7 +105,7 @@ tokmon serve --port 8080
 tokmon serve --no-open  # don't auto-open the browser
 ```
 
-It binds to `127.0.0.1` by default and reads the same local daemon state — nothing leaves your machine. The browser connects directly over a same-origin WebSocket; dashboard URLs have no token or login step. Optional LAN access can be enabled in settings, with an explicit unsafe-access warning, and takes effect after the daemon restarts. The dashboard renders instantly from a cached snapshot, then streams live updates and goes idle when no tab is open. Filter by provider, model, account, and period, flip between dark and light, and export any panel — or a summary card — as a PNG with the **Share** button.
+It binds to `127.0.0.1` by default and reads the same local daemon state — nothing leaves your machine. The browser connects directly over a same-origin WebSocket; dashboard URLs have no token or login step. Optional LAN access can be enabled in settings, with an explicit unsafe-access warning, and takes effect after the daemon restarts. The dashboard renders instantly from a cached snapshot, then streams live updates and goes idle when no tab is open. Press `R` or use the visible **Refresh** control to update it. Filter by provider, model, account, and period, flip between dark and light, and export any panel — or a summary card — as a PNG with the **Share** button.
 
 ### Overview
 
@@ -192,6 +192,8 @@ Press `s` to open.
 - **Dashboard layout** — `grid` (all providers at once) or `single` (one at a time)
 - **Default focus** — start on `all`, or remember your `last` focused account
 - **ASCII glyphs** — `auto` (detect), `on` (force ASCII), or `off` (force Unicode)
+- **Network access** — loopback-only by default; optional LAN access is explicitly marked unsafe
+- **Reset times** — show time remaining or the exact reset date/time in the configured timezone
 
 **Providers** — toggle each provider on or off.
 
@@ -253,7 +255,7 @@ tokmon runs a small local **daemon** that does all the data collection. The term
 - Each enabled provider is detected automatically, and its real account identity — email and plan — is read from local auth (e.g. Claude `~/.claude.json`, the Codex `id_token`, Cursor's state DB). Extra accounts, like additional Claude homes, are auto-discovered too.
 
 **Limits & billing**
-- Rate limits and remaining spend/quota come from each provider's own official API, refreshed on the billing poll interval and when the terminal regains focus. Opening a dashboard also catches up stale limits immediately.
+- Rate limits and remaining spend/quota come from each provider's own official API. Tokmon refreshes them on the configured billing interval; terminal focus and extra dashboard viewers reuse fresh data instead of issuing extra provider requests.
 
 **Responsiveness**
 - Dashboard summaries and table history load independently and refresh on separate intervals, so the UI stays responsive even on large histories.

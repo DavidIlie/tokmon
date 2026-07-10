@@ -15,11 +15,9 @@ test('terminal focus reports are recognized without becoming text input', () => 
   assert.equal(terminalFocusEvent('[O'), 'out')
   assert.equal(terminalFocusEvent('I'), null)
   assert.equal(terminalFocusEvent('r'), null)
-  let refreshes = 0
-  assert.equal(handleTerminalFocusInput('[I', () => { refreshes++ }), true)
-  assert.equal(handleTerminalFocusInput('[O', () => { refreshes++ }), true)
-  assert.equal(handleTerminalFocusInput('r', () => { refreshes++ }), false)
-  assert.equal(refreshes, 1)
+  assert.equal(handleTerminalFocusInput('[I'), true)
+  assert.equal(handleTerminalFocusInput('[O'), true)
+  assert.equal(handleTerminalFocusInput('r'), false)
 })
 
 const navigation = {

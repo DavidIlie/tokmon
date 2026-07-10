@@ -1,7 +1,6 @@
 import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { resetIn } from '../../format'
 import { readJson } from '../../http'
 import { expandHome } from '../../config'
 import type { Account, BillingResult, Metric } from '../types'
@@ -226,11 +225,13 @@ function boolValue(value: unknown): boolean {
 }
 
 function resetFrom(value: unknown): string | null {
-  if (typeof value === 'string' && value.trim()) return resetIn(value)
+  if (typeof value === 'string' && value.trim()) {
+    const timestamp = Date.parse(value)
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null
+  }
   const n = numberValue(value)
   if (n === undefined) return null
-  const iso = msToIso(Math.abs(n) < 10_000_000_000 ? n * 1000 : n)
-  return iso ? resetIn(iso) : null
+  return msToIso(Math.abs(n) < 10_000_000_000 ? n * 1000 : n)
 }
 
 function usageMetric(label: string, window: UsageWindow | null | undefined, primary?: boolean): Metric | null {

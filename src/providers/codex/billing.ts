@@ -2,7 +2,6 @@ import { readFile, readdir, stat as fsStat } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
-import { resetIn } from '../../format'
 import { readJson } from '../../http'
 import type { Account, BillingResult, Metric } from '../types'
 import { identityFields } from '../_shared/identity'
@@ -114,8 +113,7 @@ function resetDateMs(window: any): number | null {
 
 function resetFrom(window: any): string | null {
   const ms = resetDateMs(window)
-  const iso = ms === null ? null : msToIso(ms)
-  return iso ? resetIn(iso) : null
+  return ms === null ? null : msToIso(ms)
 }
 
 function windowSeconds(window: any): number | undefined {

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  ATTACH_BILLING_MAX_AGE_MS,
+  DEFAULT_BILLING_STALE_MS,
   billingNeedsCatchUp,
+  forEachProviderSequentially,
   throwIfRefreshFailures,
 } from './data-engine'
 import { createRefreshQueue, settleRefreshTasks } from './refresh-queue'
@@ -24,14 +25,43 @@ test('a new viewer catches up missing or stale quota data', () => {
   assert.equal(billingNeedsCatchUp(accounts, new Map(), 1_000_000), true)
   assert.equal(billingNeedsCatchUp(
     accounts,
-    new Map([['codex', 1_000_000 - ATTACH_BILLING_MAX_AGE_MS + 1]]),
+    new Map([['codex', 1_000_000 - DEFAULT_BILLING_STALE_MS + 1]]),
     1_000_000,
   ), false)
   assert.equal(billingNeedsCatchUp(
     accounts,
-    new Map([['codex', 1_000_000 - ATTACH_BILLING_MAX_AGE_MS]]),
+    new Map([['codex', 1_000_000 - DEFAULT_BILLING_STALE_MS]]),
     1_000_000,
   ), true)
+  assert.equal(billingNeedsCatchUp(
+    accounts,
+    new Map([['codex', 1_000_000 - 2 * 60_000]]),
+    1_000_000,
+    5 * 60_000,
+  ), false)
+})
+
+test('billing accounts run sequentially per provider while different providers overlap', async () => {
+  const firstClaude = deferred()
+  const codex = deferred()
+  const started: string[] = []
+  const accounts = [
+    { account: { providerId: 'claude', id: 'claude-1' } },
+    { account: { providerId: 'claude', id: 'claude-2' } },
+    { account: { providerId: 'codex', id: 'codex-1' } },
+  ]
+  const task = forEachProviderSequentially(accounts, async value => {
+    started.push(value.account.id)
+    if (value.account.id === 'claude-1') await firstClaude.promise
+    if (value.account.id === 'codex-1') await codex.promise
+  })
+  await turn()
+  assert.deepEqual(started, ['claude-1', 'codex-1'])
+  firstClaude.resolve()
+  await turn()
+  assert.deepEqual(started, ['claude-1', 'codex-1', 'claude-2'])
+  codex.resolve()
+  await task
 })
 
 test('forced refreshes coalesce behind a busy pass and await the queued pass', async () => {
@@ -56,6 +86,22 @@ test('forced refreshes coalesce behind a busy pass and await the queued pass', a
   gates[1].resolve()
   await Promise.all([first, forced, duplicate])
   assert.equal(settled, true)
+})
+
+test('rate-limited queues join forced requests to active work without a second pass', async () => {
+  const gate = deferred()
+  let runs = 0
+  const queue = createRefreshQueue(async () => { runs++; await gate.promise }, undefined, {
+    forceWhileActive: 'join',
+  })
+  const first = queue.run(true)
+  await turn()
+  const second = queue.run(true)
+  assert.equal(second, first)
+  assert.equal(runs, 1)
+  gate.resolve()
+  await Promise.all([first, second])
+  assert.equal(runs, 1)
 })
 
 test('a force arriving during the queued pass schedules one further pass', async () => {

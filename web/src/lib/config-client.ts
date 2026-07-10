@@ -24,3 +24,7 @@ export function subscribeConfig(onConfig: (state: ConfigState) => void): () => v
     onConfig({ ...state, config: repairConfig(state.config).config })
   })
 }
+
+export async function refreshAllData(): Promise<void> {
+  return daemonRpcClient().refresh('all')
+}
