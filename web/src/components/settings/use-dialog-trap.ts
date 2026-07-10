@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 export const FOCUS = 'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent'
 export const FOCUSABLE = 'button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'
@@ -11,6 +11,9 @@ export function useDialogTrap(
     initialFocusRef?: React.RefObject<HTMLElement>
   },
 ) {
+  const escapeRef = useRef(onEscape)
+  useEffect(() => { escapeRef.current = onEscape }, [onEscape])
+
   useEffect(() => {
     if (!active) return
     const prev = document.activeElement as HTMLElement | null
@@ -19,7 +22,7 @@ export function useDialogTrap(
     ;(initialFocusRef?.current ?? firstFocusable ?? panel)?.focus?.()
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.stopPropagation(); onEscape(); return }
+      if (e.key === 'Escape') { e.stopPropagation(); escapeRef.current(); return }
       if (e.key !== 'Tab' || !panelRef.current) return
       const f = panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)
       const vis = Array.from(f).filter(el => el.offsetParent !== null || el === document.activeElement)
@@ -30,6 +33,5 @@ export function useDialogTrap(
     }
     document.addEventListener('keydown', onKey)
     return () => { document.removeEventListener('keydown', onKey); prev?.focus?.() }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active])
+  }, [active, initialFocusRef, panelRef])
 }

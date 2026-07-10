@@ -195,7 +195,7 @@ function QuotaBar({ metric }: { metric: Metric }) {
           aria-valuemin={0}
           aria-valuemax={100}
         >
-          <div className="h-full rounded-full transition-all" style={{ width: `${ratio * 100}%`, background: color }} />
+          <div className="h-full rounded-full transition-[width] motion-reduce:transition-none" style={{ width: `${ratio * 100}%`, background: color }} />
         </div>
       )}
     </div>

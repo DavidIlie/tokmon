@@ -48,7 +48,7 @@ export function CaptureButton({ getNode, name }: { getNode: () => HTMLElement | 
       title="Share this panel"
       aria-label="Share this panel as an image"
       onClick={() => { const node = getNode(); if (node) openShare({ kind: 'panel', node, captureName: name }) }}
-      className="rounded border border-transparent bg-bg-1 p-1 text-fg-faint opacity-0 transition hover:border-line hover:text-accent group-hover:opacity-100 focus-visible:opacity-100"
+      className="rounded border border-transparent bg-bg-1 p-1 text-fg-faint opacity-0 transition hover:border-line hover:text-accent group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
     >
       <Camera className="size-3.5" />
     </button>

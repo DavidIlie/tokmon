@@ -15,7 +15,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 10.34.4
 
       - uses: actions/setup-node@v4
         with:
@@ -24,10 +24,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm --prefix web install --frozen-lockfile
-      # Builds dist/cli.js (tsup) AND dist/web (vite) — both ship via files:["dist"].
+      - run: node -e "if ('v' + require('./package.json').version !== process.env.GITHUB_REF_NAME) process.exit(1)"
+      - run: pnpm run check
       - run: pnpm run build
+      - run: npm pack --dry-run
 
-      - run: npm publish --access public || true
+      - run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -41,21 +43,23 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 10.34.4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: https://npm.pkg.github.com
-          scope: '@DavidIlie'
+          scope: '@davidilie'
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm --prefix web install --frozen-lockfile
-      # Builds dist/cli.js (tsup) AND dist/web (vite) — both ship via files:["dist"].
+      - run: pnpm run check
       - run: pnpm run build
 
       - run: |
-          sed -i 's/"name": "tokmon"/"name": "@davidilie\/tokmon"/' package.json
-          npm publish || true
+          npm pkg set name='@davidilie/tokmon'
+          node -e "if ('v' + require('./package.json').version !== process.env.GITHUB_REF_NAME) process.exit(1)"
+          npm pack --dry-run
+          npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

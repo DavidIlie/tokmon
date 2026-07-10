@@ -4,12 +4,15 @@ import * as fmt from '../format'
 import { PROVIDERS, type Account, type ProviderId } from '../providers'
 import type { AccountStats } from '../stats'
 import { truncateName } from './shared'
+import { RefreshStatusLine } from './refresh-status'
+import type { RefreshStatus } from './hooks/use-refresh-all'
 
-export function TinyFallback({ groups, stats, rows, cols }: {
+export function TinyFallback({ groups, stats, rows, cols, refreshStatus }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
   stats: Map<string, AccountStats>
   rows: number
   cols: number
+  refreshStatus: RefreshStatus
 }) {
   const maxLines = Math.max(1, rows - 4)
   const visible = groups.slice(0, maxLines)
@@ -24,8 +27,9 @@ export function TinyFallback({ groups, stats, rows, cols }: {
         visible.map(g => <TinyRow key={g.provider} provider={g.provider} accounts={g.accounts} stats={stats} width={w} />)
       )}
       {hidden > 0 && <Text dimColor>+{hidden} more (enlarge terminal)</Text>}
+      <RefreshStatusLine status={refreshStatus} />
       <Box flexGrow={1} />
-      <Text dimColor>s=settings  q=quit</Text>
+      <Text dimColor>R=refresh  s=settings  q=quit</Text>
     </Box>
   )
 }

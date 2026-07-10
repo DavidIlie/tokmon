@@ -50,9 +50,12 @@ async function readAuthFile(home: string): Promise<CodexAuth | null> {
   try {
     const raw = await readFile(join(home, 'auth.json'), 'utf-8')
     const auth = JSON.parse(raw)
-    const accessToken = auth?.tokens?.access_token
+    const accessToken = typeof auth?.tokens?.access_token === 'string' ? auth.tokens.access_token.trim() : ''
     if (!accessToken) return null
-    return { accessToken, accountId: auth?.tokens?.account_id, ...codexIdentity(auth?.tokens?.id_token) }
+    const accountId = typeof auth?.tokens?.account_id === 'string' && auth.tokens.account_id.trim()
+      ? auth.tokens.account_id.trim()
+      : undefined
+    return { accessToken, accountId, ...codexIdentity(auth?.tokens?.id_token) }
   } catch {
     return null
   }
@@ -63,9 +66,12 @@ async function readKeychainAuth(): Promise<CodexAuth | null> {
     const raw = await readMacKeychainRaw('Codex Auth')
     if (!raw) return null
     const auth = JSON.parse(raw)
-    const accessToken = auth?.tokens?.access_token
+    const accessToken = typeof auth?.tokens?.access_token === 'string' ? auth.tokens.access_token.trim() : ''
     if (!accessToken) return null
-    return { accessToken, accountId: auth?.tokens?.account_id, ...codexIdentity(auth?.tokens?.id_token) }
+    const accountId = typeof auth?.tokens?.account_id === 'string' && auth.tokens.account_id.trim()
+      ? auth.tokens.account_id.trim()
+      : undefined
+    return { accessToken, accountId, ...codexIdentity(auth?.tokens?.id_token) }
   } catch {
     return null
   }
@@ -229,20 +235,36 @@ async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {
 
 const SNAPSHOT_CANDIDATES = 8
 const SNAPSHOT_STALE_MS = 24 * 3_600_000
+const MAX_SNAPSHOT_SCAN_DIRS = 512
+const MAX_SNAPSHOT_SCAN_FILES = 4096
+const MAX_SNAPSHOT_TAIL_BYTES = 8 * 1024 * 1024
 
 async function newestRolloutFiles(homeDir?: string): Promise<{ path: string; mtime: number }[]> {
   const all: { path: string; mtime: number }[] = []
   for (const home of codexHomes(homeDir)) {
-    const dir = join(home, 'sessions')
-    let listing: string[]
-    try { listing = await readdir(dir, { recursive: true }) } catch { continue }
-    for (const f of listing) {
-      if (!f.endsWith('.jsonl') || !f.includes('rollout-')) continue
-      const path = join(dir, f)
-      try {
-        const s = await fsStat(path)
-        all.push({ path, mtime: s.mtimeMs })
-      } catch {}
+    const stack = [join(home, 'sessions')]
+    let visitedDirs = 0
+    let visitedFiles = 0
+    while (stack.length > 0 && visitedDirs < MAX_SNAPSHOT_SCAN_DIRS && visitedFiles < MAX_SNAPSHOT_SCAN_FILES) {
+      const dir = stack.pop()!
+      let entries
+      try { entries = await readdir(dir, { withFileTypes: true }) } catch { continue }
+      entries.sort((a, b) => a.name.localeCompare(b.name))
+      visitedDirs++
+      for (const entry of entries) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          stack.push(path)
+          continue
+        }
+        visitedFiles++
+        if (!entry.isFile() || !entry.name.endsWith('.jsonl') || !entry.name.includes('rollout-')) continue
+        try {
+          const s = await fsStat(path)
+          all.push({ path, mtime: s.mtimeMs })
+        } catch {}
+        if (visitedFiles >= MAX_SNAPSHOT_SCAN_FILES) break
+      }
     }
   }
   return all.sort((a, b) => b.mtime - a.mtime).slice(0, SNAPSHOT_CANDIDATES)
@@ -251,7 +273,8 @@ async function newestRolloutFiles(homeDir?: string): Promise<{ path: string; mti
 async function lastRateLimits(path: string): Promise<any | null> {
   let last: any = null
   try {
-    const input = createReadStream(path)
+    const size = (await fsStat(path)).size
+    const input = createReadStream(path, { start: Math.max(0, size - MAX_SNAPSHOT_TAIL_BYTES) })
     input.on('error', () => {})
     const rl = createInterface({ input, crlfDelay: Infinity })
     for await (const line of rl) {

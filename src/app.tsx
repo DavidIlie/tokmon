@@ -2,14 +2,11 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Box, Text, useInput, useApp } from 'ink'
 import { useMouse } from '@zenobius/ink-mouse'
 import {
-  loadConfig, saveConfigSync,
-  DEFAULTS, normalizeConfig, getTrackedAccountRows,
+  DEFAULTS, getTrackedAccountRows,
   type Config,
 } from './config'
-import { reconcileDaemonConfig } from './config-sync'
 import { buildAccounts, accountsByProvider } from './accounts'
 import { PROVIDERS, PROVIDER_ORDER, detectProviders, type Account, type ProviderId } from './providers'
-import type { TableData } from './types'
 import { resolveTimezone } from './tz'
 import { glyphs } from './glyphs'
 import * as fmt from './format'
@@ -28,13 +25,14 @@ import { ResizingView } from './ui/resizing'
 import { AccountStrip } from './ui/account-strip'
 import { Footer } from './ui/footer'
 import { TinyFallback } from './ui/tiny-fallback'
+import { RefreshStatusLine } from './ui/refresh-status'
 import { useDaemon } from './client/use-daemon'
 import { toStatsMap, pickTable } from './client/snapshot-adapter'
 import {
   TABS, VIEWS, SORTS,
   type Slot,
-  acctKey, clampCaret, spliceInsert, applyStartup,
-  fetchScopeTable, sortLabel, sortRows, filterTokenRows,
+  acctKey, clampCaret, spliceInsert,
+  sortLabel, sortRows, filterTokenRows,
   tableModelOptions, cycleTableModel, filterRowsByModel,
 } from './app.logic'
 import { openUrl, IS_TTY } from './ui/terminal'
@@ -43,8 +41,9 @@ import { useTerminalSize } from './ui/hooks/use-terminal-size'
 import { usePaste } from './ui/hooks/use-paste'
 import { useLoader } from './ui/hooks/use-loader'
 import { useDegradedPolling } from './ui/hooks/use-degraded-polling'
+import { useRefreshAll } from './ui/hooks/use-refresh-all'
+import { useConfigState } from './ui/hooks/use-config-state'
 import { useAccountForm } from './ui/hooks/use-account-form'
-import { withTimeout } from './async'
 
 export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsToken = null, mode = 'degraded' }: {
   interval?: number
@@ -57,10 +56,13 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const degraded = !connected
   const daemon = useDaemon(connected ? baseUrl : null, connected ? wsToken : null)
 
-  const [config, setConfig] = useState<Config | null>(() => initialConfig ? applyStartup(initialConfig, cliInterval) : null)
+  const { config, configSaveError, updateConfig } = useConfigState({
+    initialConfig,
+    cliInterval,
+    connected,
+    daemon,
+  })
   const [detected, setDetected] = useState<ProviderId[]>([])
-  const [tableLocal, setTable] = useState<TableData | null>(null)
-  const [tableLoading, setTableLoading] = useState(false)
   const [tab, setTab] = useState(0)
   const [view, setView] = useState(0)
   const [cursor, setCursor] = useState(0)
@@ -106,12 +108,22 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const tabRef = useRef(0)
   tabRef.current = tab
   const dashPageCountRef = useRef(1)
-  const pendingLocalConfigRef = useRef<Config | null>(null)
   const tzValueRef = useRef('')
   const tzCaretRef = useRef(0)
   const searchValueRef = useRef('')
   const searchCaretRef = useRef(0)
   const accountsKey = useMemo(() => accounts.map(acctKey).join('|'), [accounts])
+
+  const allGroups = useMemo(() => accountsByProvider(accounts), [accounts])
+  const tableProvs = useMemo(
+    () => allGroups.map(g => g.provider).filter(pid => PROVIDERS[pid].hasUsage),
+    [allGroups],
+  )
+  const effTableProvider = (tableProvider && tableProvs.includes(tableProvider)) ? tableProvider : (tableProvs[0] ?? null)
+  const tableAccounts = useMemo(
+    () => effTableProvider ? accounts.filter(a => a.providerId === effTableProvider) : [],
+    [accounts, effTableProvider],
+  )
 
   const needsOnboarding = configReady && !cfg.onboarded
   const newProviders = configReady && cfg.onboarded
@@ -119,11 +131,38 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     : []
   const showPicker = needsOnboarding || newProviders.length > 0
 
-  const { statsLocal, peakLocal, updatedLocal, error } = useDegradedPolling({
-    degraded, configReady, showPicker, accountsKey, accountsRef, interval, billingMs, tz,
+  const {
+    statsLocal,
+    peakLocal,
+    updatedLocal,
+    tableLocal,
+    tableLoading,
+    refreshAll: refreshAllDegraded,
+  } = useDegradedPolling({
+    degraded,
+    configReady,
+    showPicker,
+    accountsKey,
+    accountsRef,
+    interval,
+    billingMs,
+    tz,
+    activeTableProvider: effTableProvider,
+    tableVisible: tab === 1,
   })
 
   const snapshot = daemon.snapshot
+  const daemonRefreshRef = useRef(daemon.refresh)
+  const degradedRefreshRef = useRef(refreshAllDegraded)
+  daemonRefreshRef.current = daemon.refresh
+  degradedRefreshRef.current = refreshAllDegraded
+  const requestDaemonRefresh = useCallback(() => daemonRefreshRef.current('all'), [])
+  const requestDegradedRefresh = useCallback(() => degradedRefreshRef.current(), [])
+  const { status: refreshStatus, refreshAll } = useRefreshAll({
+    connected,
+    requestDaemonRefresh,
+    requestDegradedRefresh,
+  })
   const stats = useMemo(
     () => connected ? toStatsMap(snapshot, accounts) : statsLocal,
     [connected, snapshot, accounts, statsLocal],
@@ -168,14 +207,9 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     () => focusId === null ? accounts : accounts.filter(a => a.id === focusId),
     [accounts, focusId],
   )
-  const allGroups = useMemo(() => accountsByProvider(accounts), [accounts])
   const groups = useMemo(
     () => focusId === null ? allGroups : accountsByProvider(visibleAccounts),
     [allGroups, visibleAccounts, focusId],
-  )
-  const tableProvs = useMemo(
-    () => allGroups.map(g => g.provider).filter(pid => PROVIDERS[pid].hasUsage),
-    [allGroups],
   )
 
   const TOO_SMALL = cols < 40 || rows < 12
@@ -218,11 +252,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   }
   const { handlePasteData, isPasteInput } = usePaste(insertText)
 
-  const effTableProvider = (tableProvider && tableProvs.includes(tableProvider)) ? tableProvider : (tableProvs[0] ?? null)
-  const tableAccounts = useMemo(
-    () => effTableProvider ? accounts.filter(a => a.providerId === effTableProvider) : [],
-    [accounts, effTableProvider],
-  )
   const SORTS_FOR = SORTS
 
   const tableAccountIds = useMemo(() => tableAccounts.map(a => a.id), [tableAccounts])
@@ -243,8 +272,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   }))
 
   useEffect(() => {
-    if (!initialConfig) loadConfig().then(c => setConfig(applyStartup(c, cliInterval)))
-    detectProviders().then(setDetected)
+    void detectProviders().then(setDetected)
   }, [])
 
   const tableKey = useMemo(
@@ -252,34 +280,10 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     [effTableProvider, tableAccounts, tz],
   )
   useEffect(() => {
-    setTable(null)
     setCursor(0); setExpanded(-1)
     setTableModel(null)
     setSort(1)
-    setTableLoading(false)
   }, [tableKey])
-
-  useEffect(() => {
-    if (!degraded || tab !== 1 || !effTableProvider) return
-    let active = true
-    let timer: ReturnType<typeof setTimeout>
-    const fetchOnce = async () => {
-      try {
-        const r = await withTimeout(fetchScopeTable(tableAccounts, tz))
-        if (active) setTable(r)
-      } catch {}
-    }
-    const run = async () => {
-      setTableLoading(true)
-      await fetchOnce()
-      if (!active) return
-      setTableLoading(false)
-      const loop = async () => { await fetchOnce(); if (active) timer = setTimeout(loop, Math.max(interval, 10000)) }
-      timer = setTimeout(loop, Math.max(interval, 10000))
-    }
-    run()
-    return () => { active = false; clearTimeout(timer) }
-  }, [degraded, tab, tableKey, interval])
 
   useEffect(() => { setCursor(0); setExpanded(-1) }, [search, tableModel])
 
@@ -313,34 +317,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     return () => { mouse.events.off('scroll', onScroll); process.stdin.off('data', onData) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  const updateConfig = useCallback((fn: (prev: Config) => Config): void => {
-    setConfig(prev => {
-      const next = normalizeConfig(fn(prev ?? DEFAULTS) as unknown as Record<string, unknown>)
-      pendingLocalConfigRef.current = connected ? next : null
-      saveConfigSync(next)
-      if (connected) {
-        void daemon.setConfig(next)
-          .then(saved => {
-            if (pendingLocalConfigRef.current && reconcileDaemonConfig(next, saved, pendingLocalConfigRef.current).pendingLocalConfig === null) {
-              pendingLocalConfigRef.current = null
-            }
-          })
-          .catch(() => {})
-      }
-      return next
-    })
-  }, [connected, daemon])
-
-  const daemonConfig = daemon.config
-  useEffect(() => {
-    if (!connected || !daemonConfig) return
-    setConfig(prev => {
-      const reconciled = reconcileDaemonConfig(prev, daemonConfig, pendingLocalConfigRef.current)
-      pendingLocalConfigRef.current = reconciled.pendingLocalConfig
-      return reconciled.config
-    })
-  }, [connected, daemonConfig])
 
   function toggleOnboard(i: number): void {
     if (i < 0 || i >= pickerProviders.length) return
@@ -408,14 +384,14 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       if (baseUrl) openUrl(baseUrl)
       return
     }
-    if (webRef.current) { openUrl(webRef.current.url); return }
+    if (webRef.current) { openUrl(webRef.current.browserUrl); return }
     if (webStartingRef.current) return
     webStartingRef.current = true
     try {
       const { startWebServer } = await import('./web/server')
       const ctrl = await startWebServer({ config: cfg, log: false })
       webRef.current = ctrl
-      openUrl(ctrl.url)
+      openUrl(ctrl.browserUrl)
     } catch {} finally {
       webStartingRef.current = false
     }
@@ -453,17 +429,39 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   )
 
   useInput((input, key) => handleKey(input, key, {
-    showPicker, pickerProviders, onboardCursor, setOnboardCursor, toggleOnboard, confirmOnboarding, exit,
-    showSettings, accountForm, setAccountForm, commitAccountForm, cycleFormField, cycleProvider, cycleColor,
-    isPrintable, insertText, tzEdit, setTzEdit, setTzError, updateConfig, setTzCaret, tzValueRef, tzCaretRef,
-    tab, searchMode, setSearchMode, search, setSearch, setSearchCaret, searchValueRef, searchCaretRef,
-    showLoader, configReady, toggleWeb, settingsCursor, settingsTab, setSettingsTab, setShowSettings, cfg, trackedAccountRows, moveAccount,
-    setSettingsCursor, toggleProvider, openEditAccount, openConfigureAccount, deleteAccount, openAddAccount, cycleAccount, setTab,
-    resetView, slots, dashPaginated, dashPageCount, setDashPage, cycleTableProvider, setExpanded, setSort,
-    SORTS_FOR, cycleTableModel: cycleTableModelFilter, setView, cursor, rowCountRef, rows, setCursor, clampRow,
+    onboarding: {
+      show: showPicker, providers: pickerProviders, cursor: onboardCursor,
+      setCursor: setOnboardCursor, toggle: toggleOnboard, confirm: confirmOnboarding,
+    },
+    accountEditor: {
+      form: accountForm, setForm: setAccountForm, commit: commitAccountForm,
+      cycleField: cycleFormField, cycleProvider, cycleColor,
+    },
+    timezoneEditor: {
+      value: tzEdit, setValue: setTzEdit, setError: setTzError,
+      setCaret: setTzCaret, valueRef: tzValueRef, caretRef: tzCaretRef,
+    },
+    textInput: { isPrintable, insert: insertText },
+    settings: {
+      show: showSettings, setShow: setShowSettings, cursor: settingsCursor,
+      tab: settingsTab, setTab: setSettingsTab, setCursor: setSettingsCursor,
+      trackedAccounts: trackedAccountRows, moveAccount, toggleProvider,
+      openEditAccount, openConfigureAccount, deleteAccount, openAddAccount,
+    },
+    table: {
+      tab, searchMode, setSearchMode, search, setSearch, setSearchCaret,
+      searchValueRef, searchCaretRef, cycleProvider: cycleTableProvider,
+      setExpanded, setSort, sorts: SORTS_FOR,
+      cycleModel: cycleTableModelFilter,
+      setView, cursor, rowCountRef, rows, setCursor, clampRow,
+    },
+    dashboard: { paginated: dashPaginated, pageCount: dashPageCount, setPage: setDashPage },
+    global: {
+      exit, showLoader, configReady, toggleWeb, config: cfg, updateConfig,
+      cycleAccount, setTab, resetView, slots, refreshAll,
+    },
   }), { isActive: IS_TTY })
 
-  if (error) return <Box padding={1}><Text color="red">{error}</Text></Box>
   if (!config) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
 
   if (resizing) return <ResizingView cols={live.cols} rows={live.rows} />
@@ -491,7 +489,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   }
 
   if (TOO_SMALL && !showSettings) {
-    return <TinyFallback groups={groups} stats={stats} rows={rows} cols={cols} />
+    return <TinyFallback groups={groups} stats={stats} rows={rows} cols={cols} refreshStatus={refreshStatus} />
   }
 
   rowCountRef.current = tokenRows.length
@@ -516,6 +514,12 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       {connected && daemon.conn !== 'live' && (
         <Text dimColor>{glyphs().warn} reconnecting {glyphs().middot} showing last known data</Text>
       )}
+
+      {configSaveError && (
+        <Text color="red">{glyphs().warn} {configSaveError}</Text>
+      )}
+
+      <RefreshStatusLine status={refreshStatus} />
 
       {showSettings ? (
         <SettingsView

@@ -6,6 +6,7 @@ import { SummaryCard } from './summary-card'
 import { ModelShareCard } from './model-share-card'
 import { CaptureFrame } from './capture-frame'
 import type { ShareSource } from './share-provider'
+import { useDialogTrap } from './settings/use-dialog-trap'
 
 type Theme = 'dark' | 'light'
 type WmPos = 'footer' | 'corner'
@@ -30,22 +31,9 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
   const [framed, setFramed] = useState(true)
   const [dims, setDims] = useState({ w: isSummary ? 1040 : isModel ? 900 : 700, h: isCard ? 540 : 360 })
   const [done, setDone] = useState<'dl' | 'copy' | 'fail' | null>(null)
+  const [busy, setBusy] = useState<'download' | 'copy' | null>(null)
 
-  useEffect(() => {
-    const prev = document.activeElement as HTMLElement | null
-    dlRef.current?.focus()
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { onClose(); return }
-      if (e.key !== 'Tab' || !panelRef.current) return
-      const f = panelRef.current.querySelectorAll<HTMLElement>('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])')
-      if (f.length === 0) return
-      const first = f[0], last = f[f.length - 1]
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('keydown', onKey); prev?.focus?.() }
-  }, [onClose])
+  useDialogTrap(panelRef, { active: true, onEscape: onClose, initialFocusRef: dlRef })
 
   useEffect(() => () => { if (doneTimer.current) clearTimeout(doneTimer.current) }, [])
   const flash = (kind: 'dl' | 'copy' | 'fail') => {
@@ -57,13 +45,15 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
   useEffect(() => {
     const el = exportRef.current
     if (!el) return
-    const measure = () => setDims({ w: el.offsetWidth || dims.w, h: el.offsetHeight || dims.h })
+    const measure = () => setDims(current => ({
+      w: el.offsetWidth || current.w,
+      h: el.offsetHeight || current.h,
+    }))
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     const t = setTimeout(measure, 80)
     return () => { ro.disconnect(); clearTimeout(t) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, framed, wmPos, theme, glow])
 
   const k = Math.min(STAGE_W / dims.w, STAGE_H / dims.h, 1)
@@ -71,25 +61,44 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
   const filename = shareFilename(isSummary ? 'summary' : isModel ? `model-${modelSlug(source.model)}` : source.captureName)
 
   const onDownload = async () => {
-    if (!exportRef.current) return
-    await downloadNode(exportRef.current, filename, opts)
-    flash('dl')
+    if (!exportRef.current || busy) return
+    setBusy('download')
+    try {
+      await downloadNode(exportRef.current, filename, opts)
+      flash('dl')
+    } catch {
+      flash('fail')
+    } finally {
+      setBusy(null)
+    }
   }
   const onCopy = async () => {
-    if (!exportRef.current) return
-    flash((await copyNode(exportRef.current, opts)) ? 'copy' : 'fail')
+    if (!exportRef.current || busy) return
+    setBusy('copy')
+    try {
+      flash((await copyNode(exportRef.current, opts)) ? 'copy' : 'fail')
+    } finally {
+      setBusy(null)
+    }
   }
+
+  const status = busy === 'download' ? 'Creating PNG…'
+    : busy === 'copy' ? 'Copying image…'
+    : done === 'dl' ? 'PNG downloaded.'
+    : done === 'copy' ? 'Image copied.'
+    : done === 'fail' ? 'Image export failed. Try downloading instead.'
+    : ''
 
   return (
     <div
-      className="dialog-fade fixed inset-0 z-[60] flex items-center justify-center bg-bg-0/70 p-4 backdrop-blur-sm"
+      className="dialog-fade fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto overscroll-contain bg-bg-0/70 p-4 backdrop-blur-sm"
       onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}
       role="dialog"
       aria-modal="true"
-      aria-label="Share"
+      aria-labelledby="share-title"
     >
-      <div ref={panelRef} className="dialog-pop relative flex max-h-[88vh] w-full max-w-[720px] flex-col overflow-hidden rounded-md border border-line-2 bg-bg-1">
-        <div className="pointer-events-none absolute left-3 top-2 font-display text-[11px] uppercase tracking-wider text-fg-dim">share</div>
+      <div ref={panelRef} tabIndex={-1} className="dialog-pop relative flex max-h-[88vh] w-full max-w-[720px] flex-col overflow-hidden rounded-md border border-line-2 bg-bg-1 focus:outline-none">
+        <h2 id="share-title" className="pointer-events-none absolute left-3 top-2 font-display text-[11px] uppercase tracking-wider text-fg-dim">share</h2>
         <button type="button" onClick={onClose} aria-label="Close" className="absolute right-2 top-2 z-10 rounded p-1 text-fg-faint transition hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
           <X className="size-4" />
         </button>
@@ -133,11 +142,12 @@ export function ShareSheet({ source, onClose }: { source: ShareSource; onClose: 
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-3">
-          <button type="button" onClick={onCopy} className="flex items-center gap-1.5 rounded border border-line bg-bg-1 px-3 py-1.5 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
-            {done === 'copy' ? <Check className="size-3.5 text-positive" /> : done === 'fail' ? <X className="size-3.5 text-warning" /> : <Copy className="size-3.5" />} {done === 'copy' ? 'copied' : done === 'fail' ? 'copy failed' : 'copy'}
+          <span className="mr-auto text-xs text-fg-faint" role="status" aria-live="polite">{status}</span>
+          <button type="button" onClick={onCopy} disabled={busy !== null} className="flex items-center gap-1.5 rounded border border-line bg-bg-1 px-3 py-1.5 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg active:scale-[0.97] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
+            {done === 'copy' ? <Check className="size-3.5 text-positive" /> : done === 'fail' ? <X className="size-3.5 text-warning" /> : <Copy className="size-3.5" />} {busy === 'copy' ? 'copying…' : done === 'copy' ? 'copied' : done === 'fail' ? 'copy failed' : 'copy'}
           </button>
-          <button type="button" ref={dlRef} onClick={onDownload} className="flex items-center gap-1.5 rounded border border-accent/60 bg-bg-1 px-3 py-1.5 text-xs text-accent transition hover:bg-bg-2 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
-            {done === 'dl' ? <Check className="size-3.5 text-positive" /> : <Download className="size-3.5" />} download PNG
+          <button type="button" ref={dlRef} onClick={onDownload} disabled={busy !== null} className="flex items-center gap-1.5 rounded border border-accent/60 bg-bg-1 px-3 py-1.5 text-xs text-accent transition hover:bg-bg-2 active:scale-[0.97] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
+            {done === 'dl' ? <Check className="size-3.5 text-positive" /> : <Download className="size-3.5" />} {busy === 'download' ? 'downloading…' : 'download PNG'}
           </button>
         </div>
       </div>

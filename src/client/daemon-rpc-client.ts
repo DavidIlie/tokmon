@@ -3,12 +3,14 @@ import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
 import type { RpcClientError } from 'effect/unstable/rpc/RpcClientError'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import * as Socket from 'effect/unstable/socket/Socket'
-import type { Config, WebSnapshot } from '../web/contract'
+import type { WebSnapshot } from '../web/contract'
 import {
   TOKMON_WS_METHODS,
   TOKMON_WS_PATH,
   TokmonRpcGroup,
   type FsListing,
+  type ConfigState,
+  type ConfigUpdateRequest,
   type RefreshScope,
 } from '../rpc/contract'
 
@@ -23,12 +25,12 @@ export interface DaemonRpcClientOptions {
 }
 
 export interface DaemonRpcClient {
-  getConfig(): Promise<Config>
-  setConfig(config: Config): Promise<Config>
+  getConfig(): Promise<ConfigState>
+  setConfig(update: ConfigUpdateRequest): Promise<ConfigState>
   refresh(scope?: RefreshScope): Promise<void>
   browseFs(path: string): Promise<FsListing>
   subscribeSnapshot(onSnapshot: (snapshot: WebSnapshot) => void): () => void
-  subscribeConfig(onConfig: (config: Config) => void): () => void
+  subscribeConfig(onConfig: (config: ConfigState) => void): () => void
   close(): Promise<void>
 }
 
@@ -56,6 +58,10 @@ function toWsUrl(baseUrl: string, token: string | undefined): string {
   if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
     throw new Error(`unsupported daemon RPC protocol: ${url.protocol}`)
   }
+  // Browser bootstrap capabilities belong in the fragment and must never be
+  // copied into the WebSocket URL. Node clients receive their token explicitly.
+  url.hash = ''
+  url.searchParams.delete('tokmonToken')
   url.pathname = TOKMON_WS_PATH
   if (token) url.searchParams.set('wsToken', token)
   return url.toString()
@@ -258,10 +264,10 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
 
   return {
     getConfig: () =>
-      run((client) => client[TOKMON_WS_METHODS.getConfig]({})),
+      run((client) => client[TOKMON_WS_METHODS.getConfig]({})).then((state) => state as unknown as ConfigState),
 
     setConfig: (config) =>
-      run((client) => client[TOKMON_WS_METHODS.setConfig](config)),
+      run((client) => client[TOKMON_WS_METHODS.setConfig](config as never)).then((state) => state as unknown as ConfigState),
 
     refresh: (scope = 'all') =>
       run((client) => client[TOKMON_WS_METHODS.refresh]({ scope })),
@@ -270,10 +276,10 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       run((client) => client[TOKMON_WS_METHODS.browseFs]({ path })),
 
     subscribeSnapshot: (onSnapshot) =>
-      subscribe((client) => client[TOKMON_WS_METHODS.snapshot]({}), onSnapshot),
+      subscribe((client) => client[TOKMON_WS_METHODS.snapshot]({}).pipe(Stream.map(value => value as unknown as WebSnapshot)), onSnapshot),
 
     subscribeConfig: (onConfig) =>
-      subscribe((client) => client[TOKMON_WS_METHODS.config]({}), onConfig),
+      subscribe((client) => client[TOKMON_WS_METHODS.config]({}).pipe(Stream.map(value => value as unknown as ConfigState)), onConfig),
 
     async close() {
       if (closed) return

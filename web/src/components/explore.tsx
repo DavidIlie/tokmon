@@ -71,6 +71,7 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
     <Panel title={`explore · ${granLabel}`} captureName="explore">
       <div className="max-h-[calc(100vh-240px)] overflow-auto">
         <table className="w-full border-collapse text-xs">
+          <caption className="sr-only">Usage by {granLabel}, including tokens, cache savings, calls, and cost</caption>
           <colgroup>
             <col /><col style={{ width: '34%' }} /><col style={{ width: '13%' }} />
             <col style={{ width: '12%' }} /><col style={{ width: '11%' }} /><col style={{ width: '13%' }} />
@@ -81,9 +82,9 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
                 const meta = h.column.columnDef.meta as Meta | undefined
                 const sorted = h.column.getIsSorted()
                 return (
-                  <th key={h.id} className={`py-2 pr-3 font-normal ${meta?.align === 'right' ? 'text-right' : 'text-left'}${meta?.hiddenSm ? ' hidden sm:table-cell' : ''}`}>
+                  <th key={h.id} scope="col" aria-sort={sorted ? (sorted === 'asc' ? 'ascending' : 'descending') : undefined} className={`py-2 pr-3 font-normal ${meta?.align === 'right' ? 'text-right' : 'text-left'}${meta?.hiddenSm ? ' hidden sm:table-cell' : ''}`}>
                     {h.column.getCanSort() ? (
-                      <button type="button" onClick={h.column.getToggleSortingHandler()} className={`flex w-full items-center gap-1 text-fg-faint transition hover:text-fg ${meta?.align === 'right' ? 'justify-end' : ''}`}>
+                      <button type="button" onClick={h.column.getToggleSortingHandler()} className={`flex w-full items-center gap-1 rounded text-fg-faint transition hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${meta?.align === 'right' ? 'justify-end' : ''}`}>
                         {flexRender(h.column.columnDef.header, h.getContext())}
                         {sorted && <span className="text-accent">{sorted === 'asc' ? '▲' : '▼'}</span>}
                       </button>
@@ -99,7 +100,7 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
             )}
             {visible.map(row => (
               <Fragment key={row.id}>
-                <tr className="cursor-pointer border-b border-line-faint transition hover:bg-bg-2/60" onClick={() => row.toggleExpanded()}>
+                <tr className="usage-row border-b border-line-faint transition hover:bg-bg-2/60">
                   {row.getVisibleCells().map(cell => (
                     <td key={cell.id} className={`${cellPad(cell.column.columnDef.meta as Meta | undefined)}${cell.column.id === 'label' ? ' whitespace-nowrap' : ''} tnum`}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -109,9 +110,9 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
                 {row.getIsExpanded() && row.original.breakdown.map(m => {
                   const tok = sumTokens(m)
                   return (
-                    <tr key={m.name} className="border-b border-line-faint bg-bg-0/40 text-[11px]">
+                    <tr key={m.name} className="usage-row border-b border-line-faint bg-bg-0/40 text-[11px]">
                       <td className="py-1.5 pr-3 pl-5 text-fg-dim" colSpan={2}>
-                        <span className="mr-1.5 inline-block size-1.5 rounded-full align-middle" style={{ background: modelColor(m.name) }} />
+                        <span className="mr-1.5 inline-block size-1.5 rounded-full align-middle" style={{ background: modelColor(m.name) }} aria-hidden />
                         {shortModel(m.name)}
                       </td>
                       <td className="tnum py-1.5 pr-3 text-right text-fg-dim">{tok > 0 ? fmtTokens(tok) : dash}</td>

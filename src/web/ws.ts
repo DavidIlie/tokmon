@@ -1,5 +1,6 @@
 import type { IncomingMessage, Server } from 'node:http'
 import type { Duplex } from 'node:stream'
+import { timingSafeEqual } from 'node:crypto'
 import * as NodeHttpServer from '@effect/platform-node/NodeHttpServer'
 import { NodeWS } from '@effect/platform-node/NodeSocket'
 import { Effect, Exit, Layer, Queue, Scope, Stream } from 'effect'
@@ -7,7 +8,12 @@ import { RpcSerialization, RpcServer } from 'effect/unstable/rpc'
 import type { Config } from '../config'
 import { loadConfig } from '../config'
 import { TOKMON_WS_METHODS, TOKMON_WS_PATH, TokmonRpcGroup } from '../rpc/contract'
-import { applyConfigUpdate } from './config-control'
+import {
+  applyConfigUpdate,
+  ConfigConflictError,
+  ConfigPersistenceError,
+  toConfigState,
+} from './config-control'
 import type { DataEngine } from './data-engine'
 import { listHomeDirectory } from './fs'
 
@@ -17,47 +23,17 @@ interface MountWsRpcDeps {
   readonly wsToken: string
 }
 
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1'])
-
 function header(req: IncomingMessage, name: string): string | undefined {
   const value = req.headers[name.toLowerCase()]
   return Array.isArray(value) ? value[0] : value
 }
 
-function hostOnly(value: string | undefined): string | null {
-  if (!value) return null
-  let host = value.trim().toLowerCase()
-  if (!host) return null
-  if (host.startsWith('[')) {
-    const end = host.indexOf(']')
-    return end === -1 ? host.slice(1) : host.slice(1, end)
-  }
-  return host.split(':')[0] ?? null
-}
-
 function isLoopbackHost(value: string | undefined): boolean {
-  const host = hostOnly(value)
-  return host !== null && LOOPBACK_HOSTS.has(host)
-}
-
-function originHost(origin: string | undefined): string | null {
-  if (!origin || origin === 'null') return null
-  try {
-    return new URL(origin).host
-  } catch {
-    return null
-  }
-}
-
-function isLoopbackOrigin(origin: string | undefined): boolean {
-  if (!origin || origin === 'null') return true
-  return isLoopbackHost(originHost(origin) ?? undefined)
-}
-
-function isSameOrigin(req: IncomingMessage): boolean {
-  const origin = originHost(header(req, 'origin'))
-  if (!origin) return false
-  return origin.toLowerCase() === (header(req, 'host') ?? '').toLowerCase()
+  if (!value) return false
+  const host = value.trim().toLowerCase()
+  if (!host) return false
+  return /^(?:127\.0\.0\.1|localhost)(?::\d{1,5})?$/.test(host)
+    || /^\[::1\](?::\d{1,5})?$/.test(host)
 }
 
 function isWsPath(req: IncomingMessage): boolean {
@@ -76,15 +52,18 @@ function wsToken(req: IncomingMessage): string | null {
   }
 }
 
+function tokenMatches(actual: string | null, expected: string): boolean {
+  if (!actual) return false
+  const left = Buffer.from(actual)
+  const right = Buffer.from(expected)
+  return left.length === right.length && timingSafeEqual(left, right)
+}
+
 function isAuthorized(req: IncomingMessage, token: string): boolean {
-  const host = header(req, 'host')
-  const origin = header(req, 'origin')
-  if (!isLoopbackHost(host) || !isLoopbackOrigin(origin)) return false
-
-  // X-Tokmon-Client header is NOT trusted for auth — any local process could spoof it bypassing the token.
-  if (wsToken(req) === token) return true
-
-  return isSameOrigin(req)
+  if (!isLoopbackHost(header(req, 'host'))) return false
+  // Origin and same-origin headers are caller-controlled metadata. Every RPC,
+  // including reads, requires the owner token carried in the WS URL.
+  return tokenMatches(wsToken(req), token)
 }
 
 function rejectUpgrade(socket: Duplex, status = 403, message = 'Forbidden'): void {
@@ -118,6 +97,16 @@ function configStream(engine: DataEngine) {
     }), { bufferSize: 16, strategy: 'sliding' })
 }
 
+function toConfigUpdateFailure(error: unknown) {
+  if (error instanceof ConfigConflictError) {
+    return { kind: 'conflict' as const, state: error.state }
+  }
+  if (error instanceof ConfigPersistenceError) {
+    return { kind: 'persistence' as const, message: error.message }
+  }
+  return { kind: 'persistence' as const, message: error instanceof Error ? error.message : 'config update failed' }
+}
+
 export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<() => Promise<void>> {
   const scope = await Effect.runPromise(Scope.make())
   const wss = new NodeWS.WebSocketServer({ noServer: true })
@@ -125,15 +114,18 @@ export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<
   const handlersLayer = TokmonRpcGroup.toLayer(
     TokmonRpcGroup.of({
       [TOKMON_WS_METHODS.getConfig]: () =>
-        Effect.tryPromise(() => Promise.resolve(deps.state.config ?? loadConfig())),
+        Effect.tryPromise(() => Promise.resolve(deps.state.config ?? loadConfig()).then(toConfigState)),
       [TOKMON_WS_METHODS.setConfig]: (config) =>
-        Effect.tryPromise(() => applyConfigUpdate(deps.engine, deps.state, config)),
+        Effect.tryPromise({
+          try: () => applyConfigUpdate(deps.engine, deps.state, config as never),
+          catch: toConfigUpdateFailure,
+        }),
       [TOKMON_WS_METHODS.refresh]: ({ scope }) =>
-        Effect.sync(() => { deps.engine.refresh(scope) }),
+        Effect.promise(() => deps.engine.refresh(scope)),
       [TOKMON_WS_METHODS.browseFs]: ({ path }) =>
         Effect.tryPromise(() => listHomeDirectory(path)),
       [TOKMON_WS_METHODS.snapshot]: () => snapshotStream(deps.engine),
-      [TOKMON_WS_METHODS.config]: () => configStream(deps.engine),
+      [TOKMON_WS_METHODS.config]: () => configStream(deps.engine).pipe(Stream.map(toConfigState)),
     }),
   )
 
@@ -157,6 +149,12 @@ export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<
   )
 
   const onUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    if (!isLoopbackHost(header(req, 'host'))) {
+      rejectUpgrade(socket)
+      return
+    }
+    // Vite owns its HMR upgrade path in dev mode. Only intercept tokmon RPC;
+    // rejecting every other upgrade here destroys valid HMR connections.
     if (!isWsPath(req)) return
     if (!isAuthorized(req, deps.wsToken)) {
       rejectUpgrade(socket)
@@ -165,11 +163,23 @@ export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<
     upgradeHandler(req, socket, head)
   }
 
-  server.on('upgrade', onUpgrade)
+  server.prependListener('upgrade', onUpgrade)
 
   return async () => {
     server.off('upgrade', onUpgrade)
-    await new Promise<void>((resolve) => { wss.close(() => resolve()) })
-    await Effect.runPromise(Scope.close(scope, Exit.void))
+    // ws.close waits for peers to close voluntarily; a browser with a suspended tab
+    // must not keep the daemon alive forever.
+    for (const client of wss.clients) {
+      try { client.terminate() } catch {}
+    }
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 750)
+      timer.unref?.()
+      try { wss.close(() => { clearTimeout(timer); resolve() }) } catch { clearTimeout(timer); resolve() }
+    })
+    await Promise.race([
+      Effect.runPromise(Scope.close(scope, Exit.void)).catch(() => {}),
+      new Promise<void>(resolve => { const timer = setTimeout(resolve, 750); timer.unref?.() }),
+    ])
   }
 }

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { getTrackedAccountRows, PROVIDER_META, type Account, type Config, type TrackedAccountRow, type WebAccount, type WebSnapshot } from '@shared'
 import { namedColorHex } from '../../lib/colors'
 import { ChevronUp, ChevronDown, Pencil, Plus, Trash } from '../icons'
@@ -19,13 +20,18 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
   onAdd: () => void
 }) {
   const accounts = getTrackedAccountRows(draft, undefined, snapshot?.accounts ?? undefined)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
 
   const setActive = (id: string | null) => patch(c => ({ ...c, activeAccountId: id }))
-  const remove = (id: string) => patch(c => ({
-    ...c,
-    accounts: c.accounts.filter(a => a.id !== id),
-    activeAccountId: c.activeAccountId === id ? null : c.activeAccountId,
-  }))
+  const requestRemove = (id: string) => {
+    if (pendingDeleteId !== id) { setPendingDeleteId(id); return }
+    patch(c => ({
+      ...c,
+      accounts: c.accounts.filter(a => a.id !== id),
+      activeAccountId: c.activeAccountId === id ? null : c.activeAccountId,
+    }))
+    setPendingDeleteId(null)
+  }
   const move = (idx: number, dir: -1 | 1) => patch(c => {
     const next = [...c.accounts]
     const target = idx + dir
@@ -84,12 +90,13 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                   <div className="truncate font-mono text-[11px] text-fg-faint">{acc.homeDir}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5">
+                  {pendingDeleteId === acc.id ? <span className="mr-1 text-[10px] text-warning" role="alert">Delete?</span> : null}
                   {configured && acc.explicitIndex !== undefined ? (
                     <>
                       <IconBtn label="Move up" disabled={acc.explicitIndex === 0} onClick={() => move(acc.explicitIndex!, -1)}><ChevronUp className="size-3.5" /></IconBtn>
                       <IconBtn label="Move down" disabled={acc.explicitIndex === draft.accounts.length - 1} onClick={() => move(acc.explicitIndex!, 1)}><ChevronDown className="size-3.5" /></IconBtn>
                       <IconBtn label="Edit account" onClick={() => onEdit(acc)}><Pencil className="size-3.5" /></IconBtn>
-                      <IconBtn label="Delete account" danger onClick={() => remove(acc.id)}><Trash className="size-3.5" /></IconBtn>
+                      <IconBtn label={pendingDeleteId === acc.id ? 'Confirm delete account' : 'Delete account'} danger onClick={() => requestRemove(acc.id)}><Trash className="size-3.5" /></IconBtn>
                     </>
                   ) : (
                     <IconBtn label="Configure account" onClick={() => onConfigure(acc)}><Pencil className="size-3.5" /></IconBtn>

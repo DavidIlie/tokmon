@@ -6,10 +6,18 @@ import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
 import { envDir } from '../../config'
 import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince, walkFiles } from '../usage-core'
+import { timestampMs } from '../_shared/time'
 
 const PRICING: Record<string, { in: number; cr: number; out: number }> = {
+  'gpt-5.6-terra': { in: 2.5e-6, cr: 0.25e-6, out: 15e-6 },
+  'gpt-5.6-luna': { in: 1e-6, cr: 0.1e-6, out: 6e-6 },
+  'gpt-5.6-sol': { in: 5e-6, cr: 0.5e-6, out: 30e-6 },
+  'gpt-5.5-pro': { in: 30e-6, cr: 30e-6, out: 180e-6 },
   'gpt-5.5-codex': { in: 5e-6, cr: 0.5e-6, out: 30e-6 },
   'gpt-5.5': { in: 5e-6, cr: 0.5e-6, out: 30e-6 },
+  'gpt-5.4-mini': { in: 0.75e-6, cr: 0.075e-6, out: 4.5e-6 },
+  'gpt-5.4-nano': { in: 0.2e-6, cr: 0.02e-6, out: 1.25e-6 },
+  'gpt-5.4-pro': { in: 30e-6, cr: 30e-6, out: 180e-6 },
   'gpt-5.4-codex': { in: 2.5e-6, cr: 0.25e-6, out: 15e-6 },
   'gpt-5.4': { in: 2.5e-6, cr: 0.25e-6, out: 15e-6 },
   'gpt-5.3-codex': { in: 1.75e-6, cr: 0.175e-6, out: 14e-6 },
@@ -63,7 +71,7 @@ function modelKeyMatches(model: string, key: string): boolean {
   return false
 }
 
-function priceFor(model: string) {
+export function codexPriceFor(model: string) {
   const m = model.toLowerCase().trim()
   for (const key of PRICE_KEYS) {
     if (modelKeyMatches(m, key)) return PRICING[key]
@@ -141,16 +149,9 @@ function eventSig(last: CodexDelta | undefined, total: CodexDelta | undefined): 
   return `${f(last)}|${f(total)}`
 }
 
-function timestampMs(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value > 10_000_000_000 ? value : value * 1000
-  if (typeof value === 'string' && value.trim()) return new Date(value.trim()).getTime()
-  return NaN
-}
-
 function timestampSecond(value: unknown): string | null {
-  if (typeof value === 'string' && value.trim().length >= 19) return value.trim().slice(0, 19)
   const ts = timestampMs(value)
-  return Number.isFinite(ts) ? new Date(ts).toISOString().slice(0, 19) : null
+  return ts === null ? null : new Date(ts).toISOString().slice(0, 19)
 }
 
 async function hasThreadSpawn(path: string): Promise<boolean> {
@@ -202,7 +203,7 @@ function findUsage(obj: any): CodexDelta | undefined {
     ?? normalizeUsage(obj)
 }
 
-function findTimestamp(obj: any): number {
+function findTimestamp(obj: any): number | null {
   return timestampMs(obj?.timestamp ?? obj?.payload?.timestamp ?? obj?.created_at ?? obj?.createdAt ?? obj?.time)
 }
 
@@ -241,13 +242,13 @@ async function parseFile(path: string): Promise<Entry[]> {
           const m = extractModel(obj)
           if (typeof m === 'string' && m.trim()) model = m
           const ts = findTimestamp(obj)
-          if (!Number.isFinite(ts)) continue
+          if (ts === null) continue
           const inputTotal = safeNum(usage.input_tokens)
           const cached = Math.min(safeNum(usage.cached_input_tokens), inputTotal)
           const inputTokens = inputTotal - cached
           const output = safeNum(usage.output_tokens)
           if (inputTokens + output + cached === 0) continue
-          const p = priceFor(model)
+          const p = codexPriceFor(model)
           entries.push({
             id: `${ts}|${model}|${inputTotal}|${cached}|${output}|${safeNum(usage.reasoning_output_tokens)}|${safeNum(usage.total_tokens)}`,
             ts,
@@ -288,7 +289,7 @@ async function parseFile(path: string): Promise<Entry[]> {
         if (!d) continue
 
         const ts = timestampMs(tsValue)
-        if (!Number.isFinite(ts)) continue
+        if (ts === null) continue
 
         const m = extractModel(obj)
         if (typeof m === 'string' && m.trim()) model = m
@@ -298,7 +299,7 @@ async function parseFile(path: string): Promise<Entry[]> {
         const output = safeNum(d.output_tokens)
         if (inputTokens + output + cached === 0) continue
 
-        const p = priceFor(model)
+        const p = codexPriceFor(model)
         entries.push({
           id: `${ts}|${model}|${inputTotal}|${cached}|${output}|${safeNum(d.reasoning_output_tokens)}|${safeNum(d.total_tokens)}`,
           ts,

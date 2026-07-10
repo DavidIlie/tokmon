@@ -1,4 +1,5 @@
 import { toBlob, toPng } from 'html-to-image'
+export { shareFilename } from './share-filename'
 
 const BG = '#0a0a0a'
 
@@ -49,10 +50,4 @@ export async function copyNode(node: HTMLElement, opts?: CaptureOpts): Promise<b
   } catch {
     return false
   }
-}
-
-export function shareFilename(prefix: string): string {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `tokmon-${prefix}-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.png`
 }

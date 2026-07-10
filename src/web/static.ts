@@ -45,7 +45,12 @@ function resolveStaticPath(webRoot: string, urlPath: string): string | null {
 }
 
 export function send(res: ServerResponse, status: number, type: string, body: string | Buffer): void {
-  res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' })
+  res.writeHead(status, {
+    'Content-Type': type,
+    'Cache-Control': 'no-store',
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+  })
   res.end(body)
 }
 
@@ -65,6 +70,8 @@ export function serveStatic(webRoot: string, urlPath: string, res: ServerRespons
       res.writeHead(200, {
         'Content-Type': type,
         'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+        'Referrer-Policy': 'no-referrer',
+        'X-Content-Type-Options': 'nosniff',
       })
       createReadStream(filePath).pipe(res)
     } else {
@@ -74,7 +81,12 @@ export function serveStatic(webRoot: string, urlPath: string, res: ServerRespons
     if (extname(path)) { send(res, 404, 'text/plain', 'not found'); return }
     const indexPath = join(webRoot, 'index.html')
     if (!existsSync(indexPath)) { send(res, 404, 'text/plain', 'not found'); return }
-    res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache' })
+    res.writeHead(200, {
+      'Content-Type': MIME['.html'],
+      'Cache-Control': 'no-cache',
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+    })
     createReadStream(indexPath).on('error', () => { try { res.destroy() } catch {} }).pipe(res)
   })
 }

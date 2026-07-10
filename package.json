@@ -1,6 +1,6 @@
 {
   "name": "tokmon",
-  "version": "0.22.7",
+  "version": "0.23.0",
   "description": "Terminal + web dashboard for Claude Code, Codex, Cursor, Grok, opencode, pi, Copilot, Gemini & more — usage, limits, and costs",
   "type": "module",
   "bin": {
@@ -13,6 +13,9 @@
     "build": "pnpm run build:cli && pnpm run build:web",
     "build:cli": "tsup",
     "build:web": "pnpm --prefix web run build",
+    "typecheck": "tsc --noEmit",
+    "test": "node test/run-tests.mjs",
+    "check": "pnpm run typecheck && pnpm run test && pnpm --prefix web run check",
     "web:install": "pnpm --prefix web install",
     "dev": "tsx src/cli.tsx",
     "dev:web": "pnpm --prefix web run dev"
@@ -22,14 +25,14 @@
     "@zenobius/ink-mouse": "^1.0.3",
     "effect": "4.0.0-beta.59",
     "ink": "^5.0.0",
-    "react": "^18.0.0"
+    "react": "18.3.1"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
-    "@types/react": "^18.0.0",
+    "@types/react": "18.3.31",
     "tsup": "^8.0.0",
     "tsx": "^4.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "5.9.3"
   },
   "engines": {
     "node": ">=20"
@@ -53,5 +56,6 @@
     "dashboard",
     "cli"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "packageManager": "pnpm@10.34.4"
 }

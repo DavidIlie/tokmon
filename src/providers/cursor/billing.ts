@@ -8,7 +8,7 @@ import type { Account, BillingResult, Metric } from '../types'
 import { identityFields } from '../_shared/identity'
 import { decodeBase64UrlJson } from '../_shared/jwt'
 import { dollars, finite, numberValue, percentMetric } from '../_shared/metric'
-import { msToIso } from '../_shared/time'
+import { msToIso, timestampMs } from '../_shared/time'
 import { cursorActivity } from './activity'
 import { cursorModelSpend } from './composer'
 import { runSqlite, sqliteStatusMessage, type SqliteStatus } from './sqlite'
@@ -213,9 +213,9 @@ async function cursorBillingCore(account: Account): Promise<BillingResult> {
   const pu = usage.planUsage ?? {}
   const metrics: Metric[] = []
   const rawEnd = usage.billingCycleEnd
-  const endMs = numberValue(rawEnd) ?? NaN
-  const iso = msToIso(endMs)
-  const resets = iso && endMs > 0 ? resetIn(iso) : null
+  const endMs = timestampMs(rawEnd)
+  const iso = endMs === null ? null : msToIso(endMs)
+  const resets = iso ? resetIn(iso) : null
 
   const limit = numberValue(pu.limit)
   const planUsedCents = numberValue(pu.totalSpend)

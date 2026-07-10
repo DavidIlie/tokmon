@@ -128,6 +128,7 @@ The dashboard is a prebuilt static bundle shipped in the package — no build st
 | scroll / `↑` `↓` / `[` `]` | (Dashboard) move between pages when paginated |
 | `a` `A` | Cycle account focus forward / back |
 | `0`–`9` | Jump to an account focus slot |
+| `r` / `R` | Refresh all usage, billing, peak, and history data |
 | `p` | Toggle privacy mode (configurable in settings) |
 | `w` `W` | Toggle the web dashboard (opens in your browser) |
 | `s` | Open settings |

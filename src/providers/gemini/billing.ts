@@ -67,13 +67,25 @@ export async function detectGemini(homeDir?: string): Promise<boolean> {
 }
 
 async function hasGeminiChatSessions(homeDir?: string): Promise<boolean> {
-  let listing: string[]
-  try {
-    listing = await readdir(geminiTmpDir(homeDir), { recursive: true })
-  } catch {
-    return false
+  const root = geminiTmpDir(homeDir)
+  const stack = [root]
+  let visitedDirs = 0
+  const maxDirs = 512
+  while (stack.length > 0 && visitedDirs < maxDirs) {
+    const dir = stack.pop()!
+    let entries
+    try { entries = await readdir(dir, { withFileTypes: true }) } catch { continue }
+    visitedDirs++
+    for (const entry of entries) {
+      const child = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        stack.push(child)
+      } else if (entry.isFile() && /(^|[\\/])chats[\\/]session-.*\.jsonl$/.test(child)) {
+        return true
+      }
+    }
   }
-  return listing.some(path => /(^|[\\/])chats[\\/]session-.*\.jsonl$/.test(path))
+  return false
 }
 
 interface GeminiCreds {

@@ -2,7 +2,7 @@ import { readJson } from '../../http'
 import type { Account, BillingResult, Metric } from '../types'
 import { identityFields } from '../_shared/identity'
 import { finite, numberValue, percentMetric } from '../_shared/metric'
-import { msToIso } from '../_shared/time'
+import { msToIso, timestampMs } from '../_shared/time'
 import { grokClientVersion, readGrokAuth, readGrokIdentity } from './identity'
 
 const DEFAULT_BILLING_BASE = 'https://grok.com'
@@ -16,15 +16,6 @@ function billingBase(): string {
 
 function num(v: unknown): number | undefined {
   return numberValue(v) ?? (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
-}
-
-function periodMs(v: unknown): number | null {
-  if (typeof v === 'number' && Number.isFinite(v)) return v > 10_000_000_000 ? v : v * 1000
-  if (typeof v === 'string' && v.trim()) {
-    const t = Date.parse(v)
-    return Number.isFinite(t) ? t : null
-  }
-  return null
 }
 
 export async function grokBilling(account: Account): Promise<BillingResult> {
@@ -79,7 +70,7 @@ export async function grokBilling(account: Account): Promise<BillingResult> {
     const metrics: Metric[] = []
     const usagePct = num(cfg.creditUsagePercent)
     if (usagePct !== undefined) {
-      const end = periodMs(cfg.billingPeriodEnd ?? cfg.currentPeriod?.end ?? cfg.currentPeriod?.billingPeriodEnd)
+      const end = timestampMs(cfg.billingPeriodEnd ?? cfg.currentPeriod?.end ?? cfg.currentPeriod?.billingPeriodEnd)
       metrics.push(percentMetric('Credits', finite(usagePct), end ? msToIso(end) : null, true))
     }
 

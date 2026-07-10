@@ -5,6 +5,7 @@ import { dayKey } from '../../tz'
 import { cursorUsageTable } from './composer'
 import type { DashboardData, TableData, TableRow } from '../../types'
 import { monthKey, weekKey } from '../../tz'
+import { timestampMs } from '../_shared/time'
 
 const EVENTS_URL = 'https://api2.cursor.sh/aiserver.v1.DashboardService/GetFilteredUsageEvents'
 const WINDOW_DAYS = 90
@@ -52,12 +53,8 @@ async function fetchPage(token: string, startMs: number, endMs: number, page: nu
 function eventToEntry(e: UsageEvent): Entry | null {
   if (e.kind && SKIP_KINDS.has(e.kind)) return null
   const rawTs = e.timestamp
-  const ts = typeof rawTs === 'number'
-    ? rawTs
-    : typeof rawTs === 'string' && rawTs.trim()
-      ? (/^\d+$/.test(rawTs.trim()) ? Number(rawTs) : Date.parse(rawTs))
-      : NaN
-  if (!Number.isFinite(ts) || ts <= 0) return null
+  const ts = timestampMs(rawTs)
+  if (ts === null) return null
   const tu = e.tokenUsage ?? {}
   const input = safeNum(tu.inputTokens)
   const output = safeNum(tu.outputTokens)
@@ -136,6 +133,18 @@ interface LocalDayEntry {
   entry: Entry
 }
 
+export function localDayTimestamp(label: string, tz: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(label)) return null
+  const [year, month, date] = label.split('-').map(Number)
+  const base = Date.UTC(year, month - 1, date)
+  if (!Number.isFinite(base)) return null
+  for (let hour = -14; hour <= 26; hour += 2) {
+    const ts = base + hour * 3_600_000
+    if (dayKey(ts, tz) === label) return ts
+  }
+  return null
+}
+
 /** Local composer spend as Entry[] (cost + request count; no token breakdown). */
 async function fetchLocalEntries(tz: string, homeDir?: string): Promise<LocalDayEntry[]> {
   const table = await cursorUsageTable(tz, homeDir)
@@ -144,9 +153,8 @@ async function fetchLocalEntries(tz: string, homeDir?: string): Promise<LocalDay
   // instead of round-tripping through Date.UTC noon (breaks UTC+12…+14).
   const out: LocalDayEntry[] = []
   for (const day of table.daily) {
-    const [y, mo, d] = day.label.split('-').map(Number)
-    const ts = Date.UTC(y, mo - 1, d, 12)
-    if (!Number.isFinite(ts)) continue
+    const ts = localDayTimestamp(day.label, tz)
+    if (ts === null) continue
     for (const b of day.breakdown) {
       out.push({
         day: day.label,
@@ -208,9 +216,8 @@ const overlayDaily = (lo: TableRow[], hi: TableRow[]): TableRow[] => {
 function reBucket(daily: TableRow[], tz: string, keyOf: (ts: number, tz: string) => string): TableRow[] {
   const out = new Map<string, TableRow>()
   for (const day of daily) {
-    const [y, mo, d] = day.label.split('-').map(Number)
-    const ts = Date.UTC(y, mo - 1, d, 12)
-    if (!Number.isFinite(ts)) continue
+    const ts = localDayTimestamp(day.label, tz)
+    if (ts === null) continue
     const label = keyOf(ts, tz)
     let row = out.get(label)
     if (!row) {

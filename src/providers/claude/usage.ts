@@ -6,12 +6,17 @@ import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
 import { envDir } from '../../config'
 import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince, walkFiles } from '../usage-core'
+import { timestampMs } from '../_shared/time'
 
 const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> = {
+  'claude-opus-4-8': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
+  'claude-opus-4-7': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
+  'claude-opus-4-6': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
+  'claude-opus-4-5': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
   'claude-opus-4-1': { i: 15e-6, o: 75e-6, cc: 18.75e-6, cr: 1.5e-6 },
   'claude-opus-4-0': { i: 15e-6, o: 75e-6, cc: 18.75e-6, cr: 1.5e-6 },
   'claude-opus-4-20250514': { i: 15e-6, o: 75e-6, cc: 18.75e-6, cr: 1.5e-6 },
-  'claude-opus-4': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
+  'claude-opus-4': { i: 15e-6, o: 75e-6, cc: 18.75e-6, cr: 1.5e-6 },
   'claude-3-opus': { i: 15e-6, o: 75e-6, cc: 18.75e-6, cr: 1.5e-6 },
   'claude-sonnet-4': { i: 3e-6, o: 15e-6, cc: 3.75e-6, cr: 3e-7 },
   // intro pricing through 2026-08-31 — revert to 3/15/3.75/0.3 after.
@@ -21,6 +26,8 @@ const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> 
 }
 const PRICE_KEYS = Object.keys(PRICING).sort((a, b) => b.length - a.length)
 const ZERO_PRICE = { i: 0, o: 0, cc: 0, cr: 0 }
+const SONNET_5_STANDARD_FROM = Date.UTC(2026, 8, 1)
+const SONNET_5_STANDARD_PRICE = { i: 3e-6, o: 15e-6, cc: 3.75e-6, cr: 3e-7 }
 
 export function claudeConfigDirs(homeDir?: string): string[] {
   if (homeDir) {
@@ -57,12 +64,15 @@ export async function detectClaude(homeDir?: string): Promise<boolean> {
   return false
 }
 
-function priceFor(model: string) {
+export function claudePriceFor(model: string, timestamp = Date.now()) {
   const m = model.toLowerCase().trim()
   for (const key of PRICE_KEYS) {
     if (!m.startsWith(key)) continue
     const rest = m.slice(key.length)
-    if (rest === '' || rest[0] === '-') return PRICING[key]
+    if (rest === '' || rest[0] === '-') {
+      if (key === 'claude-sonnet-5' && timestamp >= SONNET_5_STANDARD_FROM) return SONNET_5_STANDARD_PRICE
+      return PRICING[key]
+    }
   }
   return ZERO_PRICE
 }
@@ -78,8 +88,8 @@ interface UsageTokens {
   } | null
 }
 
-function costOf(model: string, u: UsageTokens, cacheCreate5m: number, cacheCreate1h: number, hasCacheCreateSplit: boolean): number {
-  const p = priceFor(model)
+function costOf(model: string, u: UsageTokens, cacheCreate5m: number, cacheCreate1h: number, hasCacheCreateSplit: boolean, timestamp: number): number {
+  const p = claudePriceFor(model, timestamp)
   const cacheCreateCost = hasCacheCreateSplit
     ? cacheCreate5m * p.cc + cacheCreate1h * (2 * p.i)
     : safeNum(u.cache_creation_input_tokens) * p.cc
@@ -91,12 +101,6 @@ function costOf(model: string, u: UsageTokens, cacheCreate5m: number, cacheCreat
 
 function shortModel(model: string): string {
   return model.replace('claude-', '').replace(/-\d{8}$/, '')
-}
-
-function timestampMs(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value > 10_000_000_000 ? value : value * 1000
-  if (typeof value === 'string' && value.trim()) return new Date(value.trim()).getTime()
-  return NaN
 }
 
 async function parseFile(path: string): Promise<Entry[]> {
@@ -111,7 +115,7 @@ async function parseFile(path: string): Promise<Entry[]> {
         const obj = JSON.parse(line.charCodeAt(0) === 0xFEFF ? line.slice(1) : line)
         if (obj.type !== 'assistant' || !obj.message?.usage) continue
         const ts = timestampMs(obj.timestamp)
-        if (!Number.isFinite(ts)) continue
+        if (ts === null) continue
         const u = obj.message.usage
         const model = typeof obj.message.model === 'string' && obj.message.model ? obj.message.model : 'unknown'
         const inputTokens = safeNum(u.input_tokens)
@@ -123,13 +127,13 @@ async function parseFile(path: string): Promise<Entry[]> {
         const cacheCreate = hasCacheCreateSplit ? cacheCreate5m + cacheCreate1h : safeNum(u.cache_creation_input_tokens)
         const cacheRead = safeNum(u.cache_read_input_tokens)
         if (inputTokens + output + cacheCreate + cacheRead === 0) continue
-        const p = priceFor(model)
+        const p = claudePriceFor(model, ts)
         const msgId = obj.message?.id
         entries.push({
           id: msgId ? msgId + (obj.requestId ? ':' + obj.requestId : '') : undefined,
           ts,
           model: shortModel(model),
-          cost: costOf(model, u, cacheCreate5m, cacheCreate1h, hasCacheCreateSplit),
+          cost: costOf(model, u, cacheCreate5m, cacheCreate1h, hasCacheCreateSplit, ts),
           input: inputTokens,
           output,
           cacheCreate,

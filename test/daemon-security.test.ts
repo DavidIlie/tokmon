@@ -1,0 +1,281 @@
+import assert from 'node:assert/strict'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { createServer, request } from 'node:http'
+import { connect, type Socket } from 'node:net'
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+import { attachOrSpawn } from '../src/client/daemon-handle.ts'
+import { createDaemonRpcClient } from '../src/client/daemon-rpc-client.ts'
+import { TOKMON_PROTOCOL_VERSION } from '../src/rpc/contract.ts'
+import {
+  acquireLock,
+  lockfilePath,
+  probeHealth,
+  readLock,
+  reclaimAbandonedLock,
+  reclaimDeadLock,
+  unlinkLock,
+  writeLock,
+  type DaemonLock,
+} from '../src/web/lockfile.ts'
+
+const token = 'a'.repeat(43)
+
+function lock(ownerId = 'b'.repeat(43)): DaemonLock {
+  return {
+    pid: process.pid,
+    port: 4317,
+    url: 'http://127.0.0.1:4317',
+    wsToken: token,
+    version: 'test',
+    startedAt: Date.now(),
+    ownerId,
+    state: 'starting',
+  }
+}
+
+test('daemon lock is exclusive, owner-only, and mode 0600', async () => {
+  const cachePath = await mkdtemp(join(tmpdir(), 'tokmon-daemon-test-'))
+  try {
+    await chmod(cachePath, 0o755)
+    const first = lock()
+    assert.equal(acquireLock(first, { cachePath }), true)
+    assert.equal(acquireLock(lock('c'.repeat(43)), { cachePath }), false)
+    assert.equal((await stat(cachePath)).mode & 0o777, 0o700)
+    assert.equal((await stat(lockfilePath({ cachePath }))).mode & 0o777, 0o600)
+    assert.equal(unlinkLock('not-the-owner', { cachePath }), false)
+    assert.equal(readLock({ cachePath })?.state, 'starting')
+    assert.equal(writeLock({ ...first, state: 'ready' }, { cachePath }), true)
+    assert.equal(readLock({ cachePath })?.state, 'ready')
+    assert.equal(unlinkLock(first.ownerId, { cachePath }), true)
+  } finally {
+    await rm(cachePath, { recursive: true, force: true })
+  }
+})
+
+test('only a proven-dead stale owner can be reclaimed', async () => {
+  const cachePath = await mkdtemp(join(tmpdir(), 'tokmon-daemon-test-'))
+  try {
+    const stale = { ...lock(), pid: 2_147_483_647, ownerId: 'd'.repeat(43) }
+    assert.equal(acquireLock(stale, { cachePath }), true)
+    assert.equal(reclaimDeadLock({ cachePath }), true)
+    assert.equal(readLock({ cachePath }), null)
+  } finally {
+    await rm(cachePath, { recursive: true, force: true })
+  }
+})
+
+test('abandoned legacy and ownerless partial locks are reclaimed without racing live owners', async () => {
+  const cachePath = await mkdtemp(join(tmpdir(), 'tokmon-daemon-test-'))
+  const path = lockfilePath({ cachePath })
+  try {
+    await writeFile(path, JSON.stringify({ pid: process.pid }), { mode: 0o600 })
+    assert.equal(reclaimAbandonedLock({ cachePath }, 0), false)
+
+    await writeFile(path, JSON.stringify({ pid: 2_147_483_647 }), { mode: 0o600 })
+    assert.equal(reclaimAbandonedLock({ cachePath }), true)
+
+    await writeFile(path, '{', { mode: 0o600 })
+    assert.equal(reclaimAbandonedLock({ cachePath }, 10_000), false)
+    const old = new Date(Date.now() - 20_000)
+    await utimes(path, old, old)
+    assert.equal(reclaimAbandonedLock({ cachePath }, 10_000), true)
+  } finally {
+    await rm(cachePath, { recursive: true, force: true })
+  }
+})
+
+test('health verification requires the owner token on an ephemeral loopback port', async (t) => {
+  const server = createServer((req, res) => {
+    const owner = req.headers['x-tokmon-token'] === token
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ ok: true, owner, version: 'test' }))
+  })
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', () => resolve())
+    })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') {
+      t.skip('the sandbox disallows binding ephemeral loopback ports')
+      return
+    }
+    throw error
+  }
+  const address = server.address()
+  assert.ok(address && typeof address === 'object')
+  const url = `http://127.0.0.1:${address.port}`
+  try {
+    assert.equal(await probeHealth(url, token, 'test'), true)
+    assert.equal(await probeHealth(url, 'wrong-token', 'test'), false)
+    assert.equal(await probeHealth(url, token, 'wrong-version'), false)
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
+})
+
+interface Handshake {
+  ready: 1
+  url: string
+  port: number
+  wsToken: string
+  version: string
+}
+
+function daemonProcess(root: string): { child: ChildProcess; handshake: Promise<Handshake> } {
+  const child = spawn(process.execPath, [
+    '--import', 'tsx', join(process.cwd(), 'src/cli.tsx'), '__daemon', '--port', '0', '--no-open',
+  ], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      HOME: join(root, 'home'),
+      TOKMON_DAEMON_CACHE_DIR: join(root, 'cache'),
+      TOKMON_WEB_MODE: 'prod',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  const handshake = new Promise<Handshake>((resolve, reject) => {
+    let stdout = ''
+    let stderr = ''
+    const timer = setTimeout(() => reject(new Error(`daemon handshake timed out: ${stderr}`)), 15_000)
+    child.stderr?.setEncoding('utf8')
+    child.stderr?.on('data', chunk => { stderr += chunk })
+    child.stdout?.setEncoding('utf8')
+    child.stdout?.on('data', chunk => {
+      stdout += chunk
+      const newline = stdout.indexOf('\n')
+      if (newline === -1) return
+      try {
+        const parsed = JSON.parse(stdout.slice(0, newline)) as Handshake
+        assert.equal(parsed.ready, 1)
+        clearTimeout(timer)
+        resolve(parsed)
+      } catch (error) {
+        clearTimeout(timer)
+        reject(error)
+      }
+    })
+    child.once('error', error => { clearTimeout(timer); reject(error) })
+    child.once('exit', code => {
+      if (stdout.indexOf('\n') === -1) {
+        clearTimeout(timer)
+        reject(new Error(`daemon exited before handshake (${code}): ${stderr}`))
+      }
+    })
+  })
+  return { child, handshake }
+}
+
+function waitForExit(child: ChildProcess, timeoutMs = 5_000): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('daemon did not exit')), timeoutMs)
+    child.once('exit', () => { clearTimeout(timer); resolve() })
+  })
+}
+
+function openWebSocket(port: number, token?: string, host = `127.0.0.1`): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, '127.0.0.1')
+    let response = ''
+    const timer = setTimeout(() => { socket.destroy(); reject(new Error('websocket upgrade timed out')) }, 3_000)
+    socket.once('error', error => { clearTimeout(timer); reject(error) })
+    socket.on('data', chunk => {
+      response += chunk.toString('utf8')
+      if (!response.includes('\r\n\r\n')) return
+      clearTimeout(timer)
+      if (response.startsWith('HTTP/1.1 101')) resolve(socket)
+      else { socket.destroy(); reject(new Error(response.split('\r\n')[0])) }
+    })
+    socket.once('connect', () => {
+      const query = token ? `?wsToken=${encodeURIComponent(token)}` : ''
+      socket.write([
+        `GET /ws${query} HTTP/1.1`,
+        `Host: ${host}:${port}`,
+        'Connection: Upgrade',
+        'Upgrade: websocket',
+        'Sec-WebSocket-Version: 13',
+        'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+        '', '',
+      ].join('\r\n'))
+    })
+  })
+}
+
+function requestStatus(url: string, headers: Record<string, string> = {}): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = request(url, { headers }, res => {
+      res.resume()
+      res.once('end', () => resolve(res.statusCode ?? 0))
+    })
+    req.once('error', reject)
+    req.end()
+  })
+}
+
+test('real daemon is singleton, host/token guarded, durable, and bounded on websocket shutdown', { timeout: 30_000 }, async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('signal-based lifecycle assertion is POSIX-specific')
+    return
+  }
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-daemon-integration-'))
+  await mkdir(join(root, 'home'), { recursive: true })
+  const contenders: ReturnType<typeof daemonProcess>[] = []
+  let owner: ChildProcess | null = null
+  let socket: Socket | null = null
+  try {
+    contenders.push(...Array.from({ length: 4 }, () => daemonProcess(root)))
+    const handshakes = await Promise.all(contenders.map(contender => contender.handshake))
+    const ready = handshakes[0]
+    assert.ok(handshakes.every(item => item.port === ready.port && item.wsToken === ready.wsToken))
+    const lock = JSON.parse(await readFile(join(root, 'cache', 'daemon.json'), 'utf8')) as DaemonLock
+    owner = contenders.find(contender => contender.child.pid === lock.pid)?.child ?? null
+    assert.ok(owner)
+    assert.equal(lock.pid, owner.pid)
+    assert.equal(lock.port, ready.port)
+    await Promise.all(contenders.filter(contender => contender.child !== owner).map(contender => waitForExit(contender.child)))
+
+    const handle = await attachOrSpawn({ cachePath: join(root, 'cache') })
+    assert.equal(handle.kind, 'spawned')
+    assert.match(handle.baseUrl ?? '', /^http:\/\/127\.0\.0\.1:\d+#tokmonToken=/)
+    assert.equal(handle.baseUrl?.includes('?tokmonToken='), false)
+    const rpc = createDaemonRpcClient(handle.baseUrl!, { transport: 'node', wsToken: handle.wsToken! })
+    try {
+      assert.equal((await rpc.getConfig()).protocol.version, TOKMON_PROTOCOL_VERSION)
+    } finally {
+      await rpc.close()
+    }
+
+    assert.equal((await fetch(`${ready.url}/healthz`)).status, 200)
+    assert.equal(await requestStatus(`${ready.url}/healthz`, { host: 'evil.example' }), 403)
+    assert.equal(await requestStatus(`${ready.url}/api/data`, { host: 'evil.example' }), 403)
+    assert.equal((await fetch(`${ready.url}/api/config`)).status, 403)
+    assert.equal((await fetch(`${ready.url}/api/config`, { headers: { 'x-tokmon-token': ready.wsToken } })).status, 200)
+    assert.equal((await fetch(`${ready.url}/api/config`, {
+      headers: { 'x-tokmon-token': ready.wsToken, origin: 'https://evil.example' },
+    })).status, 403)
+
+    await assert.rejects(openWebSocket(ready.port), /HTTP\/1\.1 403/)
+    await assert.rejects(openWebSocket(ready.port, ready.wsToken, 'evil.example'), /HTTP\/1\.1 403/)
+    socket = await openWebSocket(ready.port, ready.wsToken)
+
+    const started = Date.now()
+    owner.kill('SIGTERM')
+    await waitForExit(owner, 3_000)
+    assert.ok(Date.now() - started < 3_000)
+    assert.equal(await readFile(join(root, 'cache', 'daemon.json'), 'utf8').then(() => true, () => false), false)
+  } finally {
+    socket?.destroy()
+    await Promise.all(contenders.map(async ({ child }) => {
+      if (child.exitCode !== null || child.signalCode !== null) return
+      child.kill('SIGKILL')
+      await waitForExit(child).catch(() => {})
+    }))
+    await rm(root, { recursive: true, force: true })
+  }
+})

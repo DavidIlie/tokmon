@@ -41,7 +41,7 @@ export function grokHomes(homeDir?: string): string[] {
 }
 
 export function grokAuthPaths(homeDir?: string): string[] {
-  const explicit = process.env.GROK_AUTH_PATH
+  const explicit = homeDir ? undefined : process.env.GROK_AUTH_PATH
   const paths = grokHomes(homeDir).map(h => join(h, 'auth.json'))
   return explicit ? [explicit, ...paths] : paths
 }
@@ -52,7 +52,7 @@ function isAuthEntry(v: unknown): v is GrokAuthEntry {
 
 /** Prefer grok.com OIDC session over API-key scopes (billing needs session auth). */
 export function readGrokAuth(homeDir?: string): GrokAuthEntry | null {
-  const inline = process.env.GROK_AUTH?.trim()
+  const inline = homeDir ? undefined : process.env.GROK_AUTH?.trim()
   if (inline) {
     try {
       const parsed = JSON.parse(inline)
@@ -94,9 +94,11 @@ function pickAuthEntry(parsed: unknown): GrokAuthEntry | null {
   // Skip API-key scopes for billing preference; still usable as last resort for identity.
   const session = entries.filter(e => e.key !== 'xai::api_key' && !e.key.startsWith('xai::'))
   const pool = session.length ? session : entries
-  return pool.sort((a, b) =>
-    Date.parse(b.entry.create_time ?? b.entry.expires_at ?? '') - Date.parse(a.entry.create_time ?? a.entry.expires_at ?? ''),
-  )[0]?.entry ?? null
+  const authTime = (entry: GrokAuthEntry): number => {
+    const value = Date.parse(entry.create_time ?? entry.expires_at ?? '')
+    return Number.isFinite(value) ? value : 0
+  }
+  return pool.sort((a, b) => authTime(b.entry) - authTime(a.entry))[0]?.entry ?? null
 }
 
 export function readGrokIdentity(homeDir?: string): GrokIdentity {

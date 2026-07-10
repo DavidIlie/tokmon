@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { type Config } from '../config'
 import { resolveAccounts, tzFor } from './data'
 import { appVersion, send, sendJson, serveStatic, findWebRoot } from './static'
+import { browserUrl } from './open'
 import { isDevMode, createViteDevServer, MISSING_BUILD_HTML, type ViteDevServerLike } from './vite-dev'
 import { createDataEngine } from './data-engine'
 import type { WebSnapshot } from './contract'
@@ -15,6 +16,7 @@ const DEFAULT_PORT = 4317
 const MAX_PORT_TRIES = 20
 export interface WebServerController {
   url: string
+  browserUrl: string
   port: number
   wsToken: string
   snapshot(): WebSnapshot | null
@@ -26,14 +28,15 @@ export interface StartOptions {
   config: Config
   port?: number
   log?: boolean
+  /** Injected by the daemon so the lock can be published before web resources start. */
+  wsToken?: string
 }
 
 function isLoopbackHostHeader(value: string | undefined): boolean {
   if (!value) return false
-  let host = value.trim().toLowerCase()
-  if (host.startsWith('[')) host = host.slice(1, host.indexOf(']') === -1 ? host.length : host.indexOf(']'))
-  else host = host.split(':')[0]
-  return host === '127.0.0.1' || host === 'localhost' || host === '::1'
+  const host = value.trim().toLowerCase()
+  return /^(?:127\.0\.0\.1|localhost)(?::\d{1,5})?$/.test(host)
+    || /^\[::1\](?::\d{1,5})?$/.test(host)
 }
 
 function isLoopbackOrigin(origin: string | undefined): boolean {
@@ -46,16 +49,34 @@ function isLoopbackOrigin(origin: string | undefined): boolean {
   }
 }
 
-function guardPrivileged(req: IncomingMessage, res: ServerResponse): boolean {
+function header(req: IncomingMessage, name: string): string | undefined {
+  const value = req.headers[name]
+  return Array.isArray(value) ? value[0] : value
+}
+
+function tokenMatches(given: string | undefined, expected: string): boolean {
+  if (!given) return false
+  const actual = Buffer.from(given)
+  const token = Buffer.from(expected)
+  return actual.length === token.length && timingSafeEqual(actual, token)
+}
+
+function guardHost(req: IncomingMessage, res: ServerResponse): boolean {
+  if (isLoopbackHostHeader(header(req, 'host'))) return true
+  sendJson(res, 403, { error: 'forbidden' })
+  return false
+}
+
+function guardPrivileged(req: IncomingMessage, res: ServerResponse, wsToken: string): boolean {
   const header = (n: string) => {
     const v = req.headers[n]
     return Array.isArray(v) ? v[0] : v
   }
-  if (req.headers['x-tokmon-client'] !== '1') {
+  if (!tokenMatches(header('x-tokmon-token'), wsToken)) {
     sendJson(res, 403, { error: 'forbidden' })
     return false
   }
-  if (!isLoopbackHostHeader(header('host')) || !isLoopbackOrigin(header('origin'))) {
+  if (!isLoopbackOrigin(header('origin'))) {
     sendJson(res, 403, { error: 'forbidden' })
     return false
   }
@@ -67,11 +88,17 @@ function createRouter(
   state: { config: Config },
   vite: ViteDevServerLike | null,
   webRoot: string | null,
+  wsToken: string,
+  version: string,
 ): (req: IncomingMessage, res: ServerResponse) => void {
   return (req, res) => {
     const url = req.url || '/'
     const path = url.split('?')[0]
     const method = req.method || 'GET'
+
+    // Check Host before every response, including static and Vite middleware. Binding
+    // to loopback alone does not prevent DNS-rebinding requests from a hostile Host.
+    if (!guardHost(req, res)) return
 
     if (path === '/api/data') {
       engine.touch()
@@ -80,12 +107,18 @@ function createRouter(
     }
 
     if (path === '/healthz') {
-      sendJson(res, 200, { ok: true, ready: engine.snapshot() !== null })
+      sendJson(res, 200, {
+        ok: true,
+        ready: engine.snapshot() !== null,
+        version,
+        // Discovery requires this proof; public health checks retain their useful 200 response.
+        owner: tokenMatches(header(req, 'x-tokmon-token'), wsToken),
+      })
       return
     }
 
     if (path === '/api/config') {
-      if (!guardPrivileged(req, res)) return
+      if (!guardPrivileged(req, res, wsToken)) return
       if (method === 'GET') {
         sendJson(res, 200, state.config)
         return
@@ -114,54 +147,70 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
   const version = appVersion()
   const summaryIntervalMs = summaryIntervalFor(state.config)
   const billingIntervalMs = billingIntervalFor(state.config)
-  const wsToken = randomBytes(32).toString('base64url')
+  const wsToken = opts.wsToken ?? randomBytes(32).toString('base64url')
   const log = (msg: string) => { if (opts.log) process.stdout.write(msg + '\n') }
 
   const resolved = await resolveAccounts(state.config)
 
   const server = createServer()
   let vite: ViteDevServerLike | null = null
-  if (isDevMode()) vite = await createViteDevServer(server, log)
-  const webRoot = vite ? null : findWebRoot()
+  let engine: ReturnType<typeof createDataEngine> | null = null
+  let closeWsRpc: (() => Promise<void>) | null = null
+  try {
+    if (isDevMode()) vite = await createViteDevServer(server, log)
+    const webRoot = vite ? null : findWebRoot()
+    if (!vite && !webRoot) log('  ⚠ no dashboard available — see the page for build/dev instructions')
 
-  if (!vite && !webRoot) log('  ⚠ no dashboard available — see the page for build/dev instructions')
+    engine = createDataEngine({ version, config: state.config, tz, summaryIntervalMs, billingIntervalMs, resolved })
+    server.addListener('request', createRouter(engine, state, vite, webRoot, wsToken, version))
+    closeWsRpc = await mountWsRpc(server, { engine, state, wsToken })
+    const port = await listenWithFallback(server, opts.port ?? DEFAULT_PORT)
+    const serverUrl = `http://${HOST}:${port}`
 
-  const engine = createDataEngine({ version, config: state.config, tz, summaryIntervalMs, billingIntervalMs, resolved })
-  server.addListener('request', createRouter(engine, state, vite, webRoot))
-  const closeWsRpc = await mountWsRpc(server, { engine, state, wsToken })
+    if (vite?.warmupRequest) {
+      try { await Promise.race([vite.warmupRequest('/src/main.tsx'), delay(5000)]) } catch {}
+    }
+    engine.start()
 
-  const port = await listenWithFallback(server, opts.port ?? DEFAULT_PORT)
-  const serverUrl = `http://${HOST}:${port}`
-
-  if (vite?.warmupRequest) {
-    try { await Promise.race([vite.warmupRequest('/src/main.tsx'), delay(5000)]) } catch {}
-  }
-
-  engine.start()
-
-  return {
-    url: serverUrl,
-    port,
-    wsToken,
-    snapshot: engine.snapshot,
-    config: () => state.config,
-    stop: async () => {
-      engine.stop()
-      await closeWsRpc().catch(() => {})
-      const closeHttp = () => new Promise<void>(resolve => {
-        server.close(() => resolve())
+    let stopped = false
+    return {
+      url: serverUrl,
+      browserUrl: browserUrl(serverUrl, wsToken),
+      port,
+      wsToken,
+      snapshot: engine.snapshot,
+      config: () => state.config,
+      stop: async () => {
+        if (stopped) return
+        stopped = true
+        engine?.stop()
+        await closeWsRpc?.().catch(() => {})
         server.closeAllConnections?.()
-      })
-      if (vite) {
-        try { await vite.close() } catch {}
-      }
-      await closeHttp()
-    },
+        await closeServer(server)
+        try { await vite?.close() } catch {}
+      },
+    }
+  } catch (error) {
+    engine?.stop()
+    await closeWsRpc?.().catch(() => {})
+    server.closeAllConnections?.()
+    await closeServer(server)
+    try { await vite?.close() } catch {}
+    throw error
   }
 }
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => { const t = setTimeout(resolve, ms); t.unref?.() })
+}
+
+function closeServer(server: Server, timeoutMs = 1_000): Promise<void> {
+  return new Promise(resolve => {
+    const done = () => resolve()
+    const timer = setTimeout(done, timeoutMs)
+    timer.unref?.()
+    try { server.close(() => { clearTimeout(timer); done() }) } catch { clearTimeout(timer); done() }
+  })
 }
 
 function listenWithFallback(server: Server, startPort: number): Promise<number> {

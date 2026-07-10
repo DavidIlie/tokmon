@@ -1,5 +1,6 @@
 import { access, readdir, readFile, stat as fsStat } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import type { DashboardData, TableData } from '../../types'
@@ -21,6 +22,9 @@ const PRICING: Record<string, { in: number; cr: number; out: number }> = {
 }
 const FALLBACK_PRICE = PRICING['grok-4.5']
 const PRICE_KEYS = Object.keys(PRICING).sort((a, b) => b.length - a.length)
+const MAX_SESSION_GROUPS = 128
+const MAX_SESSIONS_PER_GROUP = 512
+const MAX_MODEL_FINGERPRINT_ENTRIES = MAX_SESSION_GROUPS * MAX_SESSIONS_PER_GROUP * 2
 
 function modelKeyMatches(model: string, key: string): boolean {
   let idx = model.indexOf(key)
@@ -58,12 +62,12 @@ async function loadSessionModels(home: string): Promise<Map<string, string>> {
   const sessionsRoot = join(home, 'sessions')
   let groups: string[]
   try { groups = await readdir(sessionsRoot) } catch { return out }
-  for (const group of groups) {
+  for (const group of groups.sort().reverse().slice(0, MAX_SESSION_GROUPS)) {
     if (group === 'session_search.sqlite' || group.startsWith('.')) continue
     const groupDir = join(sessionsRoot, group)
     let sessions: string[]
     try { sessions = await readdir(groupDir) } catch { continue }
-    for (const sid of sessions) {
+    for (const sid of sessions.sort().reverse().slice(0, MAX_SESSIONS_PER_GROUP)) {
       try {
         const raw = JSON.parse(await readFile(join(groupDir, sid, 'summary.json'), 'utf-8'))
         const model = typeof raw?.current_model_id === 'string' && raw.current_model_id
@@ -74,6 +78,27 @@ async function loadSessionModels(home: string): Promise<Map<string, string>> {
     }
   }
   return out
+}
+
+export function grokModelMapFingerprint(
+  modelByLog: ReadonlyMap<string, ReadonlyMap<string, string>>,
+): string {
+  const hash = createHash('sha256')
+  let remaining = MAX_MODEL_FINGERPRINT_ENTRIES
+  const field = (value: string) => {
+    hash.update(String(Buffer.byteLength(value))).update(':').update(value).update('\0')
+  }
+  for (const [logPath, models] of [...modelByLog].sort(([left], [right]) => left.localeCompare(right))) {
+    field(logPath)
+    const entries = [...models].sort(([left], [right]) => left.localeCompare(right))
+    for (const [sessionId, model] of entries.slice(0, remaining)) {
+      field(sessionId)
+      field(model)
+    }
+    remaining -= Math.min(entries.length, remaining)
+    if (remaining === 0) break
+  }
+  return hash.digest('hex').slice(0, 24)
 }
 
 function costOf(model: string, input: number, cacheRead: number, output: number): { cost: number; cacheSavings: number } {
@@ -145,6 +170,7 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
     files,
     async (path) => parseUnifiedLog(path, modelByHome.get(path) ?? new Map()),
     since,
+    { fingerprint: { parser: `grok-unified-v2.${grokModelMapFingerprint(modelByHome)}` } },
   )
 }
 

@@ -13,6 +13,8 @@ export interface Account {
 }
 
 export interface Config {
+  /** Monotonically increasing, daemon-owned revision used for compare-and-set updates. */
+  revision: number
   interval: number
   billingInterval: number
   clearScreen: boolean
@@ -57,6 +59,7 @@ export interface TrackedAccountCandidate {
 }
 
 export const DEFAULTS: Config = {
+  revision: 0,
   interval: 2,
   billingInterval: 5,
   clearScreen: true,
@@ -277,6 +280,9 @@ export function repairConfig(input: unknown): ConfigRepair {
 
   const config: Config = {
     ...DEFAULTS,
+    revision: typeof parsed.revision === 'number' && Number.isSafeInteger(parsed.revision) && parsed.revision >= 0
+      ? parsed.revision
+      : DEFAULTS.revision,
     interval: clampNum(parsed.interval, DEFAULTS.interval, 1),
     billingInterval: clampNum(parsed.billingInterval, DEFAULTS.billingInterval, 1),
     clearScreen: typeof parsed.clearScreen === 'boolean' ? parsed.clearScreen : DEFAULTS.clearScreen,

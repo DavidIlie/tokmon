@@ -5,23 +5,23 @@ import {
   type DaemonRpcClient,
   type RpcConnState,
 } from './daemon-rpc-client'
-import type { FsListing, RefreshScope } from '../rpc/contract'
+import type { ConfigState, FsListing, RefreshScope } from '../rpc/contract'
 
 export type ConnState = Exclude<RpcConnState, 'closed'>
 
 export interface UseDaemon {
   snapshot: WebSnapshot | null
   conn: ConnState
-  setConfig: (next: Config) => Promise<Config>
+  setConfig: (next: Config, expectedRevision: number) => Promise<ConfigState>
   refresh: (scope?: RefreshScope) => Promise<void>
   browse: (path: string) => Promise<FsListing>
-  config: Config | null
+  config: ConfigState | null
 }
 
 export function useDaemon(baseUrl: string | null, wsToken: string | null): UseDaemon {
   const [snapshot, setSnapshot] = useState<WebSnapshot | null>(null)
   const [conn, setConn] = useState<ConnState>('connecting')
-  const [config, setConfigState] = useState<Config | null>(null)
+  const [config, setConfigState] = useState<ConfigState | null>(null)
 
   const client = useMemo(() => {
     if (!baseUrl || !wsToken) return null
@@ -56,7 +56,7 @@ export function useDaemon(baseUrl: string | null, wsToken: string | null): UseDa
     snapshot,
     conn,
     config,
-    setConfig: (next) => requireClient().setConfig(next),
+    setConfig: (next, expectedRevision) => requireClient().setConfig({ config: next, expectedRevision }),
     refresh: (scope) => requireClient().refresh(scope),
     browse: (path) => requireClient().browseFs(path),
   }

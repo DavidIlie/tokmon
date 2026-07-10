@@ -18,7 +18,7 @@ export function PrivacyLabel({ value, privacyMode, className, title }: {
     <button
       type="button"
       onClick={() => setRevealed(true)}
-      className={`min-w-0 cursor-pointer truncate text-left ${className ?? ''}`}
+      className={`min-w-0 cursor-pointer truncate rounded text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${className ?? ''}`}
       title="Click to reveal email"
       aria-label="Email hidden. Click to reveal."
     >

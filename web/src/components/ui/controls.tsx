@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { ChevronDown } from '../icons'
 
 const FOCUS = 'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent'
@@ -40,23 +40,52 @@ export function Dropdown({ label, value, children }: {
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menuId = useId()
+
+  const close = (restoreFocus = false) => {
+    setOpen(false)
+    if (restoreFocus) requestAnimationFrame(() => triggerRef.current?.focus())
+  }
 
   useEffect(() => {
     if (!open) return
-    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) close() }
     document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onEsc)
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc) }
+    return () => document.removeEventListener('mousedown', onDown)
   }, [open])
+
+  const onMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])') ?? [])
+    const current = items.indexOf(document.activeElement as HTMLElement)
+    let next: number | null = null
+    if (event.key === 'Escape') { event.preventDefault(); close(true); return }
+    if (event.key === 'Home') next = 0
+    if (event.key === 'End') next = items.length - 1
+    if (event.key === 'ArrowDown') next = current < 0 ? 0 : (current + 1) % items.length
+    if (event.key === 'ArrowUp') next = current < 0 ? items.length - 1 : (current - 1 + items.length) % items.length
+    if (next !== null && items[next]) { event.preventDefault(); items[next].focus() }
+  }
 
   return (
     <div ref={ref} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
         onClick={() => setOpen(o => !o)}
+        onKeyDown={event => {
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+          event.preventDefault()
+          setOpen(true)
+          requestAnimationFrame(() => {
+            const items = menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])')
+            items?.[event.key === 'ArrowDown' ? 0 : items.length - 1]?.focus()
+          })
+        }}
         className={`flex items-center gap-1.5 rounded border border-line bg-bg-1 px-2 py-1 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg max-sm:py-2 ${FOCUS}`}
       >
         <span className="text-fg-faint">{label}:</span>
@@ -64,8 +93,8 @@ export function Dropdown({ label, value, children }: {
         <ChevronDown className={`size-3 transition ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 z-50 mt-1 min-w-44 max-w-[calc(100vw-2.5rem)] rounded-md border border-line-2 bg-bg-2 p-1 shadow-xl">
-          {children(() => setOpen(false))}
+        <div id={menuId} ref={menuRef} role="menu" onKeyDown={onMenuKeyDown} className="absolute right-0 z-50 mt-1 min-w-44 max-w-[calc(100vw-2.5rem)] rounded-md border border-line-2 bg-bg-2 p-1 shadow-xl">
+          {children(() => close(true))}
         </div>
       )}
     </div>

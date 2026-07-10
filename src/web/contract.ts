@@ -32,6 +32,7 @@ export {
   containsEmail,
   redactEmail,
 } from '../config-schema'
+export { describeConfigUpdateFailure, reconcileSettingsDraft } from '../config-sync'
 
 export type AccountFetchState = 'pending' | 'ready' | 'error'
 

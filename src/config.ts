@@ -1,5 +1,5 @@
-import { readFile, writeFile, mkdir, rename } from 'node:fs/promises'
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { chmod, readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises'
+import { chmodSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { DEFAULTS, normalizeConfig, repairConfig, type Config, type Account } from './config-schema'
@@ -61,11 +61,24 @@ export async function loadConfig(): Promise<Config> {
   } catch {
     return { ...DEFAULTS }
   }
+  // Tighten files created by older releases even when their contents need no
+  // repair. Failure here must not make an otherwise readable config unusable.
+  try {
+    await chmod(configDir(), 0o700)
+    await chmod(configLocation(), 0o600)
+  } catch {}
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
   } catch {
-    try { await writeFile(configLocation() + '.bak', raw) } catch {}
+    try {
+      const dir = configDir()
+      await mkdir(dir, { recursive: true, mode: 0o700 })
+      await chmod(dir, 0o700)
+      const backup = configLocation() + '.bak'
+      await writeFile(backup, raw, { mode: 0o600 })
+      await chmod(backup, 0o600)
+    } catch {}
     return { ...DEFAULTS }
   }
   const repaired = repairConfig(parsed)
@@ -76,33 +89,52 @@ export async function loadConfig(): Promise<Config> {
 }
 
 let saveQueue: Promise<void> = Promise.resolve()
+let tempSequence = 0
+
+function configTempFile(dir: string): string {
+  tempSequence = (tempSequence + 1) % Number.MAX_SAFE_INTEGER
+  return join(dir, `config.json.${process.pid}.${Date.now()}.${tempSequence}.tmp`)
+}
 
 function configJson(config: Config): string {
   return JSON.stringify(normalizeConfig(config), null, 2) + '\n'
 }
 
 export function saveConfig(config: Config): Promise<void> {
-  saveQueue = saveQueue.then(async () => {
+  const write = async () => {
+    const dir = configDir()
+    await mkdir(dir, { recursive: true, mode: 0o700 })
+    // mkdir does not tighten an already-existing directory.
+    await chmod(dir, 0o700)
+    const tmp = configTempFile(dir)
     try {
-      const dir = configDir()
-      await mkdir(dir, { recursive: true })
-      const tmp = join(dir, `config.json.${process.pid}.tmp`)
-      await writeFile(tmp, configJson(config))
+      await writeFile(tmp, configJson(config), { mode: 0o600 })
+      await chmod(tmp, 0o600)
       await rename(tmp, configLocation())
-    } catch {
+    } catch (error) {
+      // Do not leave a readable partial config behind on a failed atomic write.
+      try { await unlink(tmp) } catch {}
+      throw error
     }
-  })
-  return saveQueue
+  }
+  // A rejected write must reject its caller, but must not poison later saves.
+  const operation = saveQueue.catch(() => undefined).then(write)
+  saveQueue = operation
+  return operation
 }
 
 export function saveConfigSync(config: Config): void {
+  const dir = configDir()
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  chmodSync(dir, 0o700)
+  const tmp = configTempFile(dir)
   try {
-    const dir = configDir()
-    mkdirSync(dir, { recursive: true })
-    const tmp = join(dir, `config.json.${process.pid}.tmp`)
-    writeFileSync(tmp, configJson(config))
+    writeFileSync(tmp, configJson(config), { mode: 0o600 })
+    chmodSync(tmp, 0o600)
     renameSync(tmp, configLocation())
-  } catch {
+  } catch (error) {
+    try { unlinkSync(tmp) } catch {}
+    throw error
   }
 }
 

@@ -35,7 +35,7 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   )
 }
 
-export function NumberStepper({ value, min, unit, onChange }: { value: number; min: number; unit: string; onChange: (v: number) => void }) {
+export function NumberStepper({ label, value, min, unit, onChange }: { label: string; value: number; min: number; unit: string; onChange: (v: number) => void }) {
   const set = (v: number) => onChange(Math.max(min, Math.round(v)))
   const [buf, setBuf] = useState<string | null>(null)
   const commit = () => {
@@ -49,6 +49,8 @@ export function NumberStepper({ value, min, unit, onChange }: { value: number; m
       <button type="button" aria-label="decrease" onClick={() => set(value - 1)} className={`px-2 py-1 text-xs text-fg-dim transition hover:bg-bg-3 hover:text-fg ${FOCUS}`}>−</button>
       <input
         type="number"
+        name={label.toLowerCase().replace(/\s+/g, '-')}
+        autoComplete="off"
         inputMode="numeric"
         min={min}
         value={buf ?? value}
@@ -59,7 +61,7 @@ export function NumberStepper({ value, min, unit, onChange }: { value: number; m
           if (v.trim() !== '' && Number.isFinite(n) && n >= min) set(n)
         }}
         onBlur={commit}
-        aria-label={`value (${unit})`}
+        aria-label={`${label} (${unit})`}
         className={`tnum w-12 border-x border-line bg-bg-2 px-1 py-1 text-center text-xs text-fg ${FOCUS} [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
       />
       <span className="px-1.5 text-[10px] text-fg-faint">{unit}</span>

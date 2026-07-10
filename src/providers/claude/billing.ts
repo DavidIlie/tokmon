@@ -57,8 +57,8 @@ function parseAuth(raw: string): ClaudeAuth | null {
   try {
     const creds = JSON.parse(raw)
     const o = creds?.claudeAiOauth ?? creds
-    const token = o?.accessToken
-    if (typeof token !== 'string' || !token) return null
+    const token = typeof o?.accessToken === 'string' ? o.accessToken.trim() : ''
+    if (!token) return null
     return {
       token,
       subscriptionType: typeof o.subscriptionType === 'string' ? o.subscriptionType : undefined,
@@ -121,7 +121,7 @@ async function authCandidates(homeDir?: string): Promise<AuthCandidate[]> {
   // Alt accounts: their own home's keychain first (same freshness argument), then
   // their own file creds, then the shared machine slot as a last resort.
   const ordered = isDefault
-    ? [keychain && { auth: keychain, shared: true }, file && { auth: file, shared: false }]
+    ? [keychain && { auth: keychain, shared: false }, file && { auth: file, shared: false }]
     : [
         homeKeychain && { auth: homeKeychain, shared: false },
         file && { auth: file, shared: false },
@@ -177,6 +177,10 @@ interface ResolvedAuth {
   expired?: boolean
 }
 
+export function sharedClaudeCredentialMatches(expectedUuid: string | undefined, identity: TokenIdentity | null | undefined): boolean {
+  return typeof expectedUuid === 'string' && expectedUuid.length > 0 && identity?.accountUuid === expectedUuid
+}
+
 async function getAuth(homeDir: string | undefined, expectedUuid: string | undefined): Promise<ResolvedAuth> {
   const candidates = await authCandidates(homeDir)
   let sharedAccountEmail: string | null | undefined
@@ -190,11 +194,10 @@ async function getAuth(homeDir: string | undefined, expectedUuid: string | undef
     }
     // Account-scoped file creds are trusted as-is; the shared keychain slot must
     // prove it holds THIS account's token before we attribute its data here.
-    if (!shared || !expectedUuid) return { auth }
+    if (!shared) return { auth }
     const identity = await tokenIdentity(auth.token)
-    if (identity === undefined) return { auth } // verification unavailable — keep old behavior
-    if (identity === null) continue // dead token
-    if (identity.accountUuid === expectedUuid) return { auth }
+    if (sharedClaudeCredentialMatches(expectedUuid, identity)) return { auth }
+    if (!identity) continue
     sharedAccountEmail = identity.email
   }
   // The account's OWN (non-shared) creds being expired is the actionable state;

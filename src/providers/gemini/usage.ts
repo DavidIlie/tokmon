@@ -11,28 +11,34 @@ const PRICING: Record<string, { in: number; out: number; cr: number }> = {
   'gemini-3.1-pro': { in: 2e-6, out: 12e-6, cr: 0.2e-6 },
   'gemini-3-pro-preview': { in: 2e-6, out: 12e-6, cr: 0.2e-6 },
   'gemini-3-pro': { in: 2e-6, out: 12e-6, cr: 0.2e-6 },
-  'gemini-3.5-flash': { in: 1.5e-6, out: 9e-6, cr: 0.15e-6 },
+  'gemini-3.5-flash': { in: 0.75e-6, out: 4.5e-6, cr: 0.075e-6 },
   'gemini-3-flash-preview': { in: 0.5e-6, out: 3e-6, cr: 0.05e-6 },
   'gemini-3-flash': { in: 0.5e-6, out: 3e-6, cr: 0.05e-6 },
   'gemini-2.5-flash-lite': { in: 0.1e-6, out: 0.4e-6, cr: 0.01e-6 },
-  'gemini-3.1-flash-lite': { in: 0.1e-6, out: 0.4e-6, cr: 0.01e-6 },
+  'gemini-3.1-flash-lite': { in: 0.25e-6, out: 1.5e-6, cr: 0.025e-6 },
   'gemini-2.5-flash': { in: 0.3e-6, out: 2.5e-6, cr: 0.03e-6 },
   'gemini-2.5-pro': { in: 1.25e-6, out: 10e-6, cr: 0.125e-6 },
   'gemini-2.0-flash': { in: 0.1e-6, out: 0.4e-6, cr: 0.025e-6 },
 }
 const PRICE_KEYS = Object.keys(PRICING).sort((a, b) => b.length - a.length)
 const ZERO_PRICE = { in: 0, out: 0, cr: 0 }
+const GEMINI_31_PRO_LONG_PRICE = { in: 4e-6, out: 18e-6, cr: 0.4e-6 }
+const MAX_SESSION_FILE_BYTES = 16 * 1024 * 1024
+const MAX_JSON_ENTRIES = 100_000
 
 export function geminiTmpDir(homeDir?: string): string {
   return join(homeDir ?? homedir(), '.gemini', 'tmp')
 }
 
-function priceFor(model: string) {
+export function geminiPriceFor(model: string, promptTokens = 0) {
   const m = model.toLowerCase().trim()
   for (const key of PRICE_KEYS) {
     if (!m.startsWith(key)) continue
     const rest = m.slice(key.length)
-    if (rest === '' || rest[0] === '-') return PRICING[key]
+    if (rest === '' || rest[0] === '-') {
+      if (key.startsWith('gemini-3.1-pro') && promptTokens > 200_000) return GEMINI_31_PRO_LONG_PRICE
+      return PRICING[key]
+    }
   }
   return ZERO_PRICE
 }
@@ -54,13 +60,14 @@ function entryFromObject(obj: any): Entry | null {
   if (!Number.isFinite(ts)) return null
 
   const t = obj.tokens
-  const input = Math.max(0, safeNum(t.input) + safeNum(t.tool) - safeNum(t.cached))
+  const promptTokens = safeNum(t.input) + safeNum(t.tool)
+  const input = Math.max(0, promptTokens - safeNum(t.cached))
   const output = safeNum(t.output) + safeNum(t.thoughts)
   const cacheRead = safeNum(t.cached)
   if (input + output + cacheRead === 0) return null
 
   const model = typeof obj.model === 'string' && obj.model ? obj.model : 'unknown'
-  const p = priceFor(model)
+  const p = geminiPriceFor(model, promptTokens)
   return {
     id: typeof obj.id === 'string' ? obj.id : undefined,
     ts,
@@ -77,6 +84,7 @@ function entryFromObject(obj: any): Entry | null {
 function entriesFromJson(value: unknown): Entry[] {
   const entries: Entry[] = []
   const visit = (v: unknown) => {
+    if (entries.length >= MAX_JSON_ENTRIES) return
     if (Array.isArray(v)) {
       for (const item of v) visit(item)
       return
@@ -117,6 +125,7 @@ async function parseLineFile(path: string): Promise<Entry[]> {
 async function parseFile(path: string): Promise<Entry[]> {
   if (path.endsWith('.json')) {
     try {
+      if ((await fsStat(path)).size > MAX_SESSION_FILE_BYTES) return []
       const raw = await readFile(path, 'utf-8')
       return entriesFromJson(JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw))
     } catch {}

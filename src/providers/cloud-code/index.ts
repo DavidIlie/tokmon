@@ -38,7 +38,9 @@ function sortKey(label: string): string {
 export function cloudCodeBucketsToMetrics(buckets: CloudCodeBucket[], options: { fullGeminiLabels?: boolean } = {}): Metric[] {
   const pooled = new Map<string, CloudCodeBucket>()
   for (const bucket of buckets) {
-    if (!Number.isFinite(bucket.remainingFraction)) continue
+    // The service defines this as a fraction in [0, 1].  Clamping a corrupt
+    // response would turn bad data into a convincing 0%/100% quota reading.
+    if (!Number.isFinite(bucket.remainingFraction) || bucket.remainingFraction < 0 || bucket.remainingFraction > 1) continue
     const label = poolLabel(bucket.modelId, options.fullGeminiLabels === true)
     const existing = pooled.get(label)
     if (!existing || bucket.remainingFraction < existing.remainingFraction) {
@@ -54,7 +56,7 @@ export function cloudCodeBucketsToMetrics(buckets: CloudCodeBucket[], options: {
         used: Math.round((1 - clamped) * 100),
         limit: 100,
         format: { kind: 'percent' },
-        resetsAt: bucket.resetTime ? resetIn(bucket.resetTime) : null,
+        resetsAt: bucket.resetTime && Number.isFinite(Date.parse(bucket.resetTime)) ? resetIn(bucket.resetTime) : null,
         primary: i === 0,
       }
     })

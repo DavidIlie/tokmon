@@ -39,19 +39,19 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
 
   return (
     <div
-      className="dialog-fade fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-bg-0/60 p-4 backdrop-blur-sm"
+      className="dialog-fade fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto overscroll-contain bg-bg-0/60 p-4 backdrop-blur-sm"
       onMouseDown={e => { if (e.target === e.currentTarget) onCancel() }}
       role="dialog"
       aria-modal="true"
-      aria-label={editor.mode === 'add' ? 'New account' : 'Edit account'}
+      aria-labelledby="account-editor-title"
     >
       <div ref={editorRef} tabIndex={-1} className="dialog-pop my-8 w-full max-w-[460px] overflow-hidden rounded-md border-l-2 border border-line-2 bg-bg-1 focus:outline-none"
         style={{ borderLeftColor: accent }}>
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           <span className="size-2.5 rounded-full" style={{ background: accent }} aria-hidden />
-          <span className="font-display text-xs uppercase tracking-wider text-fg-bright">
+          <h2 id="account-editor-title" className="font-display text-xs uppercase tracking-wider text-fg-bright">
             {editor.mode === 'add' ? 'New account' : 'Edit account'}
-          </span>
+          </h2>
         </div>
 
         <div className="flex flex-col gap-4 px-4 py-4">
@@ -79,8 +79,11 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
             <input
               ref={nameRef}
               type="text"
+              name="account-name"
               value={editor.name}
-              placeholder="e.g. Work, Personal"
+              placeholder="e.g. Work…"
+              aria-label="Account name"
+              autoComplete="off"
               spellCheck={false}
               onChange={e => { setError(null); onChange({ ...editor, name: sanitizeTyped(e.target.value) }) }}
               onKeyDown={e => { if (e.key === 'Enter') submit() }}
@@ -118,7 +121,7 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
             <span className="ml-auto text-[10px] text-fg-faint">{editor.mode === 'add' ? 'auto-generated from name' : 'fixed'}</span>
           </div>
 
-          {error && <p className="text-xs text-warning">{error}</p>}
+          {error && <p className="text-xs text-warning" role="alert">{error}. Check the highlighted account fields and try again.</p>}
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-3">
@@ -199,8 +202,11 @@ function HomeDirectoryField({ value, onChange, onEnter }: {
           <Folder className="size-4 shrink-0 text-fg-faint" />
           <input
             type="text"
+            name="account-home-directory"
             value={value}
-            placeholder="~"
+            placeholder="e.g. ~/work…"
+            aria-label="Account home directory"
+            autoComplete="off"
             spellCheck={false}
             onChange={e => { closePicker(); onChange(sanitizeTyped(e.target.value)) }}
             onKeyDown={e => { if (e.key === 'Enter') onEnter() }}
@@ -265,7 +271,7 @@ function HomeDirectoryField({ value, onChange, onEnter }: {
                   <div className="px-2.5 py-3 text-xs text-fg-faint">no subdirectories</div>
                 )}
                 {loading && !listing && (
-                  <div className="px-2.5 py-3 text-xs text-fg-faint">loading folders...</div>
+                  <div className="px-2.5 py-3 text-xs text-fg-faint" role="status" aria-live="polite">loading folders…</div>
                 )}
               </div>
 

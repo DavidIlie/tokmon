@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
 import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, finitePositive, dashboardSince, tableSince, walkFiles } from '../usage-core'
+import { timestampMs } from '../_shared/time'
 
 export function piSessionsDir(homeDir?: string): string {
   return join(homeDir ?? homedir(), '.pi', 'agent', 'sessions')
@@ -14,50 +15,53 @@ export async function detectPi(homeDir?: string): Promise<boolean> {
   try { await access(piSessionsDir(homeDir)); return true } catch { return false }
 }
 
-function timestampMs(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value > 10_000_000_000 ? value : value * 1000
-  if (typeof value === 'string' && value.trim()) return new Date(value.trim()).getTime()
-  return NaN
-}
-
 async function parseFile(path: string): Promise<Entry[]> {
   const entries: Entry[] = []
-  const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity })
-  for await (const rawLine of rl) {
-    if (!rawLine.includes('"usage"')) continue
-    try {
-      const line = rawLine.charCodeAt(0) === 0xFEFF ? rawLine.slice(1) : rawLine
-      const obj: any = JSON.parse(line)
-      if (obj?.type !== 'message') continue
-      const msg = obj.message
-      if (msg?.role !== 'assistant' || !msg?.usage) continue
-      const u = msg.usage
-      const ts = timestampMs(obj.timestamp ?? msg.timestamp)
-      if (!Number.isFinite(ts)) continue
-      const input = safeNum(u.input)
-      const output = safeNum(u.output)
-      const cacheRead = safeNum(u.cacheRead)
-      const cacheCreate = safeNum(u.cacheWrite)
-      if (input + output + cacheRead + cacheCreate === 0) continue
-      const c = u.cost ?? {}
-      const costInput = finitePositive(c.input)
-      const cacheSavings = input > 0 && cacheRead > 0
-        ? Math.max(0, cacheRead * (costInput / input) - finitePositive(c.cacheRead))
-        : 0
-      const model = (typeof msg.responseModel === 'string' && msg.responseModel)
-        || (typeof msg.model === 'string' && msg.model)
-        || 'unknown'
-      entries.push({
-        ts,
-        model,
-        cost: finitePositive(c.total),
-        input,
-        output,
-        cacheCreate,
-        cacheRead,
-        cacheSavings,
-      })
-    } catch {}
+  const stream = createReadStream(path)
+  stream.on('error', () => {})
+  const rl = createInterface({ input: stream, crlfDelay: Infinity })
+  try {
+    for await (const rawLine of rl) {
+      if (!rawLine.includes('"usage"')) continue
+      try {
+        const line = rawLine.charCodeAt(0) === 0xFEFF ? rawLine.slice(1) : rawLine
+        const obj: any = JSON.parse(line)
+        if (obj?.type !== 'message') continue
+        const msg = obj.message
+        if (msg?.role !== 'assistant' || !msg?.usage) continue
+        const u = msg.usage
+        const ts = timestampMs(obj.timestamp ?? msg.timestamp)
+        if (ts === null) continue
+        const input = safeNum(u.input)
+        const output = safeNum(u.output)
+        const cacheRead = safeNum(u.cacheRead)
+        const cacheCreate = safeNum(u.cacheWrite)
+        if (input + output + cacheRead + cacheCreate === 0) continue
+        const c = u.cost ?? {}
+        const costInput = finitePositive(c.input)
+        const cacheSavings = input > 0 && cacheRead > 0
+          ? Math.max(0, cacheRead * (costInput / input) - finitePositive(c.cacheRead))
+          : 0
+        const model = (typeof msg.responseModel === 'string' && msg.responseModel)
+          || (typeof msg.model === 'string' && msg.model)
+          || 'unknown'
+        entries.push({
+          ts,
+          model,
+          cost: finitePositive(c.total),
+          input,
+          output,
+          cacheCreate,
+          cacheRead,
+          cacheSavings,
+        })
+      } catch {}
+    }
+  } catch {
+    return entries
+  } finally {
+    rl.close()
+    stream.destroy()
   }
   return entries
 }

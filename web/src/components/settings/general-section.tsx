@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { sanitizeTyped, isValidTimezone, type Config } from '@shared'
 import { Segmented } from '../ui/controls'
 import { FOCUS } from './use-dialog-trap'
@@ -8,10 +8,10 @@ export function GeneralSection({ draft, patch }: { draft: Config; patch: (fn: (c
   return (
     <Section title="General">
       <FieldRow label="Refresh interval" hint="dashboard poll, seconds">
-        <NumberStepper value={draft.interval} min={1} unit="s" onChange={v => patch(c => ({ ...c, interval: v }))} />
+        <NumberStepper label="Refresh interval" value={draft.interval} min={1} unit="s" onChange={v => patch(c => ({ ...c, interval: v }))} />
       </FieldRow>
       <FieldRow label="Billing poll" hint="billing refresh, minutes">
-        <NumberStepper value={draft.billingInterval} min={1} unit="m" onChange={v => patch(c => ({ ...c, billingInterval: v }))} />
+        <NumberStepper label="Billing poll" value={draft.billingInterval} min={1} unit="m" onChange={v => patch(c => ({ ...c, billingInterval: v }))} />
       </FieldRow>
       <FieldRow label="Clear screen" hint="redraw on each refresh">
         <Segmented<'on' | 'off'> size="xs" ariaLabel="clear screen"
@@ -48,6 +48,7 @@ export function GeneralSection({ draft, patch }: { draft: Config; patch: (fn: (c
 function TimezoneField({ value, onChange }: { value: string | null; onChange: (tz: string | null) => void }) {
   const [text, setText] = useState(value ?? '')
   const [error, setError] = useState(false)
+  const errorId = useId()
 
   useEffect(() => { setText(value ?? ''); setError(false) }, [value])
 
@@ -64,14 +65,18 @@ function TimezoneField({ value, onChange }: { value: string | null; onChange: (t
     <div className="flex flex-col items-end gap-0.5">
       <input
         type="text"
+        name="timezone"
         value={text}
-        placeholder="System"
+        placeholder="e.g. Europe/Bucharest…"
+        aria-label="Timezone"
+        aria-describedby={error ? errorId : undefined}
+        autoComplete="off"
         spellCheck={false}
         aria-invalid={error}
         onChange={e => onInput(e.target.value)}
         className={`w-44 rounded border bg-bg-2 px-2 py-1 text-xs text-fg ${FOCUS} ${error ? 'border-warning' : 'border-line'}`}
       />
-      {error && <span className="text-[10px] text-warning">invalid timezone</span>}
+      {error && <span id={errorId} className="text-[10px] text-warning" role="alert">Use an IANA zone such as Europe/Bucharest.</span>}
     </div>
   )
 }

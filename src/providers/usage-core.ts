@@ -1,10 +1,14 @@
 import type { Dirent } from 'node:fs'
-import { readFile, writeFile, rename, mkdir, readdir, unlink } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readFileSync, readdirSync } from 'node:fs'
+import { readdir } from 'node:fs/promises'
+import { dirname, join, relative } from 'node:path'
+import { createHash } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import type { UsageSummary, TableRow, ModelDetail, DashboardData, TableData } from '../types'
 import { dayKey, monthKey, weekKey, startOfDay, startOfMonth, startOfWeek, monthsAgoStart } from '../tz'
 import { cacheDir } from '../config'
 import { finitePositive, safeNum } from './_shared/metric'
+import { UsageShardStore, type UsageCacheFingerprint } from './storage/usage-shard-store'
 
 export { finitePositive, safeNum } from './_shared/metric'
 
@@ -25,46 +29,89 @@ export interface Entry {
   cacheSavings: number
 }
 
-const CACHE_VERSION = 8
 // tableSince keeps 6 calendar months; month-start alignment can reach ~214 days.
 const PRUNE_AGE_MS = 230 * DAY_MS
-const memCache = new Map<string, { mtimeMs: number; size: number; entries: Entry[] }>()
-let diskLoaded = false
-let diskLoadPromise: Promise<void> | null = null
-let dirty = false
-let flushTimer: ReturnType<typeof setTimeout> | null = null
+type Shard = { mods: string[]; rows: (number | string)[][] }
+const stores = new Map<string, UsageShardStore<Entry>>()
+const MAX_STORES = 6
 
-type Shard = { m: number; s: number; mods: string[]; rows: (number | string)[][] }
-
-function cacheFile(): string {
-  return join(cacheDir(), `usage-v${CACHE_VERSION}.json`)
+/**
+ * Parser and pricing fingerprints are part of a shard's identity.  Callers
+ * with an externally configurable parser/pricing table can supply stable,
+ * explicit versions; existing providers get a source-derived default.
+ */
+export interface UsageCacheOptions {
+  fingerprint?: Partial<UsageCacheFingerprint>
+  /** Primarily useful for isolated embedders; normal providers use cacheDir(). */
+  storageDir?: string
 }
 
-async function cleanupOldCacheFiles(): Promise<void> {
+function hash(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 24)
+}
+
+function runningBuildFingerprint(): string {
+  // A bundled release contains the provider parsers and pricing tables.  This
+  // catches a pricing-only change in an imported module, which parse.toString()
+  // alone cannot see.  Explicit caller fingerprints still take precedence.
   try {
-    const dir = cacheDir()
-    const names = await readdir(dir)
-    await Promise.all(names.map(async (name) => {
-      const version = /^usage-v(\d+)\.json$/.exec(name)
-      const oldVersion = version ? Number(version[1]) !== CACHE_VERSION : false
-      const tmp = /^usage-v\d+\.json\..*\.tmp$/.test(name)
-      if (oldVersion || tmp) await unlink(join(dir, name)).catch(() => {})
-    }))
-  } catch {}
+    const modulePath = fileURLToPath(import.meta.url)
+    if (modulePath.endsWith('.ts')) {
+      const root = dirname(modulePath)
+      const files: string[] = []
+      const stack = [root]
+      while (stack.length > 0) {
+        const dir = stack.pop()!
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const path = join(dir, entry.name)
+          if (entry.isDirectory()) stack.push(path)
+          else if (entry.isFile() && entry.name.endsWith('.ts') && !entry.name.includes('.test.')) files.push(path)
+        }
+      }
+      const sourceHash = createHash('sha256')
+      for (const path of files.sort()) {
+        sourceHash.update(relative(root, path)).update('\0').update(readFileSync(path)).update('\0')
+      }
+      return `source-tree-${sourceHash.digest('hex').slice(0, 24)}`
+    }
+    const entrypoint = process.argv[1]
+    if (!entrypoint) return 'build-unknown'
+    const bytes = readFileSync(entrypoint)
+    if (bytes.byteLength > 8 * 1024 * 1024) return 'build-unknown'
+    return `build-${createHash('sha256').update(bytes).digest('hex').slice(0, 24)}`
+  } catch {
+    return 'build-unknown'
+  }
 }
 
-function encode(mtimeMs: number, size: number, entries: Entry[]): Shard {
+const RUNNING_BUILD_FINGERPRINT = runningBuildFingerprint()
+
+function fingerprintFor(parse: (path: string) => Promise<Entry[]>, options?: UsageCacheOptions): UsageCacheFingerprint {
+  // This is deliberately a fingerprint rather than a manually bumped global
+  // cache number.  A provider can override either dimension when its parser or
+  // pricing data is generated/configured outside this function's source.
+  const sourceVersion = `source-${hash(Function.prototype.toString.call(parse))}`
+  return {
+    format: options?.fingerprint?.format ?? 'usage-shard-v2',
+    parser: options?.fingerprint?.parser ?? `${sourceVersion}.${RUNNING_BUILD_FINGERPRINT}`,
+    pricing: options?.fingerprint?.pricing ?? RUNNING_BUILD_FINGERPRINT,
+  }
+}
+
+function encode(entries: Entry[]): Shard {
   const mods: string[] = []
   const idx = new Map<string, number>()
   const rows = entries.map(e => {
     let mi = idx.get(e.model)
     if (mi === undefined) { mi = mods.length; mods.push(e.model); idx.set(e.model, mi) }
-    return [e.ts, mi, e.input, e.output, e.cacheCreate, e.cacheRead, e.cost, e.cacheSavings, e.id ?? 0]
+    return [e.ts, mi, e.input, e.output, e.cacheCreate, e.cacheRead, e.cost, e.cacheSavings, e.id ?? 0, e.count ?? 1]
   })
-  return { m: mtimeMs, s: size, mods, rows }
+  return { mods, rows }
 }
 
-function decode(s: Shard): Entry[] {
+function decode(value: unknown): Entry[] | null {
+  const s = value as Partial<Shard> | null
+  if (!s || !Array.isArray(s.rows) || !Array.isArray(s.mods)) return null
   const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : 0)
   const out: Entry[] = []
   for (const r of s.rows) {
@@ -78,56 +125,41 @@ function decode(s: Shard): Entry[] {
       input: num(r[2]), output: num(r[3]), cacheCreate: num(r[4]), cacheRead: num(r[5]),
       cost: num(r[6]), cacheSavings: num(r[7]),
       id: typeof r[8] === 'string' ? r[8] : undefined,
+      count: num(r[9]) || 1,
     })
   }
   return out
 }
 
-async function ensureDiskLoaded(): Promise<void> {
-  if (diskLoaded) return
-  if (!diskLoadPromise) {
-    diskLoadPromise = (async () => {
-      try {
-        const obj = JSON.parse(await readFile(cacheFile(), 'utf-8')) as Record<string, Shard>
-        for (const [path, s] of Object.entries(obj)) {
-          if (s && typeof s.m === 'number' && Array.isArray(s.rows) && Array.isArray(s.mods)) {
-            memCache.set(path, { mtimeMs: s.m, size: typeof s.s === 'number' ? s.s : -1, entries: decode(s) })
-          }
-        }
-      } catch {
-      } finally {
-        await cleanupOldCacheFiles()
-        diskLoaded = true
-      }
-    })().finally(() => { diskLoadPromise = null })
+function storeFor(parse: (path: string) => Promise<Entry[]>, options?: UsageCacheOptions): UsageShardStore<Entry> {
+  const dir = options?.storageDir ?? cacheDir()
+  const fingerprint = fingerprintFor(parse, options)
+  const key = `${dir}\0${fingerprint.format}\0${fingerprint.parser}\0${fingerprint.pricing}`
+  let store = stores.get(key)
+  if (store) {
+    // Keep the registry itself bounded as well as each shard store's LRU.
+    stores.delete(key)
+    stores.set(key, store)
+  } else {
+    if (stores.size >= MAX_STORES) stores.delete(stores.keys().next().value as string)
+    store = new UsageShardStore<Entry>({
+      dir,
+      fingerprint,
+      // Several providers can be active at once; each gets a bounded small LRU
+      // instead of retaining every decoded log in one process-global map.
+      maxMemoryBytes: 8 * 1024 * 1024,
+      maxMemoryShards: 128,
+      staleAfterMs: PRUNE_AGE_MS,
+      encode,
+      decode,
+    })
+    stores.set(key, store)
   }
-  await diskLoadPromise
+  return store
 }
 
 export async function flushDisk(): Promise<void> {
-  if (!dirty) return
-  dirty = false
-  const now = Date.now()
-  const obj: Record<string, Shard> = {}
-  for (const [path, v] of memCache) {
-    if (now - v.mtimeMs < PRUNE_AGE_MS) {
-      obj[path] = encode(v.mtimeMs, v.size, v.entries)
-    }
-  }
-  try {
-    await mkdir(cacheDir(), { recursive: true })
-    const tmp = `${cacheFile()}.${process.pid}.tmp`
-    await writeFile(tmp, JSON.stringify(obj))
-    await rename(tmp, cacheFile())
-  } catch {
-    dirty = true
-  }
-}
-
-function scheduleFlush(): void {
-  if (flushTimer) return
-  flushTimer = setTimeout(() => { flushTimer = null; void flushDisk() }, 30000)
-  flushTimer.unref?.()
+  await Promise.all([...stores.values()].map(store => store.flush()))
 }
 
 export async function walkFiles(root: string): Promise<string[]> {
@@ -161,23 +193,18 @@ export async function loadCachedEntries(
   files: { path: string; mtimeMs: number; size: number }[],
   parse: (path: string) => Promise<Entry[]>,
   since: number,
+  options?: UsageCacheOptions,
 ): Promise<Entry[]> {
-  await ensureDiskLoaded()
+  const store = storeFor(parse, options)
   const chunks: Entry[][] = []
   await mapLimit(files, 8, async (f) => {
     try {
-      let c = memCache.get(f.path)
-      if (!c || c.mtimeMs !== f.mtimeMs || c.size !== f.size) {
-        const entries = await parse(f.path)
-        c = { mtimeMs: f.mtimeMs, size: f.size, entries }
-        memCache.set(f.path, c)
-        dirty = true
-      }
-      chunks.push(c.entries)
+      // Do not keep stale rows alive in the request accumulator just because
+      // they share a recently modified source log with useful rows.
+      chunks.push((await store.load(f, () => parse(f.path))).filter(e => e.ts >= since))
     } catch {}
   })
-  if (dirty) scheduleFlush()
-  return dedupe(chunks.flat().filter(e => e.ts >= since))
+  return dedupe(chunks.flat())
 }
 
 // Walk calendar days via each day's start (not fixed 24h steps, which skip the

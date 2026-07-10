@@ -7,7 +7,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "node ../test/run-tests.mjs",
+    "check": "pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",
@@ -16,22 +19,17 @@
     "effect": "4.0.0-beta.59",
     "html-to-image": "^1.11.13",
     "nuqs": "2.8.9",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "recharts": "^2.13.3"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.0",
-    "@types/react": "^18.3.12",
+    "@types/react": "18.3.31",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "tailwindcss": "^4.1.0",
-    "typescript": "^5.7.2",
+    "typescript": "5.9.3",
     "vite": "^6.0.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   }
 }

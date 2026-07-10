@@ -10,6 +10,7 @@ import {
 } from './data'
 import type { WebSnapshot, AccountFetchState, PeakStatus } from './contract'
 import type { Config } from '../config-schema'
+import { createRefreshQueue, settleRefreshTasks, type RefreshQueue } from './refresh-queue'
 
 const TABLE_INTERVAL_MS = 300_000
 const PEAK_INTERVAL_MS = 300_000
@@ -35,10 +36,20 @@ export interface DataEngine {
   subscribe(onSnapshot: (snapshot: WebSnapshot) => void): () => void
   subscribeConfig(onConfig: (config: Config) => void): () => void
   touch(): void
-  refresh(scope?: RefreshScope): void
+  refresh(scope?: RefreshScope): Promise<void>
   setConfig(next: { resolved: ResolvedAccount[]; tz: string; summaryIntervalMs: number; billingIntervalMs: number }): void
   broadcastConfig(config: Config): void
   stop(): void
+}
+
+function runInBackground(task: Promise<void>): void {
+  void task.catch(() => {})
+}
+
+export function throwIfRefreshFailures(scope: string, failures: readonly unknown[]): void {
+  if (failures.length > 0) {
+    throw new AggregateError(failures, `${scope} refresh failed for ${failures.length} account${failures.length === 1 ? '' : 's'}`)
+  }
 }
 
 export function createDataEngine(opts: DataEngineOptions): DataEngine {
@@ -137,44 +148,40 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   let usageAccounts = resolved.filter(r => r.hasUsage)
   let billingAccounts = resolved.filter(r => r.hasBilling)
 
-  // One skeleton for the three account-refresh loops. Each keeps a busy flag and
-  // a forcePending flag so a forced call that lands mid-run re-invokes after the
-  // in-flight run finishes; in-flight results are dropped when the config epoch moves.
+  // In-flight results are dropped when the config epoch moves; the queue then
+  // reruns against the latest account set before forced waiters settle.
   const makeRefreshLoop = <T,>(opts: {
+    scope: string
     accounts: () => ResolvedAccount[]
     fetch: (r: ResolvedAccount) => Promise<T>
     apply: (id: string, value: T) => void
     state: Map<string, AccountFetchState>
-  }): ((force?: boolean) => Promise<void>) => {
-    let busy = false
-    let forcePending = false
-    const run = async (force = false): Promise<void> => {
+  }): RefreshQueue => createRefreshQueue(
+    async () => {
       if (stopped) return
-      if (busy) { if (force) forcePending = true; return }
-      if (!force && idle()) return
       const epoch = configEpoch
-      busy = true
-      try {
-        for (const r of opts.accounts()) {
-          if (stopped) return
-          let value: T | null = null
-          let ok = true
-          try { value = await withTimeout(opts.fetch(r), FETCH_TIMEOUT_MS) } catch { ok = false }
-          if (stopped || epoch !== configEpoch) return
-          if (ok) { opts.apply(r.account.id, value as T); opts.state.set(r.account.id, 'ready') }
-          else opts.state.set(r.account.id, 'error')
-          reveal()
+      const failures: unknown[] = []
+      for (const r of opts.accounts()) {
+        if (stopped) return
+        let value: T | null = null
+        let ok = true
+        try { value = await withTimeout(opts.fetch(r), FETCH_TIMEOUT_MS) } catch (cause) {
+          ok = false
+          failures.push(cause)
         }
-        rebuild()
-      } finally {
-        busy = false
-        if (forcePending && !stopped) { forcePending = false; void run(true) }
+        if (stopped || epoch !== configEpoch) return
+        if (ok) { opts.apply(r.account.id, value as T); opts.state.set(r.account.id, 'ready') }
+        else opts.state.set(r.account.id, 'error')
+        reveal()
       }
-    }
-    return run
-  }
+      rebuild()
+      throwIfRefreshFailures(opts.scope, failures)
+    },
+    idle,
+  )
 
   const refreshSummary = makeRefreshLoop({
+    scope: 'summary',
     accounts: () => usageAccounts,
     fetch: r => fetchAccountSummary(r.account, tz),
     apply: (id, dashboard) => { usageEntry(id).dashboard = dashboard },
@@ -182,6 +189,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   })
 
   const refreshTable = makeRefreshLoop({
+    scope: 'history',
     accounts: () => usageAccounts,
     fetch: r => fetchAccountTable(r.account, tz),
     apply: (id, table) => { usageEntry(id).table = table },
@@ -189,25 +197,23 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   })
 
   const refreshBilling = makeRefreshLoop({
+    scope: 'billing',
     accounts: () => billingAccounts,
     fetch: r => fetchAccountBilling(r.account, tz),
     apply: (id, result) => { billing.set(id, result) },
     state: billingState,
   })
 
-  let peakBusy = false
-  const refreshPeak = async (force = false) => {
-    if (stopped || peakBusy || !hasClaude || (!force && idle())) return
-    const epoch = configEpoch
-    peakBusy = true
-    try {
+  const refreshPeak = createRefreshQueue(
+    async () => {
+      if (stopped || !hasClaude) return
+      const epoch = configEpoch
       const next = await fetchPeak()
       if (stopped || epoch !== configEpoch || !hasClaude) return
       if (next) { peak = next; rebuild() }
-    } finally {
-      peakBusy = false
-    }
-  }
+    },
+    () => !hasClaude || idle(),
+  )
 
   const clearTimers = () => {
     clearInterval(summaryTimer); summaryTimer = undefined
@@ -217,14 +223,14 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   }
 
   const startTimers = () => {
-    summaryTimer = setInterval(() => { void refreshSummary() }, summaryIntervalMs)
-    tableTimer = setInterval(() => { void refreshTable() }, TABLE_INTERVAL_MS)
-    billingTimer = setInterval(() => { void refreshBilling() }, billingIntervalMs)
+    summaryTimer = setInterval(() => { runInBackground(refreshSummary.run()) }, summaryIntervalMs)
+    tableTimer = setInterval(() => { runInBackground(refreshTable.run()) }, TABLE_INTERVAL_MS)
+    billingTimer = setInterval(() => { runInBackground(refreshBilling.run()) }, billingIntervalMs)
     summaryTimer.unref?.()
     tableTimer.unref?.()
     billingTimer.unref?.()
     if (hasClaude) {
-      peakTimer = setInterval(() => { void refreshPeak() }, PEAK_INTERVAL_MS)
+      peakTimer = setInterval(() => { runInBackground(refreshPeak.run()) }, PEAK_INTERVAL_MS)
       peakTimer.unref?.()
     }
   }
@@ -235,21 +241,23 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     snapshot: () => current,
 
     start() {
-      void refreshSummary(true)
-      void refreshTable(true)
-      void refreshBilling(true)
-      if (hasClaude) void refreshPeak(true)
+      runInBackground(refreshSummary.run(true))
+      runInBackground(refreshTable.run(true))
+      runInBackground(refreshBilling.run(true))
+      if (hasClaude) runInBackground(refreshPeak.run(true))
       startTimers()
     },
 
     touch() { lastActivity = Date.now() },
 
     refresh(scope = 'all') {
-      if (stopped) return
-      if (scope === 'all' || scope === 'summary') void refreshSummary(true)
-      if (scope === 'all' || scope === 'table') void refreshTable(true)
-      if (scope === 'all' || scope === 'billing') void refreshBilling(true)
-      if ((scope === 'all' || scope === 'peak') && hasClaude) void refreshPeak(true)
+      if (stopped) return Promise.resolve()
+      const tasks: Promise<void>[] = []
+      if (scope === 'all' || scope === 'summary') tasks.push(refreshSummary.run(true))
+      if (scope === 'all' || scope === 'table') tasks.push(refreshTable.run(true))
+      if (scope === 'all' || scope === 'billing') tasks.push(refreshBilling.run(true))
+      if ((scope === 'all' || scope === 'peak') && hasClaude) tasks.push(refreshPeak.run(true))
+      return settleRefreshTasks(tasks)
     },
 
     setConfig(next) {
@@ -282,10 +290,10 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       }
 
       rebuild()
-      void refreshSummary(true)
-      void refreshTable(true)
-      void refreshBilling(true)
-      if (hasClaude) void refreshPeak(true)
+      runInBackground(refreshSummary.run(true))
+      runInBackground(refreshTable.run(true))
+      runInBackground(refreshBilling.run(true))
+      if (hasClaude) runInBackground(refreshPeak.run(true))
       startTimers()
     },
 
@@ -304,8 +312,8 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       snapshotSubscribers.add(onSnapshot)
       lastActivity = Date.now()
       if (!current || Date.now() - current.generatedAt > summaryIntervalMs) {
-        void refreshSummary(true)
-        void refreshTable(true)
+        runInBackground(refreshSummary.run(true))
+        runInBackground(refreshTable.run(true))
       }
       return () => { snapshotSubscribers.delete(onSnapshot) }
     },
@@ -319,6 +327,10 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     stop() {
       stopped = true
       clearTimers()
+      refreshSummary.stop()
+      refreshTable.stop()
+      refreshBilling.stop()
+      refreshPeak.stop()
       snapshotSubscribers.clear()
       configSubscribers.clear()
     },

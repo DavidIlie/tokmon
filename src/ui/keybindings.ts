@@ -1,367 +1,62 @@
-import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
-import { PROVIDER_ORDER, type ProviderId } from '../providers'
-import { sanitizeTyped, type Config, type Account as StoredAccount, type TrackedAccountRow } from '../config'
-import { isValidTimezone, systemTimezone } from '../tz'
-import { TABS, VIEWS, type Slot, clampCaret, spliceBackspace } from '../app.logic'
-import { GENERAL_ROWS, SETTINGS_TABS, type AccountForm, type SettingsTab } from './settings'
-import { openUrl, REPO_URL } from './terminal'
+import type { InputKey, KeyContext } from './keybinding-context'
+import { handleAccountEditor, handleSearchEditor, handleTimezoneEditor } from './keybindings-editors'
+import { handleSettings } from './keybindings-settings'
+import { handleGlobalCommand, handleNavigation } from './keybindings-navigation'
 
-export interface InputKey {
-  upArrow: boolean
-  downArrow: boolean
-  leftArrow: boolean
-  rightArrow: boolean
-  pageUp: boolean
-  pageDown: boolean
-  return: boolean
-  escape: boolean
-  tab: boolean
-  shift: boolean
-  ctrl: boolean
-  meta: boolean
-  backspace: boolean
-  delete: boolean
-}
+export type { InputKey, KeyContext } from './keybinding-context'
 
-export interface KeyContext {
+export function isRefreshAllShortcut(input: string, mode: {
   showPicker: boolean
-  pickerProviders: ProviderId[]
-  onboardCursor: number
-  setOnboardCursor: Dispatch<SetStateAction<number>>
-  toggleOnboard: (i: number) => void
-  confirmOnboarding: () => void
-  exit: () => void
-
-  showSettings: boolean
-  accountForm: AccountForm | null
-  setAccountForm: Dispatch<SetStateAction<AccountForm | null>>
-  commitAccountForm: () => void
-  cycleFormField: (dir: 1 | -1) => void
-  cycleProvider: (dir: 1 | -1) => void
-  cycleColor: (dir: 1 | -1) => void
-  isPrintable: (input: string, key: { ctrl: boolean; meta: boolean }) => boolean
-  insertText: (text: string) => void
-
-  tzEdit: string | null
-  setTzEdit: Dispatch<SetStateAction<string | null>>
-  setTzError: Dispatch<SetStateAction<string | null>>
-  updateConfig: (fn: (prev: Config) => Config) => void
-  setTzCaret: Dispatch<SetStateAction<number>>
-  tzValueRef: MutableRefObject<string>
-  tzCaretRef: MutableRefObject<number>
-
-  tab: number
-  searchMode: boolean
-  setSearchMode: Dispatch<SetStateAction<boolean>>
-  search: string
-  setSearch: Dispatch<SetStateAction<string>>
-  setSearchCaret: Dispatch<SetStateAction<number>>
-  searchValueRef: MutableRefObject<string>
-  searchCaretRef: MutableRefObject<number>
-
-  showLoader: boolean
-  configReady: boolean
-  toggleWeb: () => Promise<void>
-  settingsCursor: number
-  settingsTab: SettingsTab
-  setSettingsTab: Dispatch<SetStateAction<SettingsTab>>
-  setShowSettings: Dispatch<SetStateAction<boolean>>
-  cfg: Config
-  trackedAccountRows: TrackedAccountRow[]
-  moveAccount: (idx: number, dir: -1 | 1) => void
-  setSettingsCursor: Dispatch<SetStateAction<number>>
-  toggleProvider: (pid: ProviderId) => void
-  openEditAccount: (acc: StoredAccount) => void
-  openConfigureAccount: (row: TrackedAccountRow) => void
-  deleteAccount: (id: string) => void
-  openAddAccount: () => void
-
-  cycleAccount: (dir: 1 | -1) => void
-  setTab: Dispatch<SetStateAction<number>>
-  resetView: () => void
-  slots: Slot[]
-  dashPaginated: boolean
-  dashPageCount: number
-  setDashPage: Dispatch<SetStateAction<number>>
-
-  cycleTableProvider: (dir: 1 | -1) => void
-  setExpanded: Dispatch<SetStateAction<number>>
-  setSort: Dispatch<SetStateAction<number>>
-  SORTS_FOR: readonly { label: string; dir: 'up' | 'down' | null }[]
-  cycleTableModel: (dir: 1 | -1) => void
-  setView: Dispatch<SetStateAction<number>>
-  cursor: number
-  rowCountRef: MutableRefObject<number>
-  rows: number
-  setCursor: Dispatch<SetStateAction<number>>
-  clampRow: (n: number) => number
+  editingAccount: boolean
+  editingTimezone: boolean
+  editingSearch: boolean
+  unavailable?: boolean
+}): boolean {
+  return (input === 'r' || input === 'R')
+    && !mode.unavailable
+    && !mode.showPicker
+    && !mode.editingAccount
+    && !mode.editingTimezone
+    && !mode.editingSearch
 }
 
+function handleOnboarding(input: string, key: InputKey, ctx: KeyContext): void {
+  const { onboarding, global } = ctx
+  if (input === 'q') { global.exit(); return }
+  const confirmIndex = onboarding.providers.length
+  if (key.upArrow) { onboarding.setCursor(cursor => Math.max(0, cursor - 1)); return }
+  if (key.downArrow) { onboarding.setCursor(cursor => Math.min(confirmIndex, cursor + 1)); return }
+  if (input === ' ') { onboarding.toggle(onboarding.cursor); return }
+  if (key.return) {
+    if (onboarding.cursor === confirmIndex) onboarding.confirm()
+    else onboarding.toggle(onboarding.cursor)
+  }
+}
+
+/** Ordered modal router: text entry wins, then global commands, then active view. */
 export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
-  const {
-    showPicker, pickerProviders, onboardCursor, setOnboardCursor, toggleOnboard, confirmOnboarding, exit,
-    showSettings, accountForm, setAccountForm, commitAccountForm, cycleFormField, cycleProvider, cycleColor,
-    isPrintable, insertText, tzEdit, setTzEdit, setTzError, updateConfig, setTzCaret, tzValueRef, tzCaretRef,
-    tab, searchMode, setSearchMode, search, setSearch, setSearchCaret, searchValueRef, searchCaretRef,
-    showLoader, configReady, toggleWeb, settingsCursor, settingsTab, setSettingsTab, setShowSettings, cfg, trackedAccountRows, moveAccount,
-    setSettingsCursor, toggleProvider, openEditAccount, openConfigureAccount, deleteAccount, openAddAccount, cycleAccount, setTab,
-    resetView, slots, dashPaginated, dashPageCount, setDashPage, cycleTableProvider, setExpanded, setSort,
-    SORTS_FOR, cycleTableModel, setView, cursor, rowCountRef, rows, setCursor, clampRow,
-  } = ctx
+  const editingAccount = ctx.settings.show && ctx.accountEditor.form !== null
+  const editingTimezone = ctx.settings.show && ctx.timezoneEditor.value !== null
+  const editingSearch = ctx.table.tab === 1 && ctx.table.searchMode
 
-  if (showPicker) {
-    if (input === 'q') { exit(); return }
-    const startIdx = pickerProviders.length
-    if (key.upArrow) { setOnboardCursor(c => Math.max(0, c - 1)); return }
-    if (key.downArrow) { setOnboardCursor(c => Math.min(startIdx, c + 1)); return }
-    if (input === ' ') { toggleOnboard(onboardCursor); return }
-    if (key.return) {
-      if (onboardCursor === startIdx) confirmOnboarding()
-      else toggleOnboard(onboardCursor)
-      return
-    }
+  if (isRefreshAllShortcut(input, {
+    showPicker: ctx.onboarding.show,
+    editingAccount,
+    editingTimezone,
+    editingSearch,
+    unavailable: !ctx.global.configReady,
+  })) {
+    ctx.global.refreshAll()
     return
   }
-
-  if (showSettings && accountForm) {
-    if (key.escape) { setAccountForm(null); return }
-    if (key.ctrl && input === 's') { commitAccountForm(); return }
-    if (key.tab) { cycleFormField(key.shift ? -1 : 1); return }
-    if (key.upArrow) { cycleFormField(-1); return }
-    if (key.downArrow) { cycleFormField(1); return }
-    if (accountForm.field === 'provider') {
-      if (key.leftArrow) { cycleProvider(-1); return }
-      if (key.rightArrow) { cycleProvider(1); return }
-      if (key.return) { setAccountForm(f => f && { ...f, field: 'name', caret: f.name.length }); return }
-      return
-    }
-    if (accountForm.field === 'color') {
-      if (key.leftArrow) { cycleColor(-1); return }
-      if (key.rightArrow) { cycleColor(1); return }
-      if (key.return) { commitAccountForm(); return }
-      return
-    }
-    const tf = accountForm.field as 'name' | 'homeDir'
-    if (key.leftArrow) { setAccountForm(f => f && { ...f, caret: clampCaret(f.caret - 1, f[tf].length) }); return }
-    if (key.rightArrow) { setAccountForm(f => f && { ...f, caret: clampCaret(f.caret + 1, f[tf].length) }); return }
-    if (key.ctrl && input === 'a') { setAccountForm(f => f && { ...f, caret: 0 }); return }
-    if (key.ctrl && input === 'e') { setAccountForm(f => f && { ...f, caret: f[tf].length }); return }
-    if (key.return) {
-      if (tf === 'name' && accountForm.name.trim() === '') {
-        setAccountForm(f => f && { ...f, error: 'Name required', caret: f.name.length })
-        return
-      }
-      setAccountForm(f => f && { ...f, field: tf === 'name' ? 'homeDir' : 'color', caret: tf === 'name' ? f.homeDir.length : f.caret })
-      return
-    }
-    if (key.backspace || key.delete) {
-      setAccountForm(f => {
-        if (!f || (f.field !== 'name' && f.field !== 'homeDir')) return f
-        const r = spliceBackspace(f[f.field], f.caret)
-        return { ...f, [f.field]: r.value, caret: r.caret, error: null }
-      })
-      return
-    }
-    if (isPrintable(input, key)) {
-      const clean = sanitizeTyped(input)
-      if (clean) insertText(clean)
-    }
+  if (ctx.onboarding.show) { handleOnboarding(input, key, ctx); return }
+  if (editingAccount) { handleAccountEditor(input, key, ctx.accountEditor, ctx.textInput); return }
+  if (editingTimezone) {
+    handleTimezoneEditor(input, key, ctx.timezoneEditor, ctx.textInput, ctx.global.updateConfig)
     return
   }
-
-  if (showSettings && tzEdit !== null) {
-    if (key.escape) { setTzEdit(null); setTzError(null); return }
-    if (key.return) {
-      const val = tzEdit.trim()
-      if (val === '' || val.toLowerCase() === 'system') {
-        updateConfig(c => ({ ...c, timezone: null })); setTzEdit(null); setTzError(null)
-      } else if (isValidTimezone(val)) {
-        updateConfig(c => ({ ...c, timezone: val })); setTzEdit(null); setTzError(null)
-      } else {
-        setTzError(`Invalid: ${val}`)
-      }
-      return
-    }
-    if (key.leftArrow) { setTzCaret(c => clampCaret(c - 1, tzEdit.length)); return }
-    if (key.rightArrow) { setTzCaret(c => clampCaret(c + 1, tzEdit.length)); return }
-    if (key.ctrl && input === 'a') { setTzCaret(0); return }
-    if (key.ctrl && input === 'e') { setTzCaret(tzEdit.length); return }
-    if (key.backspace || key.delete) {
-      const r = spliceBackspace(tzValueRef.current, tzCaretRef.current)
-      tzValueRef.current = r.value; tzCaretRef.current = r.caret
-      setTzEdit(r.value); setTzCaret(r.caret); setTzError(null)
-      return
-    }
-    if (isPrintable(input, key)) { const clean = sanitizeTyped(input); if (clean) insertText(clean) }
-    return
-  }
-
-  if (tab === 1 && searchMode) {
-    if (key.return || key.escape) { setSearchMode(false); if (key.escape) { setSearch(''); setSearchCaret(0) } return }
-    if (key.leftArrow) { setSearchCaret(c => clampCaret(c - 1, search.length)); return }
-    if (key.rightArrow) { setSearchCaret(c => clampCaret(c + 1, search.length)); return }
-    if (key.ctrl && input === 'a') { setSearchCaret(0); return }
-    if (key.ctrl && input === 'e') { setSearchCaret(search.length); return }
-    if (key.backspace || key.delete) {
-      const r = spliceBackspace(searchValueRef.current, searchCaretRef.current)
-      searchValueRef.current = r.value; searchCaretRef.current = r.caret
-      setSearch(r.value); setSearchCaret(r.caret)
-      return
-    }
-    if (isPrintable(input, key)) { const clean = sanitizeTyped(input); if (clean) insertText(clean) }
-    return
-  }
-
-  if (input === 'q') { exit(); return }
-  if (input === 'O') { openUrl(REPO_URL); return }
-  if (input === 'W' || (input === 'w' && tab !== 1 && !showSettings)) {
-    if (showLoader || !configReady) return
-    void toggleWeb(); return
-  }
-
-  if (showSettings) {
-    if (key.escape || input === 's') { setShowSettings(false); return }
-
-    const switchSettingsTab = (dir: 1 | -1) => {
-      const idx = SETTINGS_TABS.indexOf(settingsTab)
-      setSettingsTab(SETTINGS_TABS[(idx + dir + SETTINGS_TABS.length) % SETTINGS_TABS.length])
-      setSettingsCursor(-1)
-      setTzEdit(null)
-      setTzError(null)
-    }
-    const rowCount = settingsTab === 'general'
-      ? GENERAL_ROWS
-      : settingsTab === 'providers'
-        ? PROVIDER_ORDER.length
-        : trackedAccountRows.length + 1
-
-    if (key.tab) { switchSettingsTab(key.shift ? -1 : 1); return }
-    if (input === '[') { switchSettingsTab(-1); return }
-    if (input === ']') { switchSettingsTab(1); return }
-
-    if (settingsCursor < 0) {
-      if (key.leftArrow) { switchSettingsTab(-1); return }
-      if (key.rightArrow) { switchSettingsTab(1); return }
-      if (key.downArrow || key.return) { setSettingsCursor(0); return }
-      if (key.upArrow) { setSettingsCursor(Math.max(0, rowCount - 1)); return }
-      return
-    }
-
-    const selectedAccountRow = settingsTab === 'accounts' && settingsCursor >= 0 && settingsCursor < trackedAccountRows.length
-      ? trackedAccountRows[settingsCursor]
-      : null
-    if (selectedAccountRow?.source === 'configured' && selectedAccountRow.explicitIndex !== undefined && key.shift && (key.upArrow || key.downArrow)) {
-      moveAccount(selectedAccountRow.explicitIndex, key.upArrow ? -1 : 1); return
-    }
-    if (key.upArrow) { setSettingsCursor(c => Math.max(-1, c - 1)); return }
-    if (key.downArrow) { setSettingsCursor(c => Math.min(rowCount - 1, c + 1)); return }
-
-    if (settingsTab === 'general') {
-      if (settingsCursor === 0) {
-        if (key.leftArrow) updateConfig(c => ({ ...c, interval: Math.max(1, c.interval - 1) }))
-        if (key.rightArrow) updateConfig(c => ({ ...c, interval: c.interval + 1 }))
-        return
-      }
-      if (settingsCursor === 1) {
-        if (key.leftArrow) updateConfig(c => ({ ...c, billingInterval: Math.max(1, c.billingInterval - 1) }))
-        if (key.rightArrow) updateConfig(c => ({ ...c, billingInterval: c.billingInterval + 1 }))
-        return
-      }
-      if (settingsCursor === 2 && (key.leftArrow || key.rightArrow || key.return)) {
-        updateConfig(c => ({ ...c, clearScreen: !c.clearScreen })); return
-      }
-      if (settingsCursor === 3 && (key.leftArrow || key.rightArrow || key.return)) {
-        updateConfig(c => ({ ...c, privacyMode: !c.privacyMode })); return
-      }
-      if (settingsCursor === 4) {
-        if (isPrintable(input, key)) {
-          const clean = sanitizeTyped(input)
-          if (clean.length === 1) updateConfig(c => ({ ...c, privacyToggleKey: clean }))
-        }
-        if (key.backspace || key.delete) updateConfig(c => ({ ...c, privacyToggleKey: 'p' }))
-        return
-      }
-      if (settingsCursor === 5) {
-        if (key.return) { const init = cfg.timezone ?? ''; setTzEdit(init); setTzCaret(init.length); setTzError(null) }
-        if (key.leftArrow || key.rightArrow) updateConfig(c => ({ ...c, timezone: c.timezone === null ? systemTimezone() : null }))
-        return
-      }
-      if (settingsCursor === 6 && (key.leftArrow || key.rightArrow || key.return)) {
-        updateConfig(c => ({ ...c, dashboardLayout: c.dashboardLayout === 'grid' ? 'single' : 'grid' }))
-        return
-      }
-      if (settingsCursor === 7 && (key.leftArrow || key.rightArrow || key.return)) {
-        updateConfig(c => ({ ...c, defaultFocus: c.defaultFocus === 'all' ? 'last' : 'all' }))
-        return
-      }
-      return
-    }
-
-    if (settingsTab === 'providers') {
-      if (settingsCursor >= 0 && settingsCursor < PROVIDER_ORDER.length && (input === ' ' || key.return || key.leftArrow || key.rightArrow)) {
-        toggleProvider(PROVIDER_ORDER[settingsCursor])
-      }
-      return
-    }
-
-    if (settingsTab === 'accounts' && settingsCursor >= 0 && settingsCursor < trackedAccountRows.length) {
-      const row = trackedAccountRows[settingsCursor]
-      if (key.return) {
-        if (row.source === 'configured') {
-          const acc = cfg.accounts.find(a => a.id === row.explicitId)
-          if (acc) openEditAccount(acc)
-        } else {
-          openConfigureAccount(row)
-        }
-        return
-      }
-      if (row.source === 'configured' && row.explicitId && (input === 'd' || input === 'x')) { deleteAccount(row.explicitId); return }
-      if (input === ' ') { updateConfig(c => ({ ...c, activeAccountId: row.id })); return }
-      return
-    }
-    if (settingsTab === 'accounts' && settingsCursor === trackedAccountRows.length && key.return) { openAddAccount() }
-    return
-  }
-
-  if (input === cfg.privacyToggleKey) {
-    updateConfig(c => ({ ...c, privacyMode: !c.privacyMode }))
-    return
-  }
-  if (input === 's') { setSettingsTab('general'); setShowSettings(true); setSettingsCursor(-1); return }
-  if (input === 'a') { cycleAccount(1); return }
-  if (input === 'A') { cycleAccount(-1); return }
-  if (key.tab) { setTab(t => (t + 1) % TABS.length); resetView(); return }
-  if (input && /^[0-9]$/.test(input) && slots.length > 1) {
-    const target = slots[parseInt(input, 10)]
-    if (target) { updateConfig(c => ({ ...c, activeAccountId: target.id })); resetView() }
-    return
-  }
-  if (tab === 0) {
-    if (dashPaginated) {
-      if (input === ']' || key.downArrow || key.pageDown) { setDashPage(p => Math.min(dashPageCount - 1, p + 1)); return }
-      if (input === '[' || key.upArrow || key.pageUp) { setDashPage(p => Math.max(0, p - 1)); return }
-    }
-    if (key.upArrow || key.downArrow || key.pageUp || key.pageDown || input === 'G' || input === 'g') return
-  }
-
-  if (tab === 1) {
-    if (input === 'p') { cycleTableProvider(1); return }
-    if (input === 'P') { cycleTableProvider(-1); return }
-    if (input === '/') { setSearchMode(true); setSearchCaret(search.length); return }
-    if (key.escape) { if (search) { setSearch(''); setSearchCaret(0) } else setExpanded(-1); return }
-    if (input === 'o') { setSort(s => (s + 1) % SORTS_FOR.length); resetView(); return }
-    if (input === 'd') { setView(0); resetView(); return }
-    if (input === 'w') { setView(1); resetView(); return }
-    if (input === 'm') { cycleTableModel(1); return }
-    if (input === 'M') { cycleTableModel(-1); return }
-    if (key.leftArrow) { setView(v => (v - 1 + VIEWS.length) % VIEWS.length); resetView(); return }
-    if (key.rightArrow) { setView(v => (v + 1) % VIEWS.length); resetView(); return }
-    if (key.return) { setExpanded(e => e === cursor ? -1 : cursor); return }
-    if (key.upArrow) { setCursor(c => Math.max(0, c - 1)); return }
-    if (key.downArrow) { setCursor(c => clampRow(c + 1)); return }
-    if (key.pageDown || input === 'G') { setCursor(c => clampRow(input === 'G' ? rowCountRef.current - 1 : c + Math.max(1, rows - 12))); return }
-    if (key.pageUp || input === 'g') { setCursor(c => input === 'g' ? 0 : Math.max(0, c - Math.max(1, rows - 12))); return }
-  } else {
-    if (key.leftArrow || key.rightArrow) { setTab(t => (t + 1) % TABS.length); resetView(); return }
-  }
+  if (editingSearch) { handleSearchEditor(input, key, ctx.table, ctx.textInput); return }
+  if (handleGlobalCommand(input, ctx)) return
+  if (ctx.settings.show) { handleSettings(input, key, ctx); return }
+  handleNavigation(input, key, ctx)
 }
