@@ -395,8 +395,8 @@ test('real daemon is singleton, host/token guarded, durable, and bounded on webs
 
     const handle = await attachOrSpawn({ cachePath: join(root, 'cache') })
     assert.equal(handle.kind, 'spawned')
-    assert.match(handle.baseUrl ?? '', /^http:\/\/127\.0\.0\.1:\d+#tokmonToken=/)
-    assert.equal(handle.baseUrl?.includes('?tokmonToken='), false)
+    assert.match(handle.baseUrl ?? '', /^http:\/\/127\.0\.0\.1:\d+#\/#tokmonToken=/)
+    assert.equal(new URL(handle.baseUrl ?? 'http://invalid').search, '')
     const rpc = createDaemonRpcClient(handle.baseUrl!, { transport: 'node', wsToken: handle.wsToken! })
     try {
       assert.equal((await rpc.getConfig()).protocol.version, TOKMON_PROTOCOL_VERSION)

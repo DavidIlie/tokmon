@@ -109,6 +109,8 @@ function ConnDot({ conn, freshAt }: { conn: ConnState; freshAt: number | null })
   const label = conn === 'live' ? (age ?? 'live')
     : conn === 'connecting' ? 'connecting…'
     : conn === 'reconnecting' ? (age ? `reconnecting · ${age}` : 'reconnecting…')
+    : conn === 'auth-required' ? 'authorization required'
+    : conn === 'unavailable' ? 'daemon unavailable'
     : (age ? `offline · ${age}` : 'offline')
   return (
     <span className="flex items-center gap-1.5 text-xs" role="status" aria-live="polite">
@@ -128,6 +130,20 @@ function Connecting({ label }: { label: string }) {
       <span className="text-fg-faint">{label}</span>
     </div>
   )
+}
+
+function connectionMessage(conn: ConnState, fallback: string): string {
+  if (conn === 'auth-required') return 'This dashboard link is missing or expired — return to tokmon and press W.'
+  if (conn === 'unavailable') return 'The tokmon daemon is unavailable — return to tokmon and press W.'
+  if (conn === 'error' || conn === 'reconnecting') return 'Connection lost — return to tokmon and press W for a fresh link.'
+  return fallback
+}
+
+function focusDashboard(): void {
+  const target = document.getElementById('dashboard-content')
+  if (!target) return
+  target.scrollIntoView({ block: 'start' })
+  requestAnimationFrame(() => target.focus({ preventScroll: true }))
 }
 
 function SettingsButton({ onOpen }: { onOpen: () => void }) {
@@ -151,7 +167,10 @@ function RootLayout() {
   const [showSettings, setShowSettings] = useState(false)
   const [privacyMode, setPrivacyMode] = useState(DEFAULTS.privacyMode)
 
-  useEffect(() => subscribeConfig(state => setPrivacyMode(state.config.privacyMode)), [])
+  useEffect(() => {
+    if (conn !== 'live') return
+    return subscribeConfig(state => setPrivacyMode(state.config.privacyMode))
+  }, [conn])
 
   const derived = useMemo(() => deriveAll(snapshot, filters), [snapshot, filters])
   const periodLabel = PERIODS.find(p => p.key === filters.period)?.label ?? filters.period
@@ -193,9 +212,9 @@ function RootLayout() {
 
   return (
     <div className="min-h-screen">
-      <a href="#dashboard-content" className="fixed left-3 top-3 z-[100] -translate-y-20 rounded bg-bg-2 px-3 py-2 text-sm text-fg-bright shadow-lg transition-transform focus-visible:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+      <button type="button" onClick={focusDashboard} className="fixed left-3 top-3 z-[100] -translate-y-20 rounded bg-bg-2 px-3 py-2 text-sm text-fg-bright shadow-lg transition-transform focus-visible:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
         Skip to dashboard
-      </a>
+      </button>
       <header className="relative z-30 border-b border-line bg-bg-0/80 backdrop-blur">
         <div className="mx-auto max-w-[1600px] px-5 2xl:max-w-[1920px]">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3.5">
@@ -207,7 +226,7 @@ function RootLayout() {
             </span>
             <div className="ml-auto flex min-w-0 items-center gap-3">
               <ConnDot conn={conn} freshAt={snapshot?.generatedAt ?? null} />
-              <SettingsButton onOpen={() => setShowSettings(true)} />
+              {conn === 'live' && <SettingsButton onOpen={() => setShowSettings(true)} />}
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
               {ready && (hasUsage || hasBilling) && (
                 <ShareControl derived={derived} periodLabel={periodLabel} tz={snapshot?.tz ?? ''} version={snapshot?.version ?? ''} />
@@ -220,6 +239,7 @@ function RootLayout() {
               <Link
                 key={t.key}
                 to={pathOf(t.key)}
+                hash={true}
                 aria-current={activeKey === t.key ? 'page' : undefined}
                 onMouseEnter={() => preloadTab(t.key)}
                 onFocus={() => preloadTab(t.key)}
@@ -236,6 +256,11 @@ function RootLayout() {
       </header>
 
       <main id="dashboard-content" tabIndex={-1} className="mx-auto max-w-[1600px] px-5 2xl:max-w-[1920px] py-5 focus:outline-none">
+        {snapshot && conn !== 'live' && (
+          <div className="mb-4 rounded border border-line bg-bg-1 px-3 py-2 text-xs text-fg-dim" role="status" aria-live="polite">
+            {connectionMessage(conn, 'Reconnecting…')}
+          </div>
+        )}
         {snapshot?.seeded && (
           <div className="mb-4 flex items-center gap-2 rounded border border-line bg-bg-1 px-3 py-1.5 text-xs text-fg-dim" role="status" aria-live="polite">
             <span className="inline-flex size-2 rounded-full" style={{ background: 'var(--color-cost)' }} aria-hidden />
@@ -243,7 +268,7 @@ function RootLayout() {
           </div>
         )}
         {!snapshot ? (
-          <Connecting label={conn === 'error' ? 'connection lost — retrying…' : 'reading usage…'} />
+          <Connecting label={connectionMessage(conn, 'reading usage…')} />
         ) : !hasUsage && !hasBilling ? (
           billingPending && !graceOver && conn !== 'error'
             ? <Connecting label="reading billing…" />
@@ -253,7 +278,7 @@ function RootLayout() {
               </div>
             )
         ) : !ready || !ctx ? (
-          <Connecting label={conn === 'error' ? 'connection lost — retrying…' : 'reading usage history…'} />
+          <Connecting label={connectionMessage(conn, 'reading usage history…')} />
         ) : (
           <DashboardContext.Provider value={ctx}>
             <Outlet />

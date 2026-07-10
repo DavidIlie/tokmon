@@ -81,7 +81,7 @@ For **Claude / Codex / Cursor / Grok** — Daily, Weekly, and Monthly breakdowns
 
 ## Web Dashboard
 
-Prefer a browser? `tokmon serve` starts a local web dashboard with the same data as the TUI — charts, global filtering, and shareable images — in a terminal-styled UI. Press `w` (or `W`) inside the TUI to toggle it without leaving the terminal; the header shows `● web :4317` while it's running.
+Prefer a browser? `tokmon serve` starts a local web dashboard with the same data as the TUI — charts, global filtering, and shareable images — in a terminal-styled UI. Press `w` (or `W`) inside the TUI to open its authenticated local URL.
 
 ```bash
 tokmon serve            # opens http://127.0.0.1:4317 in your browser
@@ -89,7 +89,9 @@ tokmon serve --port 8080
 tokmon serve --no-open  # don't auto-open the browser
 ```
 
-It binds to `127.0.0.1` only and reads the same data read-only — nothing leaves your machine. It renders instantly from a cached snapshot, then streams live updates over SSE, and goes idle when no tab is open. Filter by provider, model, account, and period (the URL updates, so a filtered view is shareable), flip between dark and light, and export any panel — or a summary card — as a PNG with the **Share** button.
+It binds to `127.0.0.1` only and reads the same data read-only — nothing leaves your machine. It renders instantly from a cached snapshot, then streams live updates over an authenticated WebSocket, and goes idle when no tab is open. Filter by provider, model, account, and period, flip between dark and light, and export any panel — or a summary card — as a PNG with the **Share** button.
+
+The URL opened by `W` contains a capability in its fragment. Fragments are not sent with normal page requests or referrers, but keeping it in the address makes the complete URL copyable into another local browser while that daemon is running. Treat that URL as private; after the daemon restarts, press `W` again for a fresh one.
 
 ### Overview
 

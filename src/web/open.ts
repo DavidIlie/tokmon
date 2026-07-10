@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 
 export function browserUrl(url: string, wsToken?: string): string {
-  return wsToken ? `${url}#tokmonToken=${encodeURIComponent(wsToken)}` : url
+  return wsToken ? `${url}#/#tokmonToken=${encodeURIComponent(wsToken)}` : url
 }
 
 export function openBrowser(url: string, wsToken?: string): void {
