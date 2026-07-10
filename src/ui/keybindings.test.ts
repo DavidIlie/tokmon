@@ -1,7 +1,26 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { DEFAULTS } from '../config'
-import { handleKey, isRefreshAllShortcut, type InputKey, type KeyContext } from './keybindings'
+import {
+  handleKey,
+  handleTerminalFocusInput,
+  isRefreshAllShortcut,
+  terminalFocusEvent,
+  type InputKey,
+  type KeyContext,
+} from './keybindings'
+
+test('terminal focus reports are recognized without becoming text input', () => {
+  assert.equal(terminalFocusEvent('[I'), 'in')
+  assert.equal(terminalFocusEvent('[O'), 'out')
+  assert.equal(terminalFocusEvent('I'), null)
+  assert.equal(terminalFocusEvent('r'), null)
+  let refreshes = 0
+  assert.equal(handleTerminalFocusInput('[I', () => { refreshes++ }), true)
+  assert.equal(handleTerminalFocusInput('[O', () => { refreshes++ }), true)
+  assert.equal(handleTerminalFocusInput('r', () => { refreshes++ }), false)
+  assert.equal(refreshes, 1)
+})
 
 const navigation = {
   showPicker: false,

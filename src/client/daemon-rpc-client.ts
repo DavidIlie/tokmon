@@ -1,4 +1,4 @@
-import { Cause, Context, Duration, Effect, Fiber, Layer, ManagedRuntime, Schedule, Stream } from 'effect'
+import { Cause, Context, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Schedule, Stream } from 'effect'
 import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
 import type { RpcClientError } from 'effect/unstable/rpc/RpcClientError'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
@@ -21,6 +21,7 @@ export interface DaemonRpcClientOptions {
   readonly transport?: 'auto' | 'node' | 'browser'
   readonly reconnectAttempts?: number
   readonly reconnectBaseDelayMs?: number
+  readonly snapshotStaleFloorMs?: number
   readonly onConn?: (state: RpcConnState, error?: unknown) => void
 }
 
@@ -108,8 +109,12 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
   }
 
   const resetSession = (active?: Session | null) => {
+    if (active !== undefined && active !== null && active !== session) {
+      void active.runtime.dispose().catch(() => {})
+      return
+    }
     const dead = active ?? session
-    if (active === undefined || active === session) session = null
+    session = null
     sessionPromise = null
     if (dead) void dead.runtime.dispose().catch(() => {})
   }
@@ -191,11 +196,16 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
   const subscribe = <A>(
     streamFor: (client: TokmonClient) => Stream.Stream<A, unknown>,
     onValue: (value: A) => void,
+    staleAfterFor?: (value: A) => number,
   ): (() => void) => {
     if (closed) return () => {}
     let fiber: Fiber.Fiber<unknown, unknown> | null = null
     let unsubscribed = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let watchdogTimer: ReturnType<typeof setInterval> | null = null
+    let lastValueAt = 0
+    let staleAfterMs = Number.POSITIVE_INFINITY
+    let watchdogRestart = false
 
     const stopFiber = () => {
       if (!fiber) return
@@ -214,32 +224,50 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       retryTimer.unref?.()
     }
 
+    if (staleAfterFor) {
+      const checkEveryMs = Math.min(5_000, Math.max(10, (options.snapshotStaleFloorMs ?? 90_000) / 2))
+      watchdogTimer = setInterval(() => {
+        if (!fiber || lastValueAt === 0 || Date.now() - lastValueAt <= staleAfterMs) return
+        watchdogRestart = true
+        lastValueAt = Date.now()
+        setConn('reconnecting')
+        stopFiber()
+      }, checkEveryMs)
+      watchdogTimer.unref?.()
+    }
+
     const start = () => { void (async () => {
       try {
         const active = await ensureSession()
         if (closed || unsubscribed) return
-        fiber = active.runtime.runFork(
+        lastValueAt = Date.now()
+        staleAfterMs = options.snapshotStaleFloorMs ?? 90_000
+        const currentFiber = active.runtime.runFork(
           TokmonRpcClient.use((client) =>
             streamFor(client).pipe(
               Stream.runForEach((value) =>
                 Effect.sync(() => {
+                  lastValueAt = Date.now()
+                  if (staleAfterFor) staleAfterMs = staleAfterFor(value)
                   try { onValue(value) } catch {}
                 }),
               ),
             ),
-          ).pipe(Effect.catchCause((cause) =>
-            Effect.sync(() => {
-              if (!closed && !unsubscribed) {
-                resetSession(active)
-                setConn('error', Cause.squash(cause))
-                scheduleRetry()
-              }
-            }),
-          )),
+          ),
         )
-        fibers.add(fiber)
-        fiber.addObserver(() => {
-          if (fiber) fibers.delete(fiber)
+        fiber = currentFiber
+        fibers.add(currentFiber)
+        currentFiber.addObserver((exit) => {
+          fibers.delete(currentFiber)
+          if (fiber === currentFiber) fiber = null
+          if (closed || unsubscribed) return
+
+          const stale = watchdogRestart
+          watchdogRestart = false
+          resetSession(active)
+          if (stale || Exit.isSuccess(exit)) setConn('reconnecting')
+          else setConn('error', Cause.squash(exit.cause))
+          scheduleRetry()
         })
       } catch (error) {
         if (!closed && !unsubscribed) {
@@ -257,6 +285,10 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       if (retryTimer) {
         clearTimeout(retryTimer)
         retryTimer = null
+      }
+      if (watchdogTimer) {
+        clearInterval(watchdogTimer)
+        watchdogTimer = null
       }
       stopFiber()
     }
@@ -276,7 +308,11 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       run((client) => client[TOKMON_WS_METHODS.browseFs]({ path })),
 
     subscribeSnapshot: (onSnapshot) =>
-      subscribe((client) => client[TOKMON_WS_METHODS.snapshot]({}).pipe(Stream.map(value => value as unknown as WebSnapshot)), onSnapshot),
+      subscribe(
+        (client) => client[TOKMON_WS_METHODS.snapshot]({}).pipe(Stream.map(value => value as unknown as WebSnapshot)),
+        onSnapshot,
+        snapshot => Math.max(options.snapshotStaleFloorMs ?? 90_000, snapshot.intervalMs * 3),
+      ),
 
     subscribeConfig: (onConfig) =>
       subscribe((client) => client[TOKMON_WS_METHODS.config]({}).pipe(Stream.map(value => value as unknown as ConfigState)), onConfig),

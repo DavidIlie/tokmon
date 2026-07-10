@@ -233,10 +233,11 @@ tokmon runs a small local **daemon** that does all the data collection. The term
 - Each enabled provider is detected automatically, and its real account identity — email and plan — is read from local auth (e.g. Claude `~/.claude.json`, the Codex `id_token`, Cursor's state DB). Extra accounts, like additional Claude homes, are auto-discovered too.
 
 **Limits & billing**
-- Rate limits and remaining spend/quota come from each provider's own official API, refreshed on the billing poll interval.
+- Rate limits and remaining spend/quota come from each provider's own official API, refreshed on the billing poll interval and when the terminal regains focus. Opening a dashboard also catches up stale limits immediately.
 
 **Responsiveness**
 - Dashboard summaries and table history load independently and refresh on separate intervals, so the UI stays responsive even on large histories.
+- The TUI shows the usage and limits cadences separately and reconnects automatically if a suspended terminal leaves its live stream stale.
 
 Cross-platform: macOS, Linux, Windows. Everything is local and read-only — see [Privacy](#privacy).
 

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { throwIfRefreshFailures } from './data-engine'
+import {
+  ATTACH_BILLING_MAX_AGE_MS,
+  billingNeedsCatchUp,
+  throwIfRefreshFailures,
+} from './data-engine'
 import { createRefreshQueue, settleRefreshTasks } from './refresh-queue'
 
 function deferred() {
@@ -14,6 +18,21 @@ function deferred() {
 }
 
 const turn = () => new Promise<void>(resolve => setImmediate(resolve))
+
+test('a new viewer catches up missing or stale quota data', () => {
+  const accounts = [{ account: { id: 'codex' } }] as never
+  assert.equal(billingNeedsCatchUp(accounts, new Map(), 1_000_000), true)
+  assert.equal(billingNeedsCatchUp(
+    accounts,
+    new Map([['codex', 1_000_000 - ATTACH_BILLING_MAX_AGE_MS + 1]]),
+    1_000_000,
+  ), false)
+  assert.equal(billingNeedsCatchUp(
+    accounts,
+    new Map([['codex', 1_000_000 - ATTACH_BILLING_MAX_AGE_MS]]),
+    1_000_000,
+  ), true)
+})
 
 test('forced refreshes coalesce behind a busy pass and await the queued pass', async () => {
   const gates = [deferred(), deferred()]

@@ -14,10 +14,10 @@ interface BootstrapInputs {
 function enterAltScreen(): void { process.stdout.write('\x1B[?1049h\x1B[H') }
 function leaveAltScreen(): void { try { process.stdout.write('\x1B[?1049l') } catch {} }
 function setupInputModes(): void {
-  process.stdout.write('\x1B[?2004h\x1B[?1004l')
+  process.stdout.write('\x1B[?2004h\x1B[?1004h')
 }
 function restoreInputModes(): void {
-  try { process.stdout.write('\x1B[?2004l') } catch {}
+  try { process.stdout.write('\x1B[?1004l\x1B[?2004l') } catch {}
 }
 
 export async function bootstrapInk({ interval, config, daemon, mode }: BootstrapInputs): Promise<void> {

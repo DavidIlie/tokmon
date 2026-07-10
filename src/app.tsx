@@ -36,7 +36,7 @@ import {
   tableModelOptions, cycleTableModel, filterRowsByModel,
 } from './app.logic'
 import { openUrl, IS_TTY } from './ui/terminal'
-import { handleKey } from './ui/keybindings'
+import { handleKey, handleTerminalFocusInput } from './ui/keybindings'
 import { useTerminalSize } from './ui/hooks/use-terminal-size'
 import { usePaste } from './ui/hooks/use-paste'
 import { useLoader } from './ui/hooks/use-loader'
@@ -189,6 +189,9 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
   const intervalLabel = connected && snapshot?.intervalMs
     ? Math.round(snapshot.intervalMs / 1000)
     : cfg.interval
+  const billingIntervalLabel = connected && snapshot?.billingIntervalMs
+    ? Math.max(1, Math.round(snapshot.billingIntervalMs / 60_000))
+    : cfg.billingInterval
   const readyInputFor = useCallback((id: string): ReadyInput | undefined => {
     if (connected) {
       const wa = snapshot?.accounts.find(a => a.id === id)
@@ -428,7 +431,20 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
     [tab, rawTokenRows, activeTableModel, search, sort],
   )
 
-  useInput((input, key) => handleKey(input, key, {
+  const lastFocusRefreshRef = useRef(Date.now())
+  const refreshOnFocus = useCallback(() => {
+    const now = Date.now()
+    if (now - lastFocusRefreshRef.current < 30_000) return
+    lastFocusRefreshRef.current = now
+    const task = connected
+      ? daemonRefreshRef.current('billing')
+      : degradedRefreshRef.current()
+    void task.catch(() => {})
+  }, [connected])
+
+  useInput((input, key) => {
+    if (handleTerminalFocusInput(input, refreshOnFocus)) return
+    handleKey(input, key, {
     onboarding: {
       show: showPicker, providers: pickerProviders, cursor: onboardCursor,
       setCursor: setOnboardCursor, toggle: toggleOnboard, confirm: confirmOnboarding,
@@ -460,7 +476,8 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       exit, showLoader, configReady, toggleWeb, config: cfg, updateConfig,
       cycleAccount, setTab, resetView, slots, refreshAll,
     },
-  }), { isActive: IS_TTY })
+    })
+  }, { isActive: IS_TTY })
 
   if (!config) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
 
@@ -499,7 +516,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, wsTo
       <Box justifyContent="space-between">
         <Box>
           <Text bold color="greenBright">{glyphs().dotSel} tokmon</Text>
-          <Text dimColor>  {glyphs().middot}  every {intervalLabel}s</Text>
+          <Text dimColor>  {glyphs().middot}  usage {intervalLabel}s  {glyphs().middot}  limits {billingIntervalLabel}m</Text>
         </Box>
         <Box>
           {peak && (<><PeakBadge peak={peak} /><Text dimColor>  {glyphs().middot}  </Text></>)}

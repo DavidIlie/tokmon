@@ -5,6 +5,22 @@ import { handleGlobalCommand, handleNavigation } from './keybindings-navigation'
 
 export type { InputKey, KeyContext } from './keybinding-context'
 
+export type TerminalFocusEvent = 'in' | 'out'
+
+/** Ink strips the leading ESC byte from DEC focus-reporting sequences. */
+export function terminalFocusEvent(input: string): TerminalFocusEvent | null {
+  if (input === '[I') return 'in'
+  if (input === '[O') return 'out'
+  return null
+}
+
+export function handleTerminalFocusInput(input: string, onFocusIn: () => void): boolean {
+  const event = terminalFocusEvent(input)
+  if (!event) return false
+  if (event === 'in') onFocusIn()
+  return true
+}
+
 export function isRefreshAllShortcut(input: string, mode: {
   showPicker: boolean
   editingAccount: boolean

@@ -59,6 +59,9 @@ export interface WebAccount {
   summaryState: AccountFetchState
   billingState: AccountFetchState
   tableState: AccountFetchState
+  summaryUpdatedAt: number | null
+  billingUpdatedAt: number | null
+  tableUpdatedAt: number | null
 }
 
 export interface WebProviderInfo {
@@ -72,6 +75,7 @@ export interface WebSnapshot {
   generatedAt: number
   tz: string
   intervalMs: number
+  billingIntervalMs: number
   providers: WebProviderInfo[]
   accounts: WebAccount[]
   seeded: boolean

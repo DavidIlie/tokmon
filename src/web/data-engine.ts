@@ -18,6 +18,16 @@ const IDLE_PAUSE_MS = 60_000
 const SNAPSHOT_CACHE_THROTTLE_MS = 20_000
 const REVEAL_THROTTLE_MS = 500
 const FETCH_TIMEOUT_MS = 30_000
+export const ATTACH_BILLING_MAX_AGE_MS = 30_000
+
+export function billingNeedsCatchUp(
+  accounts: readonly ResolvedAccount[],
+  updatedAt: ReadonlyMap<string, number>,
+  now = Date.now(),
+  maxAgeMs = ATTACH_BILLING_MAX_AGE_MS,
+): boolean {
+  return accounts.some(({ account }) => now - (updatedAt.get(account.id) ?? 0) >= maxAgeMs)
+}
 
 export type RefreshScope = 'all' | 'summary' | 'table' | 'billing' | 'peak'
 
@@ -65,6 +75,9 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   const summaryState = new Map<string, AccountFetchState>()
   const billingState = new Map<string, AccountFetchState>()
   const tableState = new Map<string, AccountFetchState>()
+  const summaryUpdatedAt = new Map<string, number>()
+  const billingUpdatedAt = new Map<string, number>()
+  const tableUpdatedAt = new Map<string, number>()
   let peak: PeakStatus | null = null
   let seeded = false
   let current: WebSnapshot | null = null
@@ -94,8 +107,10 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   }
 
   const buildSnapshot = (): WebSnapshot => assembleSnapshot({
-    version, tz, intervalMs: summaryIntervalMs, resolved, usage, billing,
-    summaryState, billingState, tableState, seeded, peak,
+    version, tz, intervalMs: summaryIntervalMs,
+    billingIntervalMs, resolved, usage, billing,
+    summaryState, billingState, tableState,
+    summaryUpdatedAt, billingUpdatedAt, tableUpdatedAt, seeded, peak,
   })
 
   const hydrateFromCache = () => {
@@ -105,10 +120,20 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       for (const a of cached.accounts) {
         if (a.dashboard || a.table) {
           usage.set(a.id, { dashboard: a.dashboard, table: a.table })
-          if (a.dashboard) summaryState.set(a.id, 'ready')
-          if (a.table) tableState.set(a.id, 'ready')
+          if (a.dashboard) {
+            summaryState.set(a.id, 'ready')
+            if (typeof a.summaryUpdatedAt === 'number') summaryUpdatedAt.set(a.id, a.summaryUpdatedAt)
+          }
+          if (a.table) {
+            tableState.set(a.id, 'ready')
+            if (typeof a.tableUpdatedAt === 'number') tableUpdatedAt.set(a.id, a.tableUpdatedAt)
+          }
         }
-        if (a.billing) { billing.set(a.id, a.billing); billingState.set(a.id, 'ready') }
+        if (a.billing) {
+          billing.set(a.id, a.billing)
+          billingState.set(a.id, 'ready')
+          if (typeof a.billingUpdatedAt === 'number') billingUpdatedAt.set(a.id, a.billingUpdatedAt)
+        }
       }
       seeded = true
       current = buildSnapshot()
@@ -156,23 +181,47 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     fetch: (r: ResolvedAccount) => Promise<T>
     apply: (id: string, value: T) => void
     state: Map<string, AccountFetchState>
+    updatedAt: Map<string, number>
+    concurrent?: boolean
   }): RefreshQueue => createRefreshQueue(
     async () => {
       if (stopped) return
       const epoch = configEpoch
-      const failures: unknown[] = []
-      for (const r of opts.accounts()) {
-        if (stopped) return
-        let value: T | null = null
-        let ok = true
-        try { value = await withTimeout(opts.fetch(r), FETCH_TIMEOUT_MS) } catch (cause) {
-          ok = false
-          failures.push(cause)
+      const fetchOne = async (r: ResolvedAccount) => {
+        try {
+          return { r, ok: true as const, value: await withTimeout(opts.fetch(r), FETCH_TIMEOUT_MS) }
+        } catch (cause) {
+          return { r, ok: false as const, cause }
         }
-        if (stopped || epoch !== configEpoch) return
-        if (ok) { opts.apply(r.account.id, value as T); opts.state.set(r.account.id, 'ready') }
-        else opts.state.set(r.account.id, 'error')
+      }
+      const failures: unknown[] = []
+      const applyResult = (result: Awaited<ReturnType<typeof fetchOne>>) => {
+        const id = result.r.account.id
+        if (result.ok) {
+          opts.apply(id, result.value)
+          opts.state.set(id, 'ready')
+          opts.updatedAt.set(id, Date.now())
+        } else {
+          opts.state.set(id, 'error')
+          failures.push(result.cause)
+        }
         reveal()
+      }
+
+      if (opts.concurrent) {
+        await Promise.all(opts.accounts().map(async r => {
+          const result = await fetchOne(r)
+          if (stopped || epoch !== configEpoch) return
+          applyResult(result)
+        }))
+        if (stopped || epoch !== configEpoch) return
+      } else {
+        for (const r of opts.accounts()) {
+          if (stopped) return
+          const result = await fetchOne(r)
+          if (stopped || epoch !== configEpoch) return
+          applyResult(result)
+        }
       }
       rebuild()
       throwIfRefreshFailures(opts.scope, failures)
@@ -186,6 +235,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     fetch: r => fetchAccountSummary(r.account, tz),
     apply: (id, dashboard) => { usageEntry(id).dashboard = dashboard },
     state: summaryState,
+    updatedAt: summaryUpdatedAt,
   })
 
   const refreshTable = makeRefreshLoop({
@@ -194,6 +244,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     fetch: r => fetchAccountTable(r.account, tz),
     apply: (id, table) => { usageEntry(id).table = table },
     state: tableState,
+    updatedAt: tableUpdatedAt,
   })
 
   const refreshBilling = makeRefreshLoop({
@@ -202,6 +253,8 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     fetch: r => fetchAccountBilling(r.account, tz),
     apply: (id, result) => { billing.set(id, result) },
     state: billingState,
+    updatedAt: billingUpdatedAt,
+    concurrent: true,
   })
 
   const refreshPeak = createRefreshQueue(
@@ -288,6 +341,9 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       for (const map of [summaryState, billingState, tableState]) {
         for (const id of [...map.keys()]) if (!survivors.has(id)) map.delete(id)
       }
+      for (const map of [summaryUpdatedAt, billingUpdatedAt, tableUpdatedAt]) {
+        for (const id of [...map.keys()]) if (!survivors.has(id)) map.delete(id)
+      }
 
       rebuild()
       runInBackground(refreshSummary.run(true))
@@ -314,6 +370,9 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       if (!current || Date.now() - current.generatedAt > summaryIntervalMs) {
         runInBackground(refreshSummary.run(true))
         runInBackground(refreshTable.run(true))
+      }
+      if (billingNeedsCatchUp(billingAccounts, billingUpdatedAt)) {
+        runInBackground(refreshBilling.run())
       }
       return () => { snapshotSubscribers.delete(onSnapshot) }
     },

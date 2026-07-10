@@ -224,6 +224,9 @@ const WebAccountSchema = Schema.Struct({
   summaryState: Schema.Literals(['pending', 'ready', 'error'] as const),
   billingState: Schema.Literals(['pending', 'ready', 'error'] as const),
   tableState: Schema.Literals(['pending', 'ready', 'error'] as const),
+  summaryUpdatedAt: Schema.optionalKey(Schema.NullOr(NonNegativeIntegerSchema)),
+  billingUpdatedAt: Schema.optionalKey(Schema.NullOr(NonNegativeIntegerSchema)),
+  tableUpdatedAt: Schema.optionalKey(Schema.NullOr(NonNegativeIntegerSchema)),
 })
 
 /** Runtime validation for streamed dashboard state; unknown JSON is never trusted. */
@@ -232,6 +235,7 @@ export const WebSnapshotSchema = Schema.Struct({
   generatedAt: NonNegativeIntegerSchema,
   tz: Schema.String,
   intervalMs: PositiveFiniteSchema,
+  billingIntervalMs: Schema.optionalKey(PositiveFiniteSchema),
   providers: Schema.Array(Schema.Struct({
     id: ProviderIdSchema,
     name: Schema.String,

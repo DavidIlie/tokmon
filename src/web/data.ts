@@ -52,12 +52,16 @@ export function assembleSnapshot(opts: {
   version: string
   tz: string
   intervalMs: number
+  billingIntervalMs: number
   resolved: ResolvedAccount[]
   usage: Map<string, { dashboard: DashboardData | null; table: TableData | null }>
   billing: Map<string, BillingResult | null>
   summaryState?: Map<string, AccountFetchState>
   billingState?: Map<string, AccountFetchState>
   tableState?: Map<string, AccountFetchState>
+  summaryUpdatedAt?: Map<string, number>
+  billingUpdatedAt?: Map<string, number>
+  tableUpdatedAt?: Map<string, number>
   seeded?: boolean
   peak?: PeakStatus | null
 }): WebSnapshot {
@@ -81,6 +85,9 @@ export function assembleSnapshot(opts: {
       summaryState: opts.summaryState?.get(r.account.id) ?? 'pending',
       billingState: opts.billingState?.get(r.account.id) ?? 'pending',
       tableState: opts.tableState?.get(r.account.id) ?? 'pending',
+      summaryUpdatedAt: opts.summaryUpdatedAt?.get(r.account.id) ?? null,
+      billingUpdatedAt: opts.billingUpdatedAt?.get(r.account.id) ?? null,
+      tableUpdatedAt: opts.tableUpdatedAt?.get(r.account.id) ?? null,
     }
   })
 
@@ -101,6 +108,7 @@ export function assembleSnapshot(opts: {
     generatedAt: Date.now(),
     tz: opts.tz,
     intervalMs: opts.intervalMs,
+    billingIntervalMs: opts.billingIntervalMs,
     providers,
     accounts,
     seeded: opts.seeded ?? false,
