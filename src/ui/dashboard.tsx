@@ -8,6 +8,7 @@ import type { AccountStats } from '../stats'
 import { Bar, sparkline, metricValueText, truncateName } from './shared'
 import { glyphs } from '../glyphs'
 import { redactEmail } from '../config'
+import { planDisplay, normalizePlan } from './provider-card.logic'
 
 type Item = { account: Account; s: AccountStats | undefined }
 
@@ -171,7 +172,7 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
   const items: Item[] = accounts.map(a => ({ account: a, s: stats.get(a.id) }))
   const dashboards = items.map(i => i.s?.dashboard).filter((d): d is DashboardData => !!d)
   const agg = meta.hasUsage && dashboards.length > 0 ? aggregate(dashboards) : null
-  const plan = items.map(i => i.s?.billing?.plan).find(Boolean) ?? null
+  const planView = planDisplay(items.map(i => i.s?.billing?.plan))
   const activity = items.map(i => i.s?.billing?.activity).find(Boolean) ?? null
   const inner = width - 4
   const hasSpark = !!agg && agg.series.some(v => v > 0)
@@ -184,7 +185,8 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
         <Text color={meta.color}>{glyphs().dot} </Text>
         <Text bold color={meta.color}>{meta.name}</Text>
         <Box flexGrow={1} />
-        {plan && <Text dimColor>{plan}</Text>}
+        {planView.mode === 'header' && <Text dimColor>{planView.plan}</Text>}
+        {planView.mode === 'perRow' && <Text dimColor>{planView.count} accounts</Text>}
       </Box>
 
       {meta.hasUsage && (
@@ -204,7 +206,7 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
       {meta.hasBilling && showBars && (
         <>
           {meta.hasUsage && <Rule inner={inner} />}
-          <LimitsBlock items={items} inner={inner} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={tz} />
+          <LimitsBlock items={items} inner={inner} showRowPlans={planView.mode === 'perRow'} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={tz} />
         </>
       )}
       {meta.hasBilling && !showBars && !meta.hasUsage && (
@@ -278,9 +280,10 @@ function accountTitle(account: Account, billing: BillingResult | null | undefine
   return privacyMode ? redactEmail(title) : title
 }
 
-function LimitsBlock({ items, inner, privacyMode, resetDisplay, tz }: {
+function LimitsBlock({ items, inner, showRowPlans, privacyMode, resetDisplay, tz }: {
   items: Item[]
   inner: number
+  showRowPlans: boolean
   privacyMode?: boolean
   resetDisplay: 'relative' | 'absolute'
   tz?: string
@@ -297,9 +300,24 @@ function LimitsBlock({ items, inner, privacyMode, resetDisplay, tz }: {
         const billing = s?.billing
         return (
           <Box key={account.id} flexDirection="column" marginTop={showName && idx > 0 ? 1 : 0}>
-            {showName && (
-              <Box><Text color={account.color}>{glyphs().dot} </Text><Text bold>{truncateName(accountTitle(account, billing, privacyMode), Math.max(22, inner - 2))}</Text></Box>
-            )}
+            {showName && (() => {
+              const rowPlan = showRowPlans ? normalizePlan(billing?.plan) : null
+              // Reserve the plan column off the name budget so name (left) and plan (right) never collide/wrap.
+              // planCap guarantees the name floor (22) still fits even if a plan were pathologically long:
+              //   dot(2) + nameFloor(22) + gap(1) + planCap <= inner  ⇒  planCap = inner - 25.
+              // planCap < 4 can't hold an ASCII ellipsis without overflowing the row — drop the plan there.
+              const planCap = Math.max(0, inner - 25)
+              const shownPlan = rowPlan && planCap >= 4 ? truncateName(rowPlan, planCap) : ''
+              const planReserve = shownPlan ? shownPlan.length + 1 : 0 // +1 for the gap before the plan
+              const nameBudget = Math.max(22, inner - 2 - planReserve) // -2 for the "• " dot glyph
+              return (
+                <Box>
+                  <Text color={account.color}>{glyphs().dot} </Text>
+                  <Text bold>{truncateName(accountTitle(account, billing, privacyMode), nameBudget)}</Text>
+                  {shownPlan && <><Box flexGrow={1} /><Text dimColor>{shownPlan}</Text></>}
+                </Box>
+              )
+            })()}
             {!billing ? (
               <Text dimColor>Fetching{glyphs().ellipsis}</Text>
             ) : billing.error ? (
