@@ -29,13 +29,36 @@ export async function detectOpencode(homeDir?: string): Promise<boolean> {
   return (await findDb(homeDir)) !== null
 }
 
+// opencode's tokens.output already includes reasoning tokens (empirically,
+// tokens.total = input + output + cache.read + cache.write with reasoning
+// excluded), so we must NOT add reasoning again or output/total inflates.
+export function rowToEntry(row: Record<string, unknown>): Entry | null {
+  const ts = finitePositive(row.ts)
+  if (!ts) return null
+  const input = finitePositive(row.input)
+  const output = finitePositive(row.output)
+  const cacheRead = finitePositive(row.cacheRead)
+  const cacheCreate = finitePositive(row.cacheWrite)
+  if (input + output + cacheRead + cacheCreate === 0) return null
+  return {
+    ts,
+    model: typeof row.model === 'string' && row.model ? row.model : 'unknown',
+    cost: finitePositive(row.cost),
+    input,
+    output,
+    cacheCreate,
+    cacheRead,
+    cacheSavings: 0,
+  }
+}
+
 async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   const db = await findDb(homeDir)
   if (!db) return []
   const sql =
     "SELECT CASE WHEN time_created < 10000000000 THEN time_created * 1000 ELSE time_created END AS ts, json_extract(data,'$.modelID') AS model, " +
     "json_extract(data,'$.cost') AS cost, json_extract(data,'$.tokens.input') AS input, " +
-    "json_extract(data,'$.tokens.output') AS output, json_extract(data,'$.tokens.reasoning') AS reasoning, " +
+    "json_extract(data,'$.tokens.output') AS output, " +
     "json_extract(data,'$.tokens.cache.read') AS cacheRead, json_extract(data,'$.tokens.cache.write') AS cacheWrite " +
     "FROM message WHERE json_valid(data) AND json_extract(data,'$.role')='assistant' " +
     "AND json_type(data,'$.tokens')='object' AND (CASE WHEN time_created < 10000000000 THEN time_created * 1000 ELSE time_created END) >= ?;"
@@ -43,23 +66,8 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   if (res.status !== 'ok') return []
   const entries: Entry[] = []
   for (const row of res.rows) {
-    const ts = finitePositive(row.ts)
-    if (!ts) continue
-    const input = finitePositive(row.input)
-    const output = finitePositive(row.output) + finitePositive(row.reasoning)
-    const cacheRead = finitePositive(row.cacheRead)
-    const cacheCreate = finitePositive(row.cacheWrite)
-    if (input + output + cacheRead + cacheCreate === 0) continue
-    entries.push({
-      ts,
-      model: typeof row.model === 'string' && row.model ? row.model : 'unknown',
-      cost: finitePositive(row.cost),
-      input,
-      output,
-      cacheCreate,
-      cacheRead,
-      cacheSavings: 0,
-    })
+    const entry = rowToEntry(row)
+    if (entry) entries.push(entry)
   }
   return entries
 }

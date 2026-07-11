@@ -5,4 +5,5 @@ export interface AccountStats {
   account: Account
   dashboard: DashboardData | null
   billing: BillingResult | null
+  billingUpdatedAt?: number | null
 }

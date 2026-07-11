@@ -8,7 +8,7 @@ import type { AccountStats } from '../stats'
 import { Bar, sparkline, metricValueText, truncateName } from './shared'
 import { glyphs } from '../glyphs'
 import { redactEmail } from '../config'
-import { planDisplay, normalizePlan } from './provider-card.logic'
+import { planDisplay, normalizePlan, billingStaleLabel } from './provider-card.logic'
 
 type Item = { account: Account; s: AccountStats | undefined }
 
@@ -43,7 +43,10 @@ export function estimateCardHeights(
       if (meta.hasUsage) h += 1 // rule
       const multi = g.accounts.length > 1
       g.accounts.forEach((a, i) => {
-        const metricRows = stats.get(a.id)?.billing?.metrics.length || 1
+        const s = stats.get(a.id)
+        const staleRow = s?.billing && !s.billing.error && s.billing.metrics.length > 0
+          && billingStaleLabel(s.billing.asOfMs ?? s.billingUpdatedAt, Date.now()) ? 1 : 0
+        const metricRows = (s?.billing?.metrics.length || 1) + staleRow
         h += metricRows + (multi ? 1 : 0) + (multi && i > 0 ? 1 : 0) // name row + gap between accounts
       })
     }
@@ -298,6 +301,9 @@ function LimitsBlock({ items, inner, showRowPlans, privacyMode, resetDisplay, tz
     <Box flexDirection="column">
       {items.map(({ account, s }, idx) => {
         const billing = s?.billing
+        const staleLabel = billing && !billing.error && billing.metrics.length > 0
+          ? billingStaleLabel(billing.asOfMs ?? s?.billingUpdatedAt, Date.now())
+          : null
         return (
           <Box key={account.id} flexDirection="column" marginTop={showName && idx > 0 ? 1 : 0}>
             {showName && (() => {
@@ -327,6 +333,7 @@ function LimitsBlock({ items, inner, showRowPlans, privacyMode, resetDisplay, tz
             ) : (
               billing.metrics.map((m, i) => <MetricRow key={`${m.label}${i}`} m={m} color={account.color} barW={barW} labelW={labelW} resetW={resetW} resetDisplay={resetDisplay} tz={tz} />)
             )}
+            {staleLabel && <Text color="yellow" dimColor>{glyphs().warn} {staleLabel} {glyphs().middot} refreshing{glyphs().ellipsis}</Text>}
           </Box>
         )
       })}

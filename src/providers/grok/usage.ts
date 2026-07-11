@@ -57,17 +57,30 @@ export async function detectGrok(homeDir?: string): Promise<boolean> {
   return false
 }
 
+/** Most-recently-modified first; ties broken by name for determinism. */
+async function byMtimeDesc(dir: string, names: string[]): Promise<string[]> {
+  const stated = await Promise.all(names.map(async (name) => {
+    const st = await fsStat(join(dir, name)).catch(() => null)
+    return { name, mtimeMs: st ? st.mtimeMs : -Infinity }
+  }))
+  stated.sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name))
+  return stated.map((s) => s.name)
+}
+
 async function loadSessionModels(home: string): Promise<Map<string, string>> {
   const out = new Map<string, string>()
   const sessionsRoot = join(home, 'sessions')
   let groups: string[]
   try { groups = await readdir(sessionsRoot) } catch { return out }
-  for (const group of groups.sort().reverse().slice(0, MAX_SESSION_GROUPS)) {
-    if (group === 'session_search.sqlite' || group.startsWith('.')) continue
+  const groupNames = groups.filter((g) => g !== 'session_search.sqlite' && !g.startsWith('.'))
+  const orderedGroups = (await byMtimeDesc(sessionsRoot, groupNames)).slice(0, MAX_SESSION_GROUPS)
+  for (const group of orderedGroups) {
     const groupDir = join(sessionsRoot, group)
     let sessions: string[]
     try { sessions = await readdir(groupDir) } catch { continue }
-    for (const sid of sessions.sort().reverse().slice(0, MAX_SESSIONS_PER_GROUP)) {
+    const sessionNames = sessions.filter((s) => !s.startsWith('.'))
+    const orderedSessions = (await byMtimeDesc(groupDir, sessionNames)).slice(0, MAX_SESSIONS_PER_GROUP)
+    for (const sid of orderedSessions) {
       try {
         const raw = JSON.parse(await readFile(join(groupDir, sid, 'summary.json'), 'utf-8'))
         const model = typeof raw?.current_model_id === 'string' && raw.current_model_id
@@ -108,20 +121,40 @@ function costOf(model: string, input: number, cacheRead: number, output: number)
   return { cost, cacheSavings }
 }
 
-async function parseUnifiedLog(path: string, models: Map<string, string>): Promise<Entry[]> {
+// The default when a turn's model can't be determined from log or summary.
+const DEFAULT_MODEL = 'grok-4.5'
+
+/** A model-change event's new active model, if this line is one. */
+function modelChangeFrom(obj: { msg?: unknown; ctx?: unknown }): string | null {
+  if (obj?.msg !== 'model changed' && obj?.msg !== 'backend_search: model switch') return null
+  const ctx = obj.ctx
+  if (!ctx || typeof ctx !== 'object') return null
+  const c = ctx as { model?: unknown; new_model?: unknown }
+  const model = typeof c.model === 'string' ? c.model : typeof c.new_model === 'string' ? c.new_model : null
+  return model && model.trim() ? model : null
+}
+
+export async function parseUnifiedLog(path: string, models: Map<string, string>): Promise<Entry[]> {
   const entries: Entry[] = []
+  // Per-session running model, updated as "model changed" events stream past in log order.
+  // inference_done carries no model field, so the active model is derived from these events;
+  // before the first such event we fall back to summary.json, then the default tier.
+  const activeModel = new Map<string, string>()
   const input = createReadStream(path)
   input.on('error', () => {})
   const rl = createInterface({ input, crlfDelay: Infinity })
   try {
     for await (const line of rl) {
-      if (!line.includes('shell.turn.inference_done')) continue
+      const isTurn = line.includes('shell.turn.inference_done')
+      if (!isTurn && !line.includes('model changed') && !line.includes('model switch')) continue
       try {
         const obj = JSON.parse(line.charCodeAt(0) === 0xFEFF ? line.slice(1) : line)
+        const sid = typeof obj.sid === 'string' ? obj.sid : 'unknown'
+        const switched = modelChangeFrom(obj)
+        if (switched) { activeModel.set(sid, switched); continue }
         if (obj?.msg !== 'shell.turn.inference_done' || !obj.ctx) continue
         const ts = Date.parse(String(obj.ts ?? ''))
         if (!Number.isFinite(ts)) continue
-        const sid = typeof obj.sid === 'string' ? obj.sid : 'unknown'
         const ctx = obj.ctx
         const prompt = safeNum(ctx.prompt_tokens)
         const cached = safeNum(ctx.cached_prompt_tokens)
@@ -131,7 +164,7 @@ async function parseUnifiedLog(path: string, models: Map<string, string>): Promi
         const cacheRead = cached
         const output = completion
         if (inputTokens + cacheRead + output <= 0) continue
-        const model = models.get(sid) ?? 'grok-4.5'
+        const model = activeModel.get(sid) ?? models.get(sid) ?? DEFAULT_MODEL
         const { cost, cacheSavings } = costOf(model, inputTokens, cacheRead, output)
         const loop = safeNum(ctx.loop_index)
         entries.push({
@@ -170,7 +203,7 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
     files,
     async (path) => parseUnifiedLog(path, modelByHome.get(path) ?? new Map()),
     since,
-    { fingerprint: { parser: `grok-unified-v2.${grokModelMapFingerprint(modelByHome)}` } },
+    { fingerprint: { parser: `grok-unified-v3.${grokModelMapFingerprint(modelByHome)}` } },
   )
 }
 

@@ -208,6 +208,7 @@ const BillingResultSchema = Schema.Struct({
     usd: Schema.Finite,
     requests: Schema.Finite,
   })))),
+  asOfMs: Schema.optionalKey(Schema.Finite),
 })
 
 const WebAccountSchema = Schema.Struct({

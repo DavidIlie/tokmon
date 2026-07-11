@@ -3,7 +3,33 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { flushDisk, lastDayKeys, loadCachedEntries, tabulate, type Entry } from './usage-core'
+import {
+  SPARK_DAYS,
+  dedupe,
+  flushDisk,
+  lastDayKeys,
+  loadCachedEntries,
+  summarize,
+  tabulate,
+  type Entry,
+} from './usage-core'
+import { startOfDay, startOfMonth, startOfWeek } from '../tz'
+
+// Build a fully populated Entry, overriding only the fields a test cares about.
+// Every numeric field defaults to a distinct value so accidental cross-field
+// bleed is visible.
+function mk(over: Partial<Entry> & Pick<Entry, 'ts'>): Entry {
+  return {
+    model: 'm',
+    cost: 0,
+    input: 0,
+    output: 0,
+    cacheCreate: 0,
+    cacheRead: 0,
+    cacheSavings: 0,
+    ...over,
+  }
+}
 
 test('calendar-day series remain unique and consecutive across DST changes', () => {
   assert.deepEqual(
@@ -44,4 +70,163 @@ test('request counts survive aggregation and the persisted row codec', async () 
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+const NY = 'America/New_York'
+
+test('summarize buckets a local-midnight entry into today/week/month with full token accounting', () => {
+  const now = Date.now()
+  // An entry at the exact NY local midnight of the current day is inside all
+  // three windows, because week/month starts are never after the day start.
+  const e = mk({ ts: startOfDay(now, NY), cost: 12, input: 1, output: 2, cacheCreate: 3, cacheRead: 4, cacheSavings: 5 })
+  const { today, week, month, series } = summarize([e], NY)
+
+  // tokens must be input + output + cacheCreate + cacheRead (not cacheSavings).
+  assert.equal(today.tokens, 1 + 2 + 3 + 4)
+  assert.equal(today.cost, 12)
+  assert.equal(today.input, 1)
+  assert.equal(today.cacheRead, 4)
+  assert.equal(today.cacheSavings, 5)
+
+  // The same entry aggregates identically in the wider windows.
+  assert.deepEqual(week, today)
+  assert.deepEqual(month, today)
+
+  // The spark series is SPARK_DAYS long and today's cost lands in its last slot.
+  assert.equal(series.length, SPARK_DAYS)
+  assert.equal(series[SPARK_DAYS - 1], 12)
+})
+
+test('summarize excludes the instant before local midnight from today (non-UTC tz)', () => {
+  const now = Date.now()
+  const todayStart = startOfDay(now, NY)
+  const inToday = mk({ ts: todayStart, cost: 10, input: 1, output: 2, cacheCreate: 3, cacheRead: 4 })
+  // 23:59:59.999 of the previous NY day — one ms before the boundary.
+  const beforeMidnight = mk({ ts: todayStart - 1, cost: 999, input: 100, output: 100, cacheCreate: 100, cacheRead: 100 })
+
+  const { today } = summarize([beforeMidnight, inToday], NY)
+  assert.equal(today.cost, 10)
+  assert.equal(today.tokens, 1 + 2 + 3 + 4)
+})
+
+test('summarize week window rolls over at the Monday boundary', () => {
+  const now = Date.now()
+  const weekStart = startOfWeek(now, NY)
+  const inWeek = mk({ ts: weekStart, cost: 7 })
+  const beforeWeek = mk({ ts: weekStart - 1, cost: 500 })
+
+  const { week } = summarize([beforeWeek, inWeek], NY)
+  assert.equal(week.cost, 7)
+})
+
+test('summarize month window rolls over at the 1st-of-month boundary', () => {
+  const now = Date.now()
+  const monthStart = startOfMonth(now, NY)
+  const inMonth = mk({ ts: monthStart, cost: 9 })
+  const beforeMonth = mk({ ts: monthStart - 1, cost: 500 })
+
+  const { month } = summarize([beforeMonth, inMonth], NY)
+  assert.equal(month.cost, 9)
+})
+
+test('summarize burn rate is zero when no entry falls in today', () => {
+  const now = Date.now()
+  // Entirely before today's local midnight: hadToday stays false.
+  const e = mk({ ts: startOfDay(now, NY) - 1, cost: 100, input: 5, output: 5 })
+  const { today, burnRate } = summarize([e], NY)
+  assert.equal(today.cost, 0)
+  assert.equal(burnRate, 0)
+})
+
+test('summarize burn rate applies the 1-minute floor for a just-now entry', () => {
+  const now = Date.now()
+  // ts == now is always >= today's local midnight, and the elapsed time inside
+  // summarize is well under a minute, so hrs is floored to 1/60.
+  const e = mk({ ts: now, cost: 2 })
+  const { today, burnRate } = summarize([e], NY)
+  assert.equal(today.cost, 2)
+  assert.equal(burnRate, 2 / (1 / 60))
+})
+
+test('summarize burn rate divides today cost by hours since the oldest today entry', () => {
+  const now = Date.now()
+  // One second into today: guaranteed to be inside the today window regardless
+  // of wall-clock, and becomes oldestToday.
+  const oldestTs = startOfDay(now, NY) + 1000
+  const cost = 12
+  const { burnRate } = summarize([mk({ ts: oldestTs, cost })], NY)
+
+  // summarize captures its own Date.now() at or after ours; bound it generously.
+  const slackMs = 60_000
+  const hrsAtLeast = Math.max((now - oldestTs) / 3_600_000, 1 / 60)
+  const hrsAtMost = Math.max((now + slackMs - oldestTs) / 3_600_000, 1 / 60)
+  const burnHigh = cost / hrsAtLeast
+  const burnLow = cost / hrsAtMost
+
+  assert.ok(burnRate > 0)
+  assert.ok(
+    burnRate >= burnLow - 1e-9 && burnRate <= burnHigh + 1e-9,
+    `burnRate ${burnRate} outside [${burnLow}, ${burnHigh}]`,
+  )
+})
+
+test('dedupe collapses duplicate ids keeping the last, and preserves first-seen order', () => {
+  const out = dedupe([
+    mk({ ts: 1000, id: 'a', cost: 1 }),
+    mk({ ts: 2000, id: 'b', cost: 5 }),
+    mk({ ts: 3000, id: 'a', cost: 9 }),
+  ])
+  // 'a' appears once (last write wins on value) and holds its first-seen slot.
+  assert.equal(out.length, 2)
+  assert.deepEqual(out.map(e => e.id), ['a', 'b'])
+  assert.equal(out[0].cost, 9)
+  assert.equal(out[0].ts, 3000)
+  assert.equal(out[1].cost, 5)
+})
+
+test('dedupe keeps distinct ids and drops non-positive timestamps', () => {
+  const out = dedupe([
+    mk({ ts: 1000, id: 'x' }),
+    mk({ ts: 2000, id: 'y' }),
+    mk({ ts: 0, id: 'z' }),
+    mk({ ts: -5, id: 'w' }),
+    mk({ ts: Number.NaN, id: 'q' }),
+  ])
+  assert.deepEqual(out.map(e => e.id).sort(), ['x', 'y'])
+})
+
+test('dedupe collapses id-less entries only when every content field matches', () => {
+  const base = { ts: 1000, model: 'm', input: 1, output: 2, cacheCreate: 3, cacheRead: 4, cost: 5 } as const
+  const collapsed = dedupe([mk({ ...base, cacheSavings: 1 }), mk({ ...base, cacheSavings: 2 })])
+  // cacheSavings is not part of the fallback key, so these collapse to one.
+  assert.equal(collapsed.length, 1)
+
+  const distinct = dedupe([mk({ ...base }), mk({ ...base, cost: 6 })])
+  assert.equal(distinct.length, 2)
+})
+
+test('tabulate groups rows per day with per-model breakdowns', () => {
+  const entries = [
+    mk({ ts: Date.parse('2026-07-09T10:00:00Z'), model: 'm1', input: 10, output: 20, cost: 1, count: 1 }),
+    mk({ ts: Date.parse('2026-07-09T14:00:00Z'), model: 'm2', input: 5, output: 0, cost: 2, count: 3 }),
+    mk({ ts: Date.parse('2026-07-10T09:00:00Z'), model: 'm1', input: 1, output: 1, cost: 0.5, count: 1 }),
+  ]
+  const { daily } = tabulate(entries, 'UTC')
+
+  assert.deepEqual(daily.map(r => r.label), ['2026-07-09', '2026-07-10'])
+
+  const day1 = daily[0]
+  assert.deepEqual(day1.models, ['m1', 'm2'])
+  assert.equal(day1.input, 15)
+  assert.equal(day1.output, 20)
+  assert.equal(day1.total, 15 + 20)
+  assert.equal(day1.cost, 3)
+  assert.equal(day1.count, 4)
+  // breakdown is sorted by descending cost: m2 (2) before m1 (1).
+  assert.deepEqual(day1.breakdown.map(m => m.name), ['m2', 'm1'])
+
+  const day2 = daily[1]
+  assert.deepEqual(day2.models, ['m1'])
+  assert.equal(day2.total, 2)
+  assert.equal(day2.count, 1)
 })

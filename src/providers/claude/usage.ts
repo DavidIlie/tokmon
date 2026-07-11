@@ -65,7 +65,10 @@ export async function detectClaude(homeDir?: string): Promise<boolean> {
 }
 
 export function claudePriceFor(model: string, timestamp = Date.now()) {
-  const m = model.toLowerCase().trim()
+  // Strip a trailing context-window tag (e.g. the `[1m]` long-context suffix) so
+  // 'claude-opus-4-8[1m]' prices the same as 'claude-opus-4-8' instead of falling
+  // through to a shorter legacy key (overcharge) or matching nothing (zero price).
+  const m = model.toLowerCase().trim().replace(/\[[^\]]*\]$/, '')
   for (const key of PRICE_KEYS) {
     if (!m.startsWith(key)) continue
     const rest = m.slice(key.length)

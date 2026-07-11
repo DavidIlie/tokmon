@@ -21,6 +21,7 @@ export function toStatsMap(
       account,
       dashboard: wa?.dashboard ?? null,
       billing: wa?.billing ?? null,
+      billingUpdatedAt: wa?.billingUpdatedAt ?? null,
     })
   }
   return out

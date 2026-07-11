@@ -15,7 +15,10 @@ interface GoogleOAuthClient {
   clientId: string
   clientSecret: string
 }
-let cachedClient: GoogleOAuthClient | null | undefined
+// Only a *successful* discovery is memoized.  A transient failure (gemini-cli
+// not installed yet, spawnSync timeout under load) must be retried on the next
+// call, or one blip permanently breaks token refresh in the long-running daemon.
+let cachedClient: GoogleOAuthClient | undefined
 
 const OAUTH_TOKEN_KEY = 'antigravityUnifiedStateSync.oauthToken'
 const OAUTH_TOKEN_SENTINEL = 'oauthTokenInfoSentinelKey'
@@ -222,12 +225,26 @@ async function discoverGoogleOAuthClient(): Promise<GoogleOAuthClient | null> {
   return null
 }
 
-async function resolveGoogleClient(): Promise<GoogleOAuthClient | null> {
+// Indirection so tests can drive discovery deterministically without spawning
+// npm/gemini or touching the filesystem.
+let discoverClient: () => Promise<GoogleOAuthClient | null> = discoverGoogleOAuthClient
+
+export async function resolveGoogleClient(): Promise<GoogleOAuthClient | null> {
   const envId = process.env.TOKMON_GOOGLE_CLIENT_ID?.trim()
   const envSecret = process.env.TOKMON_GOOGLE_CLIENT_SECRET?.trim()
   if (envId && envSecret) return { clientId: envId, clientSecret: envSecret }
-  if (cachedClient === undefined) cachedClient = await discoverGoogleOAuthClient()
+  if (cachedClient == null) {
+    const client = await discoverClient()
+    if (client) cachedClient = client
+    return client
+  }
   return cachedClient
+}
+
+/** Test-only: override discovery and clear the memoized client. */
+export function __setDiscoverClientForTest(fn: (() => Promise<GoogleOAuthClient | null>) | null): void {
+  discoverClient = fn ?? discoverGoogleOAuthClient
+  cachedClient = undefined
 }
 
 export async function refreshAccessToken(refreshToken: string | null | undefined): Promise<string | null> {

@@ -35,6 +35,14 @@ export async function cursorModelSpend(homeDir?: string): Promise<CursorSpend | 
   return { total, models }
 }
 
+// Buckets each conversation's per-model lifetime spend onto its createdAt day.
+// usageData is a per-model aggregate ($.costInCents / $.amount) with no per-usage
+// or lastUpdatedAt timestamp, so createdAt is the only usage-time proxy available
+// without walking bubbles — a documented limitation: spend billed on days after
+// createdAt is attributed to createdAt. When the Cursor API is reachable it is
+// treated as authoritative for its covered window (see overlayEntries in usage.ts),
+// which is what actually drives the day/week/month totals; these local rows only
+// fill days outside that window.
 const USAGE_SQL =
   "SELECT json_extract(c.value,'$.createdAt') AS createdAt, mk.key AS model, " +
   "sum(json_extract(mk.value,'$.costInCents')) AS cents, " +

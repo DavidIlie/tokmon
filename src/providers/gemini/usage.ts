@@ -6,23 +6,28 @@ import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
 import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince, walkFiles } from '../usage-core'
 
-const PRICING: Record<string, { in: number; out: number; cr: number }> = {
-  'gemini-3.1-pro-preview': { in: 2e-6, out: 12e-6, cr: 0.2e-6 },
-  'gemini-3.1-pro': { in: 2e-6, out: 12e-6, cr: 0.2e-6 },
-  'gemini-3-pro-preview': { in: 2e-6, out: 12e-6, cr: 0.2e-6 },
-  'gemini-3-pro': { in: 2e-6, out: 12e-6, cr: 0.2e-6 },
+type Price = { in: number; out: number; cr: number }
+// `long` is the >200k-prompt-token tier for models that publish long-context
+// pricing; it is selected uniformly in geminiPriceFor when promptTokens > 200_000.
+const PRICING: Record<string, Price & { long?: Price }> = {
+  'gemini-3.1-pro-preview': { in: 2e-6, out: 12e-6, cr: 0.2e-6, long: { in: 4e-6, out: 18e-6, cr: 0.4e-6 } },
+  'gemini-3.1-pro': { in: 2e-6, out: 12e-6, cr: 0.2e-6, long: { in: 4e-6, out: 18e-6, cr: 0.4e-6 } },
+  'gemini-3-pro-preview': { in: 2e-6, out: 12e-6, cr: 0.2e-6, long: { in: 4e-6, out: 18e-6, cr: 0.4e-6 } },
+  'gemini-3-pro': { in: 2e-6, out: 12e-6, cr: 0.2e-6, long: { in: 4e-6, out: 18e-6, cr: 0.4e-6 } },
   'gemini-3.5-flash': { in: 0.75e-6, out: 4.5e-6, cr: 0.075e-6 },
   'gemini-3-flash-preview': { in: 0.5e-6, out: 3e-6, cr: 0.05e-6 },
   'gemini-3-flash': { in: 0.5e-6, out: 3e-6, cr: 0.05e-6 },
   'gemini-2.5-flash-lite': { in: 0.1e-6, out: 0.4e-6, cr: 0.01e-6 },
   'gemini-3.1-flash-lite': { in: 0.25e-6, out: 1.5e-6, cr: 0.025e-6 },
   'gemini-2.5-flash': { in: 0.3e-6, out: 2.5e-6, cr: 0.03e-6 },
-  'gemini-2.5-pro': { in: 1.25e-6, out: 10e-6, cr: 0.125e-6 },
+  'gemini-2.5-pro': { in: 1.25e-6, out: 10e-6, cr: 0.125e-6, long: { in: 2.5e-6, out: 15e-6, cr: 0.25e-6 } },
   'gemini-2.0-flash': { in: 0.1e-6, out: 0.4e-6, cr: 0.025e-6 },
 }
 const PRICE_KEYS = Object.keys(PRICING).sort((a, b) => b.length - a.length)
-const ZERO_PRICE = { in: 0, out: 0, cr: 0 }
-const GEMINI_31_PRO_LONG_PRICE = { in: 4e-6, out: 18e-6, cr: 0.4e-6 }
+// Unknown/new Gemini models are priced at the current flagship pro rate rather
+// than $0 — a slightly-wrong estimate beats silently free usage when Google
+// ships a model this table doesn't know yet.
+const FALLBACK_PRICE = PRICING['gemini-3.1-pro']
 const MAX_SESSION_FILE_BYTES = 16 * 1024 * 1024
 const MAX_JSON_ENTRIES = 100_000
 
@@ -30,17 +35,19 @@ export function geminiTmpDir(homeDir?: string): string {
   return join(homeDir ?? homedir(), '.gemini', 'tmp')
 }
 
-export function geminiPriceFor(model: string, promptTokens = 0) {
-  const m = model.toLowerCase().trim()
+function resolvePricing(m: string): Price & { long?: Price } {
   for (const key of PRICE_KEYS) {
     if (!m.startsWith(key)) continue
     const rest = m.slice(key.length)
-    if (rest === '' || rest[0] === '-') {
-      if (key.startsWith('gemini-3.1-pro') && promptTokens > 200_000) return GEMINI_31_PRO_LONG_PRICE
-      return PRICING[key]
-    }
+    if (rest === '' || rest[0] === '-') return PRICING[key]
   }
-  return ZERO_PRICE
+  return FALLBACK_PRICE
+}
+
+export function geminiPriceFor(model: string, promptTokens = 0): Price {
+  const p = resolvePricing(model.toLowerCase().trim())
+  if (promptTokens > 200_000 && p.long) return p.long
+  return { in: p.in, out: p.out, cr: p.cr }
 }
 
 function shortModel(model: string): string {

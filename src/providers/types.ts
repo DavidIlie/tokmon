@@ -35,6 +35,9 @@ export interface BillingResult {
   displayName?: string | null
   activity?: { series: number[]; summary: string } | null
   modelSpend?: { name: string; usd: number; requests: number }[] | null
+  /** When the metrics were actually observed, when older than the fetch itself
+   * (e.g. served from an offline snapshot) — lets the UI flag stale data. */
+  asOfMs?: number
 }
 
 export interface Provider {

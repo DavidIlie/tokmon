@@ -192,7 +192,7 @@ async function fetchResetCredits(headers: Record<string, string>): Promise<numbe
   }
 }
 
-async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {
+async function liveBilling(auth: CodexAuth, failure?: { status?: number }): Promise<BillingResult | null> {
   try {
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${auth.accessToken}`,
@@ -202,7 +202,10 @@ async function liveBilling(auth: CodexAuth): Promise<BillingResult | null> {
     if (auth.accountId) headers['ChatGPT-Account-Id'] = auth.accountId
 
     const res = await fetch(USAGE_URL, { headers, signal: AbortSignal.timeout(10000) })
-    if (!res.ok) return null
+    if (!res.ok) {
+      if (failure) failure.status = res.status
+      return null
+    }
     const data = await readJson<any>(res)
     if (!data) return null
 
@@ -309,21 +312,24 @@ async function snapshotBilling(homeDir?: string, auth: CodexAuth | null = null):
 
 export async function codexBilling(account: Account): Promise<BillingResult> {
   const auth = await getAuth(account.homeDir)
+  const failure: { status?: number } = {}
   if (auth) {
-    const live = await liveBilling(auth)
+    const live = await liveBilling(auth, failure)
     if (live) return live
   }
   const snap = await snapshotBilling(account.homeDir, auth)
   // Serve offline snapshots while they're plausibly current; a day-old snapshot
-  // behind a failing live API is misinformation, not data.
+  // behind a failing live API is misinformation, not data. asOfMs stays on the
+  // result so the UI can flag how old the served numbers really are.
   if (snap && Date.now() - snap.asOfMs < SNAPSHOT_STALE_MS) {
-    const { asOfMs: _asOfMs, ...result } = snap
-    return result
+    return snap
   }
   return {
     plan: auth?.plan ?? snap?.plan ?? null,
     metrics: [],
-    error: auth ? 'Usage API failed — run codex to refresh' : 'Not logged in — run codex',
+    error: auth
+      ? `Usage API failed${failure.status ? ` (HTTP ${failure.status})` : ''} — run codex to refresh`
+      : 'Not logged in — run codex',
     ...identityFields(auth),
   }
 }

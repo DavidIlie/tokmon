@@ -224,7 +224,7 @@ function boolValue(value: unknown): boolean {
   return false
 }
 
-function resetFrom(value: unknown): string | null {
+export function resetFrom(value: unknown): string | null {
   if (typeof value === 'string' && value.trim()) {
     const timestamp = Date.parse(value)
     return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null
@@ -234,7 +234,7 @@ function resetFrom(value: unknown): string | null {
   return msToIso(Math.abs(n) < 10_000_000_000 ? n * 1000 : n)
 }
 
-function usageMetric(label: string, window: UsageWindow | null | undefined, primary?: boolean): Metric | null {
+export function usageMetric(label: string, window: UsageWindow | null | undefined, primary?: boolean): Metric | null {
   const used = numberValue(window?.utilization)
   if (used === undefined) return null
   return { ...pct(used, resetFrom(window?.resets_at), primary), label }
@@ -278,7 +278,7 @@ function limitIsSession(entry: unknown): boolean {
     || nonEmptyString(o.kind)?.toLowerCase() === 'session'
 }
 
-function limitMetric(entry: unknown, primary?: boolean): Metric | null {
+export function limitMetric(entry: unknown, primary?: boolean): Metric | null {
   const o = recordValue(entry)
   if (!o) return null
   const used = numberValue(o.percent)

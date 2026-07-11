@@ -127,7 +127,7 @@ async function fetchApiEntries(homeDir?: string): Promise<{ entries: Entry[]; co
   }
 }
 
-interface LocalDayEntry {
+export interface LocalDayEntry {
   /** Timezone-local day label from composer (YYYY-MM-DD) — keep as-is for overlay. */
   day: string
   entry: Entry
@@ -175,11 +175,33 @@ async function fetchLocalEntries(tz: string, homeDir?: string): Promise<LocalDay
   return out
 }
 
-function overlayEntries(api: Entry[], local: LocalDayEntry[], tz: string): Entry[] {
+export function overlayEntries(api: Entry[], local: LocalDayEntry[], tz: string): Entry[] {
   if (api.length === 0) return local.map(l => l.entry)
   if (local.length === 0) return api
-  const apiDays = new Set(api.map(e => dayKey(e.ts, tz)))
-  return [...api, ...local.filter(l => !apiDays.has(l.day)).map(l => l.entry)]
+  // The API is authoritative for the window it actually covers. It buckets every
+  // charged request by real event time, so any conversation whose usage lands in
+  // that window is already counted there. Local composer rows, by contrast, bucket
+  // a conversation's whole-lifetime spend onto its createdAt day. Suppressing local
+  // rows only on days that happen to carry an API event (the old behaviour) double-
+  // counted a conversation created on a quiet day but billed by the API on later
+  // days inside the window. So treat [minApiDay, maxApiDay] as authoritative and let
+  // local rows contribute only for days entirely outside it (older history the API
+  // window predates, or very recent days the API hasn't caught up on yet).
+  //
+  // NOTE (documented limitation): local spend is still bucketed by createdAt because
+  // composer usageData is a per-model lifetime aggregate with no per-usage timestamp,
+  // so a single conversation straddling the window edge can still be partially
+  // double-counted. The overlay bound above removes the common in-window case.
+  let apiMin = Infinity
+  let apiMax = -Infinity
+  for (const e of api) {
+    if (e.ts < apiMin) apiMin = e.ts
+    if (e.ts > apiMax) apiMax = e.ts
+  }
+  const minDay = dayKey(apiMin, tz)
+  const maxDay = dayKey(apiMax, tz)
+  // day labels are YYYY-MM-DD, so lexicographic compare == chronological compare.
+  return [...api, ...local.filter(l => l.day < minDay || l.day > maxDay).map(l => l.entry)]
 }
 
 async function cursorEntries(since: number, tz: string, homeDir?: string): Promise<Entry[]> {

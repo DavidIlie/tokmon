@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { normalizePlan, planDisplay } from './provider-card.logic'
+import { normalizePlan, planDisplay, billingStaleLabel, BILLING_STALE_AFTER_MS } from './provider-card.logic'
 
 test('normalizePlan treats absent/empty/whitespace as null and trims otherwise', () => {
   assert.equal(normalizePlan(null), null)
@@ -41,4 +41,15 @@ test('planDisplay counts a null among named plans as differing', () => {
 test('planDisplay shows nothing when every account plan is absent', () => {
   assert.deepEqual(planDisplay([null, null]), { mode: 'none' })
   assert.deepEqual(planDisplay([null, null, null]), { mode: 'none' })
+})
+
+test('billingStaleLabel flags only data older than the stale threshold', () => {
+  const now = 1_783_800_000_000
+  assert.equal(billingStaleLabel(null, now), null)
+  assert.equal(billingStaleLabel(undefined, now), null)
+  assert.equal(billingStaleLabel(0, now), null)
+  assert.equal(billingStaleLabel(now, now), null)
+  assert.equal(billingStaleLabel(now - BILLING_STALE_AFTER_MS + 1, now), null)
+  assert.equal(billingStaleLabel(now - BILLING_STALE_AFTER_MS, now), 'as of 30m ago')
+  assert.equal(billingStaleLabel(now - 10 * 3_600_000, now), 'as of 10h ago')
 })
