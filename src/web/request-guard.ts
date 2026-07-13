@@ -22,11 +22,15 @@ export function isLoopbackHostHeader(value: string | undefined): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
 }
 
-export function isAllowedHostHeader(value: string | undefined, allowNetworkAccess: boolean): boolean {
+export function isAllowedHostHeader(
+  value: string | undefined,
+  allowNetworkAccess: boolean,
+  allowedHosts: readonly string[] = [],
+): boolean {
   if (isLoopbackHostHeader(value)) return true
   if (!allowNetworkAccess) return false
   const hostname = hostnameFromHost(value)
-  return hostname !== null && isIP(hostname) !== 0
+  return hostname !== null && (isIP(hostname) !== 0 || allowedHosts.includes(hostname))
 }
 
 export function isSameOriginRequest(req: IncomingMessage): boolean {
@@ -43,6 +47,10 @@ export function isSameOriginRequest(req: IncomingMessage): boolean {
   }
 }
 
-export function isAllowedLocalRequest(req: IncomingMessage, allowNetworkAccess: boolean): boolean {
-  return isAllowedHostHeader(header(req, 'host'), allowNetworkAccess) && isSameOriginRequest(req)
+export function isAllowedLocalRequest(
+  req: IncomingMessage,
+  allowNetworkAccess: boolean,
+  allowedHosts: readonly string[] = [],
+): boolean {
+  return isAllowedHostHeader(header(req, 'host'), allowNetworkAccess, allowedHosts) && isSameOriginRequest(req)
 }

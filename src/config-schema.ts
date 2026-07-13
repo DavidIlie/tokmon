@@ -30,6 +30,8 @@ export interface Config {
   ascii: 'auto' | 'on' | 'off'
   /** Bind the dashboard to all interfaces instead of loopback on next daemon start. */
   allowNetworkAccess: boolean
+  /** Exact DNS hostnames accepted by the dashboard when network access is enabled. */
+  allowedHosts: string[]
   resetDisplay: 'relative' | 'absolute'
   knownProviders: ProviderId[]
 }
@@ -77,6 +79,7 @@ export const DEFAULTS: Config = {
   defaultFocus: 'all',
   ascii: 'auto',
   allowNetworkAccess: false,
+  allowedHosts: [],
   resetDisplay: 'relative',
   knownProviders: [],
 }
@@ -217,6 +220,30 @@ function sameJson(a: unknown, b: unknown): boolean {
   }
 }
 
+/** Canonicalize one exact DNS hostname. Schemes, ports, paths, and wildcards are rejected. */
+export function normalizeAllowedHost(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const candidate = value.trim()
+  if (!candidate) return null
+  try {
+    const url = new URL(`http://${candidate}`)
+    if (url.username || url.password || url.port || url.pathname !== '/' || url.search || url.hash) return null
+    const hostname = url.hostname.toLowerCase().replace(/\.$/, '')
+    if (!hostname || hostname.length > 253 || hostname.includes('*')) return null
+    const labels = hostname.split('.')
+    if (labels.some(label => !label || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label))) return null
+    return hostname
+  } catch {
+    return null
+  }
+}
+
+export function normalizeAllowedHosts(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const hosts = value.map(normalizeAllowedHost).filter((host): host is string => host !== null)
+  return [...new Set(hosts)]
+}
+
 export function repairConfig(input: unknown): ConfigRepair {
   const reasons: string[] = []
   const parsed = isRecord(input) ? input : {}
@@ -269,6 +296,11 @@ export function repairConfig(input: unknown): ConfigRepair {
     reasons.push('knownProviders was not an array')
   }
 
+  const allowedHosts = normalizeAllowedHosts(parsed.allowedHosts)
+  if (parsed.allowedHosts !== undefined && !sameJson(parsed.allowedHosts, allowedHosts)) {
+    reasons.push('allowedHosts contained invalid or duplicate hostnames')
+  }
+
   const activeAccountId = typeof parsed.activeAccountId === 'string' && (accountIds.has(parsed.activeAccountId) || PROVIDER_IDS.includes(parsed.activeAccountId as ProviderId))
     ? parsed.activeAccountId
     : null
@@ -304,6 +336,7 @@ export function repairConfig(input: unknown): ConfigRepair {
     defaultFocus: parsed.defaultFocus === 'last' ? 'last' : 'all',
     ascii: parsed.ascii === 'on' ? 'on' : parsed.ascii === 'off' ? 'off' : 'auto',
     allowNetworkAccess: parsed.allowNetworkAccess === true,
+    allowedHosts,
     resetDisplay: parsed.resetDisplay === 'absolute' ? 'absolute' : 'relative',
     knownProviders,
   }

@@ -105,7 +105,7 @@ tokmon serve --port 8080
 tokmon serve --no-open  # don't auto-open the browser
 ```
 
-It binds to `127.0.0.1` by default and reads the same local daemon state — nothing leaves your machine. The browser connects directly over a same-origin WebSocket; dashboard URLs have no token or login step. Optional LAN access can be enabled in settings, with an explicit unsafe-access warning, and takes effect after the daemon restarts. The dashboard renders instantly from a cached snapshot, then streams live updates and goes idle when no tab is open. Press `R` or use the visible **Refresh** control to update it. Filter by provider, model, account, and period, flip between dark and light, and export any panel — or a summary card — as a PNG with the **Share** button.
+It binds to `127.0.0.1` by default and reads the same local daemon state — nothing leaves your machine. The browser connects directly over a same-origin WebSocket; dashboard URLs have no token or login step. Optional LAN access can be enabled in settings, with an explicit unsafe-access warning, and takes effect after the daemon restarts. When publishing the dashboard through an ingress or reverse proxy, add each exact DNS name to **Allowed hosts** in settings (for example, `tokmon.example.com`); IP hosts remain allowed in LAN mode. The dashboard renders instantly from a cached snapshot, then streams live updates and goes idle when no tab is open. Press `R` or use the visible **Refresh** control to update it. Filter by provider, model, account, and period, flip between dark and light, and export any panel — or a summary card — as a PNG with the **Share** button.
 
 ### Overview
 

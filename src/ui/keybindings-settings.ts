@@ -24,6 +24,8 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
     setCursor(-1)
     timezoneEditor.setValue(null)
     timezoneEditor.setError(null)
+    ctx.allowedHostsEditor.setValue(null)
+    ctx.allowedHostsEditor.setError(null)
   }
   const rowCount = tab === 'general'
     ? GENERAL_ROWS
@@ -131,7 +133,14 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
       updateConfig(current => ({ ...current, allowNetworkAccess: !current.allowNetworkAccess }))
       return
     }
-    if (index === 9 && (inputKey.leftArrow || inputKey.rightArrow || inputKey.return)) {
+    if (index === 9 && inputKey.return) {
+      const initial = config.allowedHosts.join(', ')
+      context.allowedHostsEditor.setValue(initial)
+      context.allowedHostsEditor.setCaret(initial.length)
+      context.allowedHostsEditor.setError(null)
+      return
+    }
+    if (index === 10 && (inputKey.leftArrow || inputKey.rightArrow || inputKey.return)) {
       updateConfig(current => ({ ...current, resetDisplay: current.resetDisplay === 'relative' ? 'absolute' : 'relative' }))
     }
   }

@@ -7,8 +7,8 @@ import type { Config } from '../config-schema'
 export const TOKMON_WS_PATH = '/ws'
 
 /** Bump only for an incompatible wire change. Capabilities gate additive features. */
-export const TOKMON_PROTOCOL_VERSION = 2
-export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision'] as const
+export const TOKMON_PROTOCOL_VERSION = 3
+export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts'] as const
 export type TokmonCapability = typeof TOKMON_CAPABILITIES[number]
 
 export const TOKMON_WS_METHODS = {
@@ -59,6 +59,7 @@ export const ConfigSchema = Schema.Struct({
   defaultFocus: Schema.Literals(['all', 'last'] as const),
   ascii: Schema.Literals(['auto', 'on', 'off'] as const),
   allowNetworkAccess: Schema.Boolean,
+  allowedHosts: Schema.Array(Schema.String),
   resetDisplay: Schema.Literals(['relative', 'absolute'] as const),
   knownProviders: Schema.Array(ProviderIdSchema),
 })

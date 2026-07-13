@@ -1,4 +1,4 @@
-import { sanitizeTyped } from '../config'
+import { normalizeAllowedHost, sanitizeTyped } from '../config'
 import { clampCaret, spliceBackspace } from '../app.logic'
 import { isValidTimezone } from '../tz'
 import type { InputKey, KeyContext } from './keybinding-context'
@@ -78,6 +78,43 @@ export function handleTimezoneEditor(
     } else {
       setError(`Invalid: ${next}`)
     }
+    return
+  }
+  if (key.leftArrow) { setCaret(caret => clampCaret(caret - 1, value.length)); return }
+  if (key.rightArrow) { setCaret(caret => clampCaret(caret + 1, value.length)); return }
+  if (key.ctrl && input === 'a') { setCaret(0); return }
+  if (key.ctrl && input === 'e') { setCaret(value.length); return }
+  if (key.backspace || key.delete) {
+    const result = spliceBackspace(valueRef.current, caretRef.current)
+    valueRef.current = result.value; caretRef.current = result.caret
+    setValue(result.value); setCaret(result.caret); setError(null)
+    return
+  }
+  if (text.isPrintable(input, key)) {
+    const clean = sanitizeTyped(input)
+    if (clean) text.insert(clean)
+  }
+}
+
+export function handleAllowedHostsEditor(
+  input: string,
+  key: InputKey,
+  editor: KeyContext['allowedHostsEditor'],
+  text: KeyContext['textInput'],
+  updateConfig: KeyContext['global']['updateConfig'],
+): void {
+  const { value, setValue, setError, setCaret, valueRef, caretRef } = editor
+  if (value === null) return
+  if (key.escape) { setValue(null); setError(null); return }
+  if (key.return) {
+    const parts = value.split(',').map(part => part.trim()).filter(Boolean)
+    const normalized = parts.map(normalizeAllowedHost)
+    if (normalized.some(host => host === null)) {
+      setError('Use exact DNS names without a scheme, port, path, or wildcard')
+      return
+    }
+    updateConfig(config => ({ ...config, allowedHosts: [...new Set(normalized as string[])] }))
+    setValue(null); setError(null)
     return
   }
   if (key.leftArrow) { setCaret(caret => clampCaret(caret - 1, value.length)); return }

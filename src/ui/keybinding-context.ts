@@ -46,6 +46,14 @@ export interface KeyContext {
     valueRef: MutableRefObject<string>
     caretRef: MutableRefObject<number>
   }
+  allowedHostsEditor: {
+    value: string | null
+    setValue: Dispatch<SetStateAction<string | null>>
+    setError: Dispatch<SetStateAction<string | null>>
+    setCaret: Dispatch<SetStateAction<number>>
+    valueRef: MutableRefObject<string>
+    caretRef: MutableRefObject<number>
+  }
   textInput: {
     isPrintable: (input: string, key: { ctrl: boolean; meta: boolean }) => boolean
     insert: (text: string) => void

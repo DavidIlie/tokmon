@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { Schema } from 'effect'
-import { DEFAULTS, loadConfig, PROVIDER_IDS, saveConfig } from './config'
+import { DEFAULTS, loadConfig, normalizeConfig, PROVIDER_IDS, saveConfig } from './config'
 import {
   describeConfigUpdateFailure,
   reconcileDaemonConfig,
@@ -27,6 +27,13 @@ test('the RPC config schema rejects malformed config documents', () => {
   }))
 })
 
+test('allowed hosts are normalized as exact DNS hostnames', () => {
+  assert.deepEqual(normalizeConfig({
+    ...DEFAULTS,
+    allowedHosts: [' Tokmon.Example.COM ', 'tokmon.example.com', 'bad/path', '', 42],
+  }).allowedHosts, ['tokmon.example.com'])
+})
+
 test('the RPC snapshot schema rejects incomplete streamed snapshots', () => {
   assert.throws(() => Schema.decodeUnknownSync(WebSnapshotSchema)({
     version: 'test', generatedAt: Date.now(), tz: 'UTC', intervalMs: 1000,
@@ -45,11 +52,11 @@ test('the RPC snapshot schema rejects incomplete streamed snapshots', () => {
 
 test('the RPC config state rejects incompatible protocol versions', () => {
   assert.throws(() => Schema.decodeUnknownSync(ConfigStateSchema)({
-    protocol: { version: 1, capabilities: ['config-cas', 'config-revision'] },
+    protocol: { version: 2, capabilities: ['config-cas', 'config-revision'] },
     config: DEFAULTS,
   }))
   assert.doesNotThrow(() => Schema.decodeUnknownSync(ConfigStateSchema)({
-    protocol: { version: 2, capabilities: ['config-cas', 'config-revision', 'future-addition'] },
+    protocol: { version: 3, capabilities: ['config-cas', 'config-revision', 'allowed-hosts', 'future-addition'] },
     config: DEFAULTS,
   }))
 })
@@ -196,7 +203,7 @@ test('RPC transports revisions and typed conflicts end to end', async (t) => {
     }
     client = createDaemonRpcClient(server.url, { transport: 'node' })
     const initial = await client.getConfig()
-    assert.equal(initial.protocol.version, 2)
+    assert.equal(initial.protocol.version, 3)
     assert.equal(initial.config.revision, 0)
 
     const saved = await client.setConfig({
@@ -246,7 +253,7 @@ test('reconciliation accepts the daemon acknowledgement and discards stale draft
 
 test('a recovered settings stream clears an initial-load dead end without overwriting a dirty draft', () => {
   const remote = { ...DEFAULTS, revision: 2, privacyMode: false }
-  const state = { protocol: { version: 2 as const, capabilities: ['config-cas', 'config-revision'] as const }, config: remote }
+  const state = { protocol: { version: 3 as const, capabilities: ['config-cas', 'config-revision', 'allowed-hosts'] as const }, config: remote }
   const recovered = reconcileSettingsDraft(null, null, false, state)
   assert.equal(recovered.draft, remote)
   assert.equal(recovered.revision, 2)

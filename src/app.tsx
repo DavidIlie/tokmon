@@ -77,6 +77,9 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
   const [tzEdit, setTzEdit] = useState<string | null>(null)
   const [tzError, setTzError] = useState<string | null>(null)
   const [tzCaret, setTzCaret] = useState(0)
+  const [allowedHostsEdit, setAllowedHostsEdit] = useState<string | null>(null)
+  const [allowedHostsError, setAllowedHostsError] = useState<string | null>(null)
+  const [allowedHostsCaret, setAllowedHostsCaret] = useState(0)
   const [searchCaret, setSearchCaret] = useState(0)
   const [onboardSel, setOnboardSel] = useState<ProviderId[] | null>(null)
   const [onboardCursor, setOnboardCursor] = useState(0)
@@ -109,6 +112,8 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
   const dashPageCountRef = useRef(1)
   const tzValueRef = useRef('')
   const tzCaretRef = useRef(0)
+  const allowedHostsValueRef = useRef('')
+  const allowedHostsCaretRef = useRef(0)
   const searchValueRef = useRef('')
   const searchCaretRef = useRef(0)
   const accountsKey = useMemo(() => accounts.map(acctKey).join('|'), [accounts])
@@ -229,6 +234,8 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
 
   tzValueRef.current = tzEdit ?? ''
   tzCaretRef.current = clampCaret(tzCaret, (tzEdit ?? '').length)
+  allowedHostsValueRef.current = allowedHostsEdit ?? ''
+  allowedHostsCaretRef.current = clampCaret(allowedHostsCaret, (allowedHostsEdit ?? '').length)
   searchValueRef.current = search
   searchCaretRef.current = clampCaret(searchCaret, search.length)
 
@@ -246,6 +253,10 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
       const r = spliceInsert(tzValueRef.current, tzCaretRef.current, text)
       tzValueRef.current = r.value; tzCaretRef.current = r.caret
       setTzEdit(r.value); setTzCaret(r.caret); setTzError(null)
+    } else if (showSettings && allowedHostsEdit !== null) {
+      const r = spliceInsert(allowedHostsValueRef.current, allowedHostsCaretRef.current, text)
+      allowedHostsValueRef.current = r.value; allowedHostsCaretRef.current = r.caret
+      setAllowedHostsEdit(r.value); setAllowedHostsCaret(r.caret); setAllowedHostsError(null)
     } else if (tab === 1 && searchMode) {
       const r = spliceInsert(searchValueRef.current, searchCaretRef.current, text)
       searchValueRef.current = r.value; searchCaretRef.current = r.caret
@@ -445,6 +456,10 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
       value: tzEdit, setValue: setTzEdit, setError: setTzError,
       setCaret: setTzCaret, valueRef: tzValueRef, caretRef: tzCaretRef,
     },
+    allowedHostsEditor: {
+      value: allowedHostsEdit, setValue: setAllowedHostsEdit, setError: setAllowedHostsError,
+      setCaret: setAllowedHostsCaret, valueRef: allowedHostsValueRef, caretRef: allowedHostsCaretRef,
+    },
     textInput: { isPrintable, insert: insertText },
     settings: {
       show: showSettings, setShow: setShowSettings, cursor: settingsCursor,
@@ -538,6 +553,9 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
           tzEdit={tzEdit}
           tzCaret={tzCaret}
           tzError={tzError}
+          allowedHostsEdit={allowedHostsEdit}
+          allowedHostsCaret={allowedHostsCaret}
+          allowedHostsError={allowedHostsError}
           resolvedTz={tz}
           accountForm={accountForm}
           activeAccountId={cfg.activeAccountId}

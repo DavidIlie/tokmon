@@ -113,7 +113,7 @@ export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<
   )
 
   const onUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    if (!isAllowedLocalRequest(req, deps.state.config.allowNetworkAccess)) {
+    if (!isAllowedLocalRequest(req, deps.state.config.allowNetworkAccess, deps.state.config.allowedHosts)) {
       rejectUpgrade(socket)
       return
     }

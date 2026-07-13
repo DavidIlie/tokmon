@@ -1,5 +1,5 @@
 import type { InputKey, KeyContext } from './keybinding-context'
-import { handleAccountEditor, handleSearchEditor, handleTimezoneEditor } from './keybindings-editors'
+import { handleAccountEditor, handleAllowedHostsEditor, handleSearchEditor, handleTimezoneEditor } from './keybindings-editors'
 import { handleSettings } from './keybindings-settings'
 import { handleGlobalCommand, handleNavigation } from './keybindings-navigation'
 
@@ -24,6 +24,7 @@ export function isRefreshAllShortcut(input: string, mode: {
   showPicker: boolean
   editingAccount: boolean
   editingTimezone: boolean
+  editingAllowedHosts?: boolean
   editingSearch: boolean
   unavailable?: boolean
 }): boolean {
@@ -32,6 +33,7 @@ export function isRefreshAllShortcut(input: string, mode: {
     && !mode.showPicker
     && !mode.editingAccount
     && !mode.editingTimezone
+    && !mode.editingAllowedHosts
     && !mode.editingSearch
 }
 
@@ -52,12 +54,14 @@ function handleOnboarding(input: string, key: InputKey, ctx: KeyContext): void {
 export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
   const editingAccount = ctx.settings.show && ctx.accountEditor.form !== null
   const editingTimezone = ctx.settings.show && ctx.timezoneEditor.value !== null
+  const editingAllowedHosts = ctx.settings.show && ctx.allowedHostsEditor.value !== null
   const editingSearch = ctx.table.tab === 1 && ctx.table.searchMode
 
   if (isRefreshAllShortcut(input, {
     showPicker: ctx.onboarding.show,
     editingAccount,
     editingTimezone,
+    editingAllowedHosts,
     editingSearch,
     unavailable: !ctx.global.configReady,
   })) {
@@ -68,6 +72,10 @@ export function handleKey(input: string, key: InputKey, ctx: KeyContext): void {
   if (editingAccount) { handleAccountEditor(input, key, ctx.accountEditor, ctx.textInput); return }
   if (editingTimezone) {
     handleTimezoneEditor(input, key, ctx.timezoneEditor, ctx.textInput, ctx.global.updateConfig)
+    return
+  }
+  if (editingAllowedHosts) {
+    handleAllowedHostsEditor(input, key, ctx.allowedHostsEditor, ctx.textInput, ctx.global.updateConfig)
     return
   }
   if (editingSearch) { handleSearchEditor(input, key, ctx.table, ctx.textInput); return }

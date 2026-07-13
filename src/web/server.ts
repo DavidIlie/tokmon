@@ -43,8 +43,8 @@ function tokenMatches(given: string | undefined, expected: string): boolean {
   return actual.length === token.length && timingSafeEqual(actual, token)
 }
 
-function guardHost(req: IncomingMessage, res: ServerResponse, allowNetworkAccess: boolean): boolean {
-  if (isAllowedHostHeader(header(req, 'host'), allowNetworkAccess)) return true
+function guardHost(req: IncomingMessage, res: ServerResponse, config: Config): boolean {
+  if (isAllowedHostHeader(header(req, 'host'), config.allowNetworkAccess, config.allowedHosts)) return true
   sendJson(res, 403, { error: 'forbidden' })
   return false
 }
@@ -72,7 +72,7 @@ function createRouter(
 
     // Check Host before every response, including static and Vite middleware. Binding
     // to loopback alone does not prevent DNS-rebinding requests from a hostile Host.
-    if (!guardHost(req, res, state.config.allowNetworkAccess)) return
+    if (!guardHost(req, res, state.config)) return
 
     if (path === '/api/data') {
       engine.touch()

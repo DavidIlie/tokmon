@@ -16,6 +16,8 @@ export {
   clampNum,
   normalizeConfig,
   repairConfig,
+  normalizeAllowedHost,
+  normalizeAllowedHosts,
   slugify,
   generateAccountId,
   pickAccentColor,

@@ -19,6 +19,8 @@ export type { Config, Account, TrackedAccountRow, TrackedAccountSource } from '.
 export type { TrackedAccountCandidate } from '../config-schema'
 export {
   normalizeConfig,
+  normalizeAllowedHost,
+  normalizeAllowedHosts,
   repairConfig,
   DEFAULTS,
   generateAccountId,

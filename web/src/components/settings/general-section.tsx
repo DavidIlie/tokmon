@@ -1,5 +1,5 @@
-import { useEffect, useId, useState } from 'react'
-import { sanitizeTyped, isValidTimezone, type Config } from '@shared'
+import { useEffect, useId, useRef, useState } from 'react'
+import { sanitizeTyped, isValidTimezone, normalizeAllowedHost, type Config } from '@shared'
 import { Segmented } from '../ui/controls'
 import { FOCUS } from './use-dialog-trap'
 import { Section, FieldRow, NumberStepper } from './primitives'
@@ -48,9 +48,14 @@ export function GeneralSection({ draft, patch }: { draft: Config; patch: (fn: (c
           onChange={v => patch(c => ({ ...c, allowNetworkAccess: v === 'network' }))} />
       </FieldRow>
       {draft.allowNetworkAccess && (
-        <p className="rounded border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-warning" role="alert">
-          Unsafe: after the daemon restarts, usage data and settings will be reachable from your local network.
-        </p>
+        <>
+          <FieldRow label="Allowed hosts" hint="exact DNS names · comma separated">
+            <AllowedHostsField value={draft.allowedHosts} onChange={allowedHosts => patch(c => ({ ...c, allowedHosts }))} />
+          </FieldRow>
+          <p className="rounded border border-warning/50 bg-warning/10 px-3 py-2 text-xs text-warning" role="alert">
+            Unsafe: after the daemon restarts, usage data and settings will be reachable from your local network.
+          </p>
+        </>
       )}
       <FieldRow label="Reset times" hint="quota and peak changes">
         <Segmented<'relative' | 'absolute'> size="xs" ariaLabel="reset time display"
@@ -59,6 +64,56 @@ export function GeneralSection({ draft, patch }: { draft: Config; patch: (fn: (c
           onChange={v => patch(c => ({ ...c, resetDisplay: v }))} />
       </FieldRow>
     </Section>
+  )
+}
+
+function AllowedHostsField({ value, onChange }: { value: string[]; onChange: (hosts: string[]) => void }) {
+  const [text, setText] = useState(value.join(', '))
+  const [error, setError] = useState(false)
+  const errorId = useId()
+  const emittedValue = useRef<string | null>(null)
+  const serializedValue = value.join(', ')
+
+  useEffect(() => {
+    if (emittedValue.current === serializedValue) {
+      emittedValue.current = null
+      return
+    }
+    setText(serializedValue)
+    setError(false)
+  }, [serializedValue])
+
+  const onInput = (raw: string) => {
+    const clean = sanitizeTyped(raw)
+    setText(clean)
+    const parts = clean.split(',').map(part => part.trim()).filter(Boolean)
+    const normalized = parts.map(normalizeAllowedHost)
+    const invalid = normalized.some(host => host === null)
+    setError(invalid)
+    if (!invalid) {
+      const hosts = [...new Set(normalized as string[])]
+      emittedValue.current = hosts.join(', ')
+      onChange(hosts)
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-0.5">
+      <input
+        type="text"
+        name="allowed-hosts"
+        value={text}
+        placeholder="tokmon.example.com"
+        aria-label="Allowed hosts"
+        aria-describedby={error ? errorId : undefined}
+        autoComplete="off"
+        spellCheck={false}
+        aria-invalid={error}
+        onChange={event => onInput(event.target.value)}
+        className={`w-64 rounded border bg-bg-2 px-2 py-1 text-xs text-fg ${FOCUS} ${error ? 'border-warning' : 'border-line'}`}
+      />
+      {error && <span id={errorId} className="text-[10px] text-warning" role="alert">Use exact hostnames without a scheme, port, path, or wildcard.</span>}
+    </div>
   )
 }
 

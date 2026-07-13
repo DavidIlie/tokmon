@@ -6,7 +6,7 @@ import { PROVIDER_ORDER, PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
 import { truncateName } from './shared'
 
-export const GENERAL_ROWS = 10
+export const GENERAL_ROWS = 11
 
 export const SETTINGS_TABS = ['general', 'providers', 'accounts'] as const
 export type SettingsTab = typeof SETTINGS_TABS[number]
@@ -41,7 +41,8 @@ export const FORM_FIELDS: FormField[] = ['provider', 'name', 'homeDir', 'color']
 export { COLOR_PALETTE } from '../config'
 
 export const SettingsView = memo(function SettingsView({
-  config, cursor, activeTab, tzEdit, tzCaret, tzError, resolvedTz, accountForm, activeAccountId, trackedAccounts, accountIdentities,
+  config, cursor, activeTab, tzEdit, tzCaret, tzError, allowedHostsEdit, allowedHostsCaret, allowedHostsError,
+  resolvedTz, accountForm, activeAccountId, trackedAccounts, accountIdentities,
 }: {
   config: Config
   cursor: number
@@ -49,6 +50,9 @@ export const SettingsView = memo(function SettingsView({
   tzEdit: string | null
   tzCaret: number
   tzError: string | null
+  allowedHostsEdit: string | null
+  allowedHostsCaret: number
+  allowedHostsError: string | null
   resolvedTz: string
   accountForm: AccountForm | null
   activeAccountId: string | null
@@ -58,6 +62,7 @@ export const SettingsView = memo(function SettingsView({
   if (accountForm) return <AccountFormView form={accountForm} accounts={config.accounts} />
 
   const editingTz = tzEdit !== null
+  const editingAllowedHosts = allowedHostsEdit !== null
   const tzDisplay = config.timezone === null ? `System (${resolvedTz})` : config.timezone
   const tabFocused = cursor < 0
 
@@ -110,10 +115,18 @@ export const SettingsView = memo(function SettingsView({
               {config.allowNetworkAccess ? 'LAN (unsafe)' : 'local only'}
             </Text>
           </Row>
+          <Row cursor={cursor} idx={9} label="Allowed hosts">
+            {editingAllowedHosts ? (
+              <><Text dimColor>[</Text><CaretText value={allowedHostsEdit ?? ''} caret={allowedHostsCaret} color="cyan" /><Text dimColor>]</Text></>
+            ) : (
+              <Text bold color="yellow">{config.allowedHosts.join(', ') || 'none'}</Text>
+            )}
+          </Row>
+          {cursor === 9 && allowedHostsError && <Text color="red">  {allowedHostsError}</Text>}
           {config.allowNetworkAccess && (
             <Text color="red">  Warning: dashboard data and settings will be exposed to your local network after daemon restart.</Text>
           )}
-          <Row cursor={cursor} idx={9} label="Reset times">
+          <Row cursor={cursor} idx={10} label="Reset times">
             <Text dimColor>{glyphs().caretL} </Text>
             <Text bold color="yellow">{config.resetDisplay === 'relative' ? 'time remaining' : 'exact date/time'}</Text>
             <Text dimColor> {glyphs().caretR}</Text>
@@ -182,6 +195,8 @@ export const SettingsView = memo(function SettingsView({
         <Text dimColor>{glyphs().arrowL}{glyphs().arrowR}/tab switch section  {glyphs().middot}  {glyphs().arrowD} rows  {glyphs().middot}  s/Esc close</Text>
       ) : editingTz ? (
         <Text dimColor>type IANA name (e.g. Europe/London) {glyphs().middot} empty = System {glyphs().middot} Enter save {glyphs().middot} Esc cancel</Text>
+      ) : editingAllowedHosts ? (
+        <Text dimColor>comma-separated exact DNS names {glyphs().middot} Enter save {glyphs().middot} Esc cancel</Text>
       ) : activeTab === 'providers' ? (
         <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  space toggle provider  {glyphs().middot}  s/Esc close</Text>
       ) : activeTab === 'accounts' && cursor >= 0 && cursor < trackedAccounts.length ? (

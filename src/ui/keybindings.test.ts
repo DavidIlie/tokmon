@@ -62,6 +62,10 @@ function context(): KeyContext {
       value: null, setValue: set, setError: set, setCaret: set,
       valueRef: { current: '' }, caretRef: { current: 0 },
     },
+    allowedHostsEditor: {
+      value: null, setValue: set, setError: set, setCaret: set,
+      valueRef: { current: '' }, caretRef: { current: 0 },
+    },
     textInput: { isPrintable: () => true, insert: () => {} },
     settings: {
       show: false, setShow: set, cursor: 0, tab: 'general', setTab: set, setCursor: set,
