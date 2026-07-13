@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { extname } from 'node:path'
-import { appVersion } from '../web/static'
+import { TOKMON_PROTOCOL_VERSION } from '../rpc/contract'
 import {
   isAlive,
   probeHealth,
@@ -49,12 +49,28 @@ function runtimeExecArgv(entry: string, override?: string[]): string[] {
   return out
 }
 
-interface Handshake { ready: 1; url: string; port: number; wsToken: string; version: string }
+interface Handshake {
+  ready: 1
+  url: string
+  port: number
+  wsToken: string
+  version: string
+  protocolVersion: number
+  capabilities: string[]
+  ownerKind: 'cli' | 'desktop'
+}
 
 function parseHandshake(line: string): Handshake | null {
   try {
     const value = JSON.parse(line) as Partial<Handshake>
-    return value?.ready === 1 && typeof value.url === 'string' && typeof value.wsToken === 'string' && typeof value.version === 'string'
+    return value?.ready === 1
+      && typeof value.url === 'string'
+      && typeof value.wsToken === 'string'
+      && typeof value.version === 'string'
+      && typeof value.protocolVersion === 'number'
+      && Array.isArray(value.capabilities)
+      && value.capabilities.every(capability => typeof capability === 'string')
+      && (value.ownerKind === 'cli' || value.ownerKind === 'desktop')
       ? value as Handshake
       : null
   } catch { return null }
@@ -64,8 +80,8 @@ function connected(url: string): DaemonHandle {
   return { kind: 'spawned', baseUrl: url, stop: () => {} }
 }
 
-async function attach(opts: LockfileOptions, version: string): Promise<DaemonHandle | null> {
-  const lock = await verifyLock(readLock(opts), version)
+async function attach(opts: LockfileOptions, protocolVersion: number): Promise<DaemonHandle | null> {
+  const lock = await verifyLock(readLock(opts), protocolVersion)
   return lock ? connected(lock.url) : null
 }
 
@@ -78,19 +94,20 @@ const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
  */
 async function retireIncompatibleDaemon(
   opts: LockfileOptions,
-  version: string,
+  protocolVersion: number,
   timeoutMs: number,
 ): Promise<void> {
   const lock = readLock(opts)
   if (
-    !lock || lock.state !== 'ready' || lock.version === version ||
+    !lock || lock.state !== 'ready' || lock.protocolVersion === protocolVersion ||
+    lock.ownerKind === 'desktop' ||
     lock.pid === process.pid || !isAlive(lock.pid)
   ) return
 
   const authenticated = await probeHealth(
     lock.url,
     lock.wsToken,
-    lock.version,
+    lock,
     Math.min(1_000, timeoutMs),
   )
   if (!authenticated) return
@@ -113,13 +130,13 @@ async function retireIncompatibleDaemon(
 }
 
 export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<DaemonHandle> {
-  const version = appVersion()
+  const protocolVersion = TOKMON_PROTOCOL_VERSION
   const timeoutMs = opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS
-  const existing = await attach(opts, version)
+  const existing = await attach(opts, protocolVersion)
   if (existing) return existing
 
-  await retireIncompatibleDaemon(opts, version, timeoutMs)
-  const upgraded = await attach(opts, version)
+  await retireIncompatibleDaemon(opts, protocolVersion, timeoutMs)
+  const upgraded = await attach(opts, protocolVersion)
   if (upgraded) return upgraded
 
   const entry = opts.entry ?? process.argv[1]
@@ -152,7 +169,7 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
       child.unref()
       resolve(handle)
     }
-    const tryAttach = (final = false) => { void attach(opts, version).then(found => {
+    const tryAttach = (final = false) => { void attach(opts, protocolVersion).then(found => {
       if (found) { finish(found); return }
       if (final) { finish(degraded()); return }
       if (!settled && !pollTimer) {
@@ -174,7 +191,7 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
         const line = stdout.slice(0, newline).trim()
         stdout = stdout.slice(newline + 1)
         const handshake = parseHandshake(line)
-        if (!handshake || handshake.version !== version) continue
+        if (!handshake || handshake.protocolVersion !== protocolVersion) continue
         // A handshake alone is not authority. Re-read the owner-only lock and health-check it.
         tryAttach()
         return

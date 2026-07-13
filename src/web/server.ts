@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { type Config } from '../config'
+import { TOKMON_CAPABILITIES, TOKMON_PROTOCOL_VERSION } from '../rpc/contract'
 import { resolveAccounts, tzFor } from './data'
 import { appVersion, send, sendJson, serveStatic, findWebRoot } from './static'
 import { isDevMode, createViteDevServer, MISSING_BUILD_HTML, type ViteDevServerLike } from './vite-dev'
@@ -29,6 +30,9 @@ export interface StartOptions {
   log?: boolean
   /** Injected by the daemon so the lock can be published before web resources start. */
   wsToken?: string
+  protocolVersion?: number
+  capabilities?: readonly string[]
+  ownerKind?: 'cli' | 'desktop'
 }
 
 function header(req: IncomingMessage, name: string): string | undefined {
@@ -64,6 +68,9 @@ function createRouter(
   webRoot: string | null,
   wsToken: string,
   version: string,
+  protocolVersion: number,
+  capabilities: readonly string[],
+  ownerKind: 'cli' | 'desktop',
 ): (req: IncomingMessage, res: ServerResponse) => void {
   return (req, res) => {
     const url = req.url || '/'
@@ -85,6 +92,9 @@ function createRouter(
         ok: true,
         ready: engine.snapshot() !== null,
         version,
+        protocolVersion,
+        capabilities,
+        ownerKind,
         // Discovery requires this proof; public health checks retain their useful 200 response.
         owner: tokenMatches(header(req, 'x-tokmon-token'), wsToken),
       })
@@ -119,6 +129,9 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
   const state = { config: opts.config }
   const tz = tzFor(state.config)
   const version = appVersion()
+  const protocolVersion = opts.protocolVersion ?? TOKMON_PROTOCOL_VERSION
+  const capabilities = opts.capabilities ?? TOKMON_CAPABILITIES
+  const ownerKind = opts.ownerKind ?? 'cli'
   const summaryIntervalMs = summaryIntervalFor(state.config)
   const billingIntervalMs = billingIntervalFor(state.config)
   const wsToken = opts.wsToken ?? randomBytes(32).toString('base64url')
@@ -136,7 +149,17 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
     if (!vite && !webRoot) log('  ⚠ no dashboard available — see the page for build/dev instructions')
 
     engine = createDataEngine({ version, config: state.config, tz, summaryIntervalMs, billingIntervalMs, resolved })
-    server.addListener('request', createRouter(engine, state, vite, webRoot, wsToken, version))
+    server.addListener('request', createRouter(
+      engine,
+      state,
+      vite,
+      webRoot,
+      wsToken,
+      version,
+      protocolVersion,
+      capabilities,
+      ownerKind,
+    ))
     closeWsRpc = await mountWsRpc(server, { engine, state })
     const bindHost = state.config.allowNetworkAccess ? NETWORK_HOST : LOOPBACK_HOST
     const port = await listenWithFallback(server, opts.port ?? DEFAULT_PORT, bindHost)

@@ -154,13 +154,14 @@ function timestampSecond(value: unknown): string | null {
   return ts === null ? null : new Date(ts).toISOString().slice(0, 19)
 }
 
-async function hasThreadSpawn(path: string): Promise<boolean> {
+async function hasForkedHistory(path: string): Promise<boolean> {
   let handle: Awaited<ReturnType<typeof openFile>> | null = null
   try {
     handle = await openFile(path, 'r')
     const buffer = Buffer.alloc(16 * 1024)
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
-    return buffer.subarray(0, bytesRead).includes('thread_spawn')
+    const prefix = buffer.subarray(0, bytesRead).toString('utf8')
+    return prefix.includes('thread_spawn') && /"forked_from_id"\s*:\s*"[^"]+"/.test(prefix)
   } catch {
     return false
   } finally {
@@ -168,29 +169,11 @@ async function hasThreadSpawn(path: string): Promise<boolean> {
   }
 }
 
-async function detectReplaySecond(path: string): Promise<string | null> {
-  if (!(await hasThreadSpawn(path))) return null
-  let first: string | null = null
-  const input = createReadStream(path)
-  input.on('error', () => {})
-  const rl = createInterface({ input, crlfDelay: Infinity })
-  try {
-    for await (const rawLine of rl) {
-      if (!rawLine.includes('token_count')) continue
-      try {
-        const line = rawLine.charCodeAt(0) === 0xFEFF ? rawLine.slice(1) : rawLine
-        const obj: any = JSON.parse(line)
-        if ((obj?.payload?.type ?? obj?.type) !== 'token_count') continue
-        const info = obj?.payload?.info
-        if (!normalizeUsage(info?.last_token_usage) && !normalizeUsage(info?.total_token_usage)) continue
-        const second = timestampSecond(obj.timestamp ?? obj?.payload?.timestamp)
-        if (!second) continue
-        if (!first) first = second
-        else return first === second ? second : null
-      } catch {}
-    }
-  } catch {}
-  return null
+function isLiveTaskStart(obj: any): boolean {
+  if ((obj?.payload?.type ?? obj?.type) !== 'task_started') return false
+  const eventSecond = timestampSecond(obj?.timestamp ?? obj?.payload?.timestamp)
+  const startedSecond = timestampSecond(obj?.payload?.started_at)
+  return eventSecond !== null && eventSecond === startedSecond
 }
 
 function findUsage(obj: any): CodexDelta | undefined {
@@ -212,8 +195,7 @@ async function parseFile(path: string): Promise<Entry[]> {
   let model = 'gpt-5'
   let prevTotal: CodexDelta | null = null
   let prevSig: string | null = null
-  const replaySecond = await detectReplaySecond(path)
-  let skipReplay = replaySecond !== null
+  let skipReplay = await hasForkedHistory(path)
   const input = createReadStream(path)
   input.on('error', () => {})
   const rl = createInterface({ input, crlfDelay: Infinity })
@@ -221,6 +203,7 @@ async function parseFile(path: string): Promise<Entry[]> {
     for await (const rawLine of rl) {
       if (
         !rawLine.includes('token_count')
+        && !rawLine.includes('task_started')
         && !rawLine.includes('turn_context')
         && !rawLine.includes('"usage"')
         && !rawLine.includes('input_tokens')
@@ -231,6 +214,10 @@ async function parseFile(path: string): Promise<Entry[]> {
         const obj: any = JSON.parse(line)
 
         const payloadType = obj?.payload?.type ?? obj?.type
+        if (skipReplay) {
+          if (isLiveTaskStart(obj)) skipReplay = false
+          continue
+        }
         if (payloadType === 'turn_context') {
           const m = extractModel(obj)
           if (typeof m === 'string' && m.trim()) model = m
@@ -267,14 +254,6 @@ async function parseFile(path: string): Promise<Entry[]> {
         const total = normalizeUsage(info?.total_token_usage)
         const last = normalizeUsage(info?.last_token_usage)
         const tsValue = obj.timestamp ?? obj?.payload?.timestamp
-        if (skipReplay && replaySecond) {
-          const second = timestampSecond(tsValue)
-          if (second === replaySecond) {
-            if (total) prevTotal = total
-            continue
-          }
-          if (second) skipReplay = false
-        }
 
         const sig = eventSig(last, total)
         if (sig === prevSig) continue

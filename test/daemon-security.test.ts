@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { attachOrSpawn } from '../src/client/daemon-handle.ts'
 import { createDaemonRpcClient } from '../src/client/daemon-rpc-client.ts'
-import { TOKMON_PROTOCOL_VERSION } from '../src/rpc/contract.ts'
+import { TOKMON_CAPABILITIES, TOKMON_PROTOCOL_VERSION } from '../src/rpc/contract.ts'
 import {
   acquireLock,
   lockfilePath,
@@ -30,6 +30,9 @@ function lock(ownerId = 'b'.repeat(43)): DaemonLock {
     url: 'http://127.0.0.1:4317',
     wsToken: token,
     version: 'test',
+    protocolVersion: TOKMON_PROTOCOL_VERSION,
+    capabilities: [...TOKMON_CAPABILITIES],
+    ownerKind: 'cli',
     startedAt: Date.now(),
     ownerId,
     state: 'starting',
@@ -91,7 +94,14 @@ test('health verification requires the owner token on an ephemeral loopback port
   const server = createServer((req, res) => {
     const owner = req.headers['x-tokmon-token'] === token
     res.setHeader('content-type', 'application/json')
-    res.end(JSON.stringify({ ok: true, owner, version: 'test' }))
+    res.end(JSON.stringify({
+      ok: true,
+      owner,
+      version: 'test',
+      protocolVersion: TOKMON_PROTOCOL_VERSION,
+      capabilities: TOKMON_CAPABILITIES,
+      ownerKind: 'cli',
+    }))
   })
   try {
     await new Promise<void>((resolve, reject) => {
@@ -109,9 +119,17 @@ test('health verification requires the owner token on an ephemeral loopback port
   assert.ok(address && typeof address === 'object')
   const url = `http://127.0.0.1:${address.port}`
   try {
-    assert.equal(await probeHealth(url, token, 'test'), true)
-    assert.equal(await probeHealth(url, 'wrong-token', 'test'), false)
-    assert.equal(await probeHealth(url, token, 'wrong-version'), false)
+    const expected = {
+      version: 'test',
+      protocolVersion: TOKMON_PROTOCOL_VERSION,
+      capabilities: TOKMON_CAPABILITIES,
+      ownerKind: 'cli' as const,
+    }
+    assert.equal(await probeHealth(url, token, expected), true)
+    assert.equal(await probeHealth(url, 'wrong-token', expected), false)
+    assert.equal(await probeHealth(url, token, { ...expected, version: 'wrong-version' }), false)
+    assert.equal(await probeHealth(url, token, { ...expected, protocolVersion: TOKMON_PROTOCOL_VERSION + 1 }), false)
+    assert.equal(await probeHealth(url, token, { ...expected, ownerKind: 'desktop' }), false)
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()))
   }
@@ -123,6 +141,9 @@ interface Handshake {
   port: number
   wsToken: string
   version: string
+  protocolVersion: number
+  capabilities: string[]
+  ownerKind: 'cli' | 'desktop'
 }
 
 function daemonProcess(root: string): { child: ChildProcess; handshake: Promise<Handshake> } {
@@ -179,7 +200,11 @@ function waitForExit(child: ChildProcess, timeoutMs = 5_000): Promise<void> {
   })
 }
 
-function incompatibleDaemon(root: string, version: string): { child: ChildProcess; handshake: Promise<Handshake> } {
+function testDaemon(root: string, options: {
+  version: string
+  protocolVersion: number
+  ownerKind: 'cli' | 'desktop'
+}): { child: ChildProcess; handshake: Promise<Handshake> } {
   const child = spawn(process.execPath, ['--input-type=module', '--eval', `
     import { createServer } from 'node:http'
     import { mkdir, unlink, writeFile } from 'node:fs/promises'
@@ -188,11 +213,14 @@ function incompatibleDaemon(root: string, version: string): { child: ChildProces
     const token = process.env.TOKMON_TEST_TOKEN
     const ownerId = process.env.TOKMON_TEST_OWNER
     const version = process.env.TOKMON_TEST_VERSION
+    const protocolVersion = Number(process.env.TOKMON_TEST_PROTOCOL_VERSION)
+    const capabilities = JSON.parse(process.env.TOKMON_TEST_CAPABILITIES)
+    const ownerKind = process.env.TOKMON_TEST_OWNER_KIND
     const lockPath = join(cachePath, 'daemon.json')
     const server = createServer((req, res) => {
       const owner = req.headers['x-tokmon-token'] === token
       res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ ok: true, owner, version }))
+      res.end(JSON.stringify({ ok: true, owner, version, protocolVersion, capabilities, ownerKind }))
     })
     server.listen(0, '127.0.0.1', async () => {
       const address = server.address()
@@ -202,13 +230,25 @@ function incompatibleDaemon(root: string, version: string): { child: ChildProces
         url: 'http://127.0.0.1:' + address.port,
         wsToken: token,
         version,
+        protocolVersion,
+        capabilities,
+        ownerKind,
         startedAt: Date.now(),
         ownerId,
         state: 'ready',
       }
       await mkdir(cachePath, { recursive: true, mode: 0o700 })
       await writeFile(lockPath, JSON.stringify(lock), { mode: 0o600 })
-      process.stdout.write(JSON.stringify({ ready: 1, url: lock.url, port: lock.port, wsToken: token, version }) + '\\n')
+      process.stdout.write(JSON.stringify({
+        ready: 1,
+        url: lock.url,
+        port: lock.port,
+        wsToken: token,
+        version,
+        protocolVersion,
+        capabilities,
+        ownerKind,
+      }) + '\\n')
     })
     const shutdown = () => server.close(async () => {
       await unlink(lockPath).catch(() => {})
@@ -222,7 +262,10 @@ function incompatibleDaemon(root: string, version: string): { child: ChildProces
       TOKMON_DAEMON_CACHE_DIR: join(root, 'cache'),
       TOKMON_TEST_TOKEN: 'u'.repeat(43),
       TOKMON_TEST_OWNER: 'v'.repeat(43),
-      TOKMON_TEST_VERSION: version,
+      TOKMON_TEST_VERSION: options.version,
+      TOKMON_TEST_PROTOCOL_VERSION: String(options.protocolVersion),
+      TOKMON_TEST_CAPABILITIES: JSON.stringify(TOKMON_CAPABILITIES),
+      TOKMON_TEST_OWNER_KIND: options.ownerKind,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -252,14 +295,45 @@ function incompatibleDaemon(root: string, version: string): { child: ChildProces
   return { child, handshake }
 }
 
-test('a new client replaces an authenticated incompatible daemon instead of degrading', { timeout: 20_000 }, async (t) => {
+test('a client attaches across app-version mismatch when the daemon protocol matches', { timeout: 10_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-daemon-compatible-version-'))
+  await mkdir(join(root, 'home'), { recursive: true })
+  const existing = testDaemon(root, {
+    version: '0.22.7',
+    protocolVersion: TOKMON_PROTOCOL_VERSION,
+    ownerKind: 'cli',
+  })
+  try {
+    const ready = await existing.handshake
+    const handle = await attachOrSpawn({
+      cachePath: join(root, 'cache'),
+      entry: join(process.cwd(), 'src/cli.tsx'),
+      execArgv: ['--import', 'tsx'],
+      timeoutMs: 1_000,
+    })
+    assert.equal(handle.kind, 'spawned')
+    assert.equal(handle.baseUrl, ready.url)
+    assert.equal(existing.child.exitCode, null)
+    assert.equal(readLock({ cachePath: join(root, 'cache') })?.pid, existing.child.pid)
+  } finally {
+    if (existing.child.exitCode === null && existing.child.signalCode === null) existing.child.kill('SIGTERM')
+    await waitForExit(existing.child).catch(() => {})
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a new client replaces an authenticated protocol-incompatible CLI daemon instead of degrading', { timeout: 20_000 }, async (t) => {
   if (process.platform === 'win32') {
     t.skip('signal-based upgrade assertion is POSIX-specific')
     return
   }
   const root = await mkdtemp(join(tmpdir(), 'tokmon-daemon-upgrade-'))
   await mkdir(join(root, 'home'), { recursive: true })
-  const old = incompatibleDaemon(root, '0.22.7')
+  const old = testDaemon(root, {
+    version: '0.22.7',
+    protocolVersion: TOKMON_PROTOCOL_VERSION + 1,
+    ownerKind: 'cli',
+  })
   let replacementPid: number | null = null
   try {
     await old.handshake
@@ -278,7 +352,8 @@ test('a new client replaces an authenticated incompatible daemon instead of degr
     await waitForExit(old.child, 3_000)
     const replacement = readLock({ cachePath: join(root, 'cache') })
     assert.ok(replacement)
-    assert.notEqual(replacement.version, '0.22.7')
+    assert.equal(replacement.protocolVersion, TOKMON_PROTOCOL_VERSION)
+    assert.equal(replacement.ownerKind, 'cli')
     replacementPid = replacement.pid
   } finally {
     if (old.child.exitCode === null && old.child.signalCode === null) old.child.kill('SIGKILL')
@@ -293,14 +368,53 @@ test('a new client replaces an authenticated incompatible daemon instead of degr
   }
 })
 
-test('an incompatible daemon is never signalled when owner authentication fails', { timeout: 10_000 }, async (t) => {
+test('an incompatible desktop-owned daemon is never signalled', { timeout: 10_000 }, async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('signal-based upgrade assertion is POSIX-specific')
+    return
+  }
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-daemon-desktop-owner-'))
+  await mkdir(join(root, 'home'), { recursive: true })
+  const desktop = testDaemon(root, {
+    version: 'desktop-test',
+    protocolVersion: TOKMON_PROTOCOL_VERSION + 1,
+    ownerKind: 'desktop',
+  })
+  try {
+    await desktop.handshake
+    const handle = await attachOrSpawn({
+      cachePath: join(root, 'cache'),
+      entry: join(process.cwd(), 'src/cli.tsx'),
+      execArgv: ['--import', 'tsx'],
+      env: {
+        ...process.env,
+        HOME: join(root, 'home'),
+        TOKMON_WEB_MODE: 'prod',
+      },
+      timeoutMs: 500,
+    })
+    assert.equal(handle.kind, 'degraded')
+    assert.equal(desktop.child.exitCode, null)
+    assert.equal(readLock({ cachePath: join(root, 'cache') })?.ownerKind, 'desktop')
+  } finally {
+    if (desktop.child.exitCode === null && desktop.child.signalCode === null) desktop.child.kill('SIGKILL')
+    await waitForExit(desktop.child).catch(() => {})
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('an incompatible CLI daemon is never signalled when owner authentication fails', { timeout: 10_000 }, async (t) => {
   if (process.platform === 'win32') {
     t.skip('signal-based upgrade assertion is POSIX-specific')
     return
   }
   const root = await mkdtemp(join(tmpdir(), 'tokmon-daemon-unverified-'))
   await mkdir(join(root, 'home'), { recursive: true })
-  const old = incompatibleDaemon(root, '0.22.7')
+  const old = testDaemon(root, {
+    version: '0.22.7',
+    protocolVersion: TOKMON_PROTOCOL_VERSION + 1,
+    ownerKind: 'cli',
+  })
   try {
     await old.handshake
     const cachePath = join(root, 'cache')
@@ -421,7 +535,12 @@ test('real daemon is singleton, loopback/same-origin guarded, durable, and bound
     await waitForExit(tui, 3_000)
     assert.ok(Date.now() - tuiExitStarted < 3_000, 'Ctrl-C should close the TUI promptly')
     assert.equal(owner.exitCode, null, 'Ctrl-C should leave the background daemon running')
-    assert.equal(await probeHealth(ready.url, ready.wsToken, ready.version), true)
+    assert.equal(await probeHealth(ready.url, ready.wsToken, {
+      version: ready.version,
+      protocolVersion: ready.protocolVersion,
+      capabilities: ready.capabilities,
+      ownerKind: ready.ownerKind,
+    }), true)
 
     assert.equal((await fetch(`${ready.url}/healthz`)).status, 200)
     assert.equal(await requestStatus(`${ready.url}/healthz`, { host: 'evil.example' }), 403)

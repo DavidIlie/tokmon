@@ -8,7 +8,11 @@ export interface DaemonLock {
   url: string
   /** Process-owner proof for lock discovery only; never sent to browsers or RPC clients. */
   wsToken: string
+  /** Informational application version. Wire compatibility is protocol-based. */
   version: string
+  protocolVersion: number
+  capabilities: string[]
+  ownerKind: 'cli' | 'desktop'
   startedAt: number
   /** Random, process-private capability used to prevent another process removing our lock. */
   ownerId: string
@@ -46,6 +50,9 @@ function validLock(value: unknown): value is DaemonLock {
     && typeof lock.url === 'string' && (lock.state === 'starting' || isLoopbackUrl(lock.url))
     && typeof lock.wsToken === 'string' && lock.wsToken.length >= 32
     && typeof lock.version === 'string'
+    && typeof lock.protocolVersion === 'number' && Number.isSafeInteger(lock.protocolVersion) && lock.protocolVersion >= 1
+    && Array.isArray(lock.capabilities) && lock.capabilities.every(capability => typeof capability === 'string')
+    && (lock.ownerKind === 'cli' || lock.ownerKind === 'desktop')
     && typeof lock.startedAt === 'number'
     && typeof lock.ownerId === 'string' && lock.ownerId.length >= 32
     && (lock.state === 'starting' || lock.state === 'ready')
@@ -168,7 +175,25 @@ export function isAlive(pid: number): boolean {
   }
 }
 
-export async function probeHealth(url: string, token: string, version?: string, timeoutMs = 500): Promise<boolean> {
+export interface DaemonHealthExpectation {
+  version?: string
+  protocolVersion?: number
+  capabilities?: readonly string[]
+  ownerKind?: DaemonLock['ownerKind']
+}
+
+function sameCapabilities(actual: unknown, expected: readonly string[]): boolean {
+  return Array.isArray(actual)
+    && actual.length === expected.length
+    && actual.every((capability, index) => capability === expected[index])
+}
+
+export async function probeHealth(
+  url: string,
+  token: string,
+  expected: DaemonHealthExpectation = {},
+  timeoutMs = 500,
+): Promise<boolean> {
   if (!isLoopbackUrl(url) || !token) return false
   try {
     const res = await fetch(`${url.replace(/\/+$/, '')}/healthz`, {
@@ -176,14 +201,30 @@ export async function probeHealth(url: string, token: string, version?: string, 
       signal: AbortSignal.timeout(timeoutMs),
     })
     if (!res.ok) return false
-    const body = await res.json() as { ok?: unknown; owner?: unknown; version?: unknown }
-    return body.ok === true && body.owner === true && (version === undefined || body.version === version)
+    const body = await res.json() as {
+      ok?: unknown
+      owner?: unknown
+      version?: unknown
+      protocolVersion?: unknown
+      capabilities?: unknown
+      ownerKind?: unknown
+    }
+    return body.ok === true
+      && body.owner === true
+      && (expected.version === undefined || body.version === expected.version)
+      && (expected.protocolVersion === undefined || body.protocolVersion === expected.protocolVersion)
+      && (expected.capabilities === undefined || sameCapabilities(body.capabilities, expected.capabilities))
+      && (expected.ownerKind === undefined || body.ownerKind === expected.ownerKind)
   } catch {
     return false
   }
 }
 
-export async function verifyLock(lock: DaemonLock | null, version: string, timeoutMs?: number): Promise<DaemonLock | null> {
-  if (!lock || lock.state !== 'ready' || lock.version !== version || !isAlive(lock.pid)) return null
-  return await probeHealth(lock.url, lock.wsToken, version, timeoutMs) ? lock : null
+export async function verifyLock(
+  lock: DaemonLock | null,
+  protocolVersion: number,
+  timeoutMs?: number,
+): Promise<DaemonLock | null> {
+  if (!lock || lock.state !== 'ready' || lock.protocolVersion !== protocolVersion || !isAlive(lock.pid)) return null
+  return await probeHealth(lock.url, lock.wsToken, lock, timeoutMs) ? lock : null
 }

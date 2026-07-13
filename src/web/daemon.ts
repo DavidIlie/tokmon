@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { loadConfig } from '../config'
 import { flushDisk } from '../providers/usage-core'
+import { TOKMON_CAPABILITIES, TOKMON_PROTOCOL_VERSION } from '../rpc/contract'
 import { startWebServer, type WebServerController } from './server'
 import { openBrowser } from './open'
 import { appVersion } from './static'
@@ -46,7 +47,16 @@ Options:
 export interface RunDaemonOptions { foreground: boolean }
 
 function handshake(lock: DaemonLock): void {
-  process.stdout.write(JSON.stringify({ ready: 1, url: lock.url, port: lock.port, wsToken: lock.wsToken, version: lock.version }) + '\n')
+  process.stdout.write(JSON.stringify({
+    ready: 1,
+    url: lock.url,
+    port: lock.port,
+    wsToken: lock.wsToken,
+    version: lock.version,
+    protocolVersion: lock.protocolVersion,
+    capabilities: lock.capabilities,
+    ownerKind: lock.ownerKind,
+  }) + '\n')
 }
 
 function describeExisting(lock: DaemonLock, open: boolean): void {
@@ -72,7 +82,7 @@ export async function runDaemon(args: string[], opts: RunDaemonOptions): Promise
   // their recorded owner is dead, or when an ownerless partial is old enough
   // that it cannot be an in-progress atomic acquisition.
   if (!current && reclaimAbandonedLock()) current = readLock()
-  const live = await verifyLock(current, version)
+  const live = await verifyLock(current, TOKMON_PROTOCOL_VERSION)
   if (live) {
     if (opts.foreground) describeExisting(live, open)
     else handshake(live)
@@ -81,10 +91,10 @@ export async function runDaemon(args: string[], opts: RunDaemonOptions): Promise
 
   // A concurrent child has acquired the reservation but has not published its
   // listening port yet. Wait for that owner instead of starting a second daemon.
-  if (current?.state === 'starting' && current.version === version && isAlive(current.pid)) {
+  if (current?.state === 'starting' && current.protocolVersion === TOKMON_PROTOCOL_VERSION && isAlive(current.pid)) {
     for (let attempt = 0; attempt < 60; attempt++) {
       await new Promise(resolve => setTimeout(resolve, 50))
-      const winner = await verifyLock(readLock(), version, 250)
+      const winner = await verifyLock(readLock(), TOKMON_PROTOCOL_VERSION, 250)
       if (winner) {
         if (opts.foreground) describeExisting(winner, open)
         else handshake(winner)
@@ -110,6 +120,9 @@ export async function runDaemon(args: string[], opts: RunDaemonOptions): Promise
     url: '',
     wsToken: token,
     version,
+    protocolVersion: TOKMON_PROTOCOL_VERSION,
+    capabilities: [...TOKMON_CAPABILITIES],
+    ownerKind: 'cli',
     startedAt: Date.now(),
     ownerId,
     state: 'starting',
@@ -119,7 +132,7 @@ export async function runDaemon(args: string[], opts: RunDaemonOptions): Promise
     // Another TUI won the race. It may still be publishing its ready lock.
     for (let attempt = 0; attempt < 60; attempt++) {
       await new Promise(resolve => setTimeout(resolve, 50))
-      const winner = await verifyLock(readLock(), version, 250)
+      const winner = await verifyLock(readLock(), TOKMON_PROTOCOL_VERSION, 250)
       if (winner) {
         if (opts.foreground) describeExisting(winner, open)
         else handshake(winner)
@@ -133,7 +146,15 @@ export async function runDaemon(args: string[], opts: RunDaemonOptions): Promise
   let controller: WebServerController | null = null
   try {
     const config = await loadConfig()
-    controller = await startWebServer({ config, port, log: opts.foreground, wsToken: token })
+    controller = await startWebServer({
+      config,
+      port,
+      log: opts.foreground,
+      wsToken: token,
+      ownerKind: reservation.ownerKind,
+      protocolVersion: reservation.protocolVersion,
+      capabilities: reservation.capabilities,
+    })
     const ready: DaemonLock = {
       ...reservation,
       port: controller.port,
