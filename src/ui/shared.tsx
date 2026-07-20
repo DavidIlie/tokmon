@@ -6,6 +6,7 @@ import type { Metric } from '../providers/types'
 import type { PeakStatus } from '../peak'
 import { glyphs } from '../glyphs'
 import { formatResetAt } from '../shared/format'
+import { useTuiTheme } from './theme'
 
 export function truncateName(s: string, n: number): string {
   const ell = glyphs().ellipsis
@@ -84,6 +85,7 @@ export function LinkBox(
 }
 
 export function Spinner({ label }: { label: string }) {
+  const theme = useTuiTheme()
   const frames = glyphs().spinner
   const [i, setI] = useState(0)
   useEffect(() => {
@@ -92,7 +94,7 @@ export function Spinner({ label }: { label: string }) {
   }, [])
   return (
     <Box>
-      <Text color="green">{frames[i]} </Text>
+      <Text color={theme.accent}>{frames[i]} </Text>
       <Text dimColor>{label}</Text>
     </Box>
   )
@@ -117,7 +119,8 @@ export const PeakBadge = memo(function PeakBadge({ peak, resetDisplay = 'relativ
   resetDisplay?: 'relative' | 'absolute'
   tz?: string
 }) {
-  const color = peak.state === 'peak' ? 'red' : 'green'
+  const theme = useTuiTheme()
+  const color = peak.state === 'peak' ? theme.crit : theme.ok
   const changesAt = peak.changesAt ?? (peak.minutesUntilChange !== null
     ? new Date(Date.now() + peak.minutesUntilChange * 60_000).toISOString()
     : null)
@@ -148,7 +151,7 @@ export function sparkline(values: number[]): string {
   }).join('')
 }
 
-export function Bar({ pct, color, width = 24 }: { pct: number; color: string; width?: number }) {
+export function Bar({ pct, color, width = 24 }: { pct: number; color?: string; width?: number }) {
   const filled = Math.max(0, Math.min(width, Math.round((pct / 100) * width)))
   return (
     <Text>
@@ -170,4 +173,20 @@ export function metricValueText(m: Metric): string {
     return m.limit != null ? `${used} / ${Math.round(m.limit)}` : used
   }
   return `${Math.round(m.used)}%`
+}
+
+/** Inline single-line text with a rendered caret — the shared input primitive for
+ * the settings editors and the history search box. */
+export function CaretText({ value, caret, color }: { value: string; caret: number; color?: string }) {
+  const c = Math.max(0, Math.min(caret, value.length))
+  if (c >= value.length) {
+    return <><Text bold color={color}>{value}</Text><Text color={color}>{glyphs().vbar}</Text></>
+  }
+  return (
+    <>
+      <Text bold color={color}>{value.slice(0, c)}</Text>
+      <Text inverse color={color}>{value[c]}</Text>
+      <Text bold color={color}>{value.slice(c + 1)}</Text>
+    </>
+  )
 }

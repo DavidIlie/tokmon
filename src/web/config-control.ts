@@ -55,10 +55,60 @@ async function resolveEngineConfig(config: Config): Promise<Parameters<DataEngin
   }
 }
 
+/** Fields consumed by DataEngine. Everything else is a hot presentation preference. */
+export function configAffectsEngine(previous: Config, next: Config): boolean {
+  return previous.interval !== next.interval
+    || previous.billingInterval !== next.billingInterval
+    || previous.timezone !== next.timezone
+    || JSON.stringify(previous.accounts) !== JSON.stringify(next.accounts)
+    || JSON.stringify(previous.disabledProviders) !== JSON.stringify(next.disabledProviders)
+    || JSON.stringify(previous.accountDetection) !== JSON.stringify(next.accountDetection)
+}
+
 // RPC handlers may run concurrently. The revision check and durable write must
 // be one serialized operation or two callers can both validate the same
 // revision before either one advances state.
 const updateQueues = new WeakMap<object, Promise<void>>()
+
+function hasOwn(value: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key)
+}
+
+/** Preserve capability-gated fields an older full-document client cannot know. */
+function mergeCapabilityFields(incomingConfig: Config, current: Config): Record<string, unknown> {
+  const incoming = incomingConfig as Partial<Config>
+  const incomingTray = incoming.tray as Partial<Config['tray']> | undefined
+  const incomingDesktop = incoming.desktop as Partial<Config['desktop']> | undefined
+
+  return {
+    ...incoming,
+    appearance: hasOwn(incoming, 'appearance') ? incoming.appearance : current.appearance,
+    accountDetection: hasOwn(incoming, 'accountDetection')
+      ? incoming.accountDetection
+      : current.accountDetection,
+    tray: hasOwn(incoming, 'tray') && incomingTray
+      ? {
+          ...current.tray,
+          ...incomingTray,
+          pinnedProviders: hasOwn(incomingTray, 'pinnedProviders')
+            ? incomingTray.pinnedProviders
+            : current.tray.pinnedProviders,
+        }
+      : current.tray,
+    desktop: hasOwn(incoming, 'desktop') && incomingDesktop
+      ? {
+          ...current.desktop,
+          ...incomingDesktop,
+          expandedProviders: hasOwn(incomingDesktop, 'expandedProviders')
+            ? incomingDesktop.expandedProviders
+            : current.desktop.expandedProviders,
+          graphRangeDays: hasOwn(incomingDesktop, 'graphRangeDays')
+            ? incomingDesktop.graphRangeDays
+            : current.desktop.graphRangeDays,
+        }
+      : current.desktop,
+  }
+}
 
 async function applyConfigUpdateUnlocked(
   engine: DataEngine,
@@ -70,13 +120,14 @@ async function applyConfigUpdateUnlocked(
   }
 
   const normalized = normalizeConfig({
-    ...input.config,
+    ...mergeCapabilityFields(input.config, state.config),
     revision: state.config.revision + 1,
   })
 
-  // Resolve before persisting/exposing the update. A resolver failure leaves
-  // both the disk and in-memory state untouched.
-  const engineConfig = await resolveEngineConfig(normalized)
+  const reconfigureEngine = configAffectsEngine(state.config, normalized)
+  // Only source/timing changes resolve accounts. Pins, privacy, disclosure and
+  // summary preferences are durable hot updates and must never restart fetches.
+  const engineConfig = reconfigureEngine ? await resolveEngineConfig(normalized) : null
   try {
     await saveConfig(normalized)
   } catch (error) {
@@ -84,7 +135,7 @@ async function applyConfigUpdateUnlocked(
   }
 
   state.config = normalized
-  engine.setConfig(engineConfig)
+  if (engineConfig) engine.setConfig(engineConfig)
   engine.broadcastConfig(normalized)
   return toConfigState(normalized)
 }

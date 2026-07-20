@@ -1,8 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import { parseAsArrayOf, parseAsString, parseAsStringEnum, useQueryStates } from 'nuqs'
-import { DEFAULT_FILTERS, type Filters, type PeriodKey } from './derive'
-
-const PERIODS: PeriodKey[] = ['7d', '30d', '90d', 'mtd', 'all']
+import { DEFAULT_FILTERS, PERIODS, type Filters } from './derive'
 
 export function useFilters(): [Filters, (next: Filters | ((p: Filters) => Filters)) => void] {
   const [s, setS] = useQueryStates(
@@ -10,7 +8,7 @@ export function useFilters(): [Filters, (next: Filters | ((p: Filters) => Filter
       p: parseAsArrayOf(parseAsString).withDefault([]),
       m: parseAsArrayOf(parseAsString).withDefault([]),
       a: parseAsString.withDefault('all'),
-      period: parseAsStringEnum(PERIODS).withDefault(DEFAULT_FILTERS.period),
+      period: parseAsStringEnum(PERIODS.map(period => period.key)).withDefault(DEFAULT_FILTERS.period),
     },
     { history: 'replace' },
   )

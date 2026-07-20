@@ -1,17 +1,264 @@
-import { memo } from 'react'
+import { Fragment, memo, type ReactNode } from 'react'
 import { Box, Text } from 'ink'
 import { glyphs } from '../glyphs'
-import { configLocation, generateAccountId, COLOR_PALETTE, redactEmail, type Config, type Account, type TrackedAccountRow } from '../config'
+import { configLocation, DESKTOP_GRAPH_RANGES, generateAccountId, COLOR_PALETTE, providerDetectionEnabled, redactEmail, sanitizeTyped, toggleProviderSelection, type Config, type Account, type TrackedAccountRow } from '../config'
 import { PROVIDER_ORDER, PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
-import { truncateName } from './shared'
+import { systemTimezone } from '../tz'
+import { CaretText, truncateName } from './shared'
+import { useTuiTheme } from './theme'
+import { themePresetOption, isDarkOnlyThemePreset, THEME_PRESET_IDS } from '../theme'
+import type { InputKey, KeyContext } from './keybinding-context'
 
-export const GENERAL_ROWS = 11
+type TuiTheme = ReturnType<typeof useTuiTheme>
 
-export const SETTINGS_TABS = ['general', 'providers', 'accounts'] as const
+/** Render context for a settings row's value cell (and its optional below-line). */
+export interface RowRenderCtx {
+  config: Config
+  theme: TuiTheme
+  tzEdit: string | null
+  tzCaret: number
+  tzError: string | null
+  tzDisplay: string
+  allowedHostsEdit: string | null
+  allowedHostsCaret: number
+  allowedHostsError: string | null
+}
+
+/**
+ * One settings row, co-locating everything that must stay index-aligned: the
+ * value-cell `render`, an optional `below` line (errors/warnings), and the
+ * key-dispatch `onAdjust`. A row's index is its position in the tab array, so
+ * render, dispatch, and row count all derive from these arrays — inserting or
+ * reordering a row is a single edit instead of the old positional
+ * idx/switch/constant triple-coupling.
+ */
+export interface SettingRow {
+  key: string
+  label: string
+  render: (rc: RowRenderCtx) => ReactNode
+  below?: (rc: RowRenderCtx, focused: boolean) => ReactNode
+  onAdjust: (input: string, key: InputKey, ctx: KeyContext) => void
+}
+
+const caret = (value: ReactNode): ReactNode => (
+  <><Text dimColor>{glyphs().caretL} </Text>{value}<Text dimColor> {glyphs().caretR}</Text></>
+)
+
+const toggleText = (on: boolean, theme: TuiTheme, onLabel: string, offLabel: string, offColor?: string): ReactNode => (
+  <Text bold color={on ? theme.ok : offColor ?? theme.crit}>{on ? onLabel : offLabel}</Text>
+)
+
+function cycleNumber(values: readonly number[], current: number, direction: -1 | 1): number {
+  const exact = values.indexOf(current)
+  const index = exact >= 0
+    ? exact
+    : values.reduce((best, value, candidate) => (
+      Math.abs(value - current) < Math.abs(values[best]! - current) ? candidate : best
+    ), 0)
+  return values[(index + direction + values.length) % values.length]!
+}
+
+const step = (key: InputKey): -1 | 1 => (key.leftArrow ? -1 : 1)
+const isToggleKey = (key: InputKey): boolean => key.leftArrow || key.rightArrow || key.return
+const isAdjustKey = (input: string, key: InputKey): boolean => input === ' ' || key.leftArrow || key.rightArrow || key.return
+
+export const GENERAL_SETTINGS: SettingRow[] = [
+  {
+    key: 'refreshInterval', label: 'Refresh interval',
+    render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.interval}s</Text>),
+    onAdjust: (_input, key, ctx) => {
+      if (key.leftArrow) ctx.global.updateConfig(c => ({ ...c, interval: Math.max(1, c.interval - 1) }))
+      if (key.rightArrow) ctx.global.updateConfig(c => ({ ...c, interval: c.interval + 1 }))
+    },
+  },
+  {
+    key: 'billingPoll', label: 'Billing poll',
+    render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.billingInterval}m</Text>),
+    onAdjust: (_input, key, ctx) => {
+      if (key.leftArrow) ctx.global.updateConfig(c => ({ ...c, billingInterval: Math.max(1, c.billingInterval - 1) }))
+      if (key.rightArrow) ctx.global.updateConfig(c => ({ ...c, billingInterval: c.billingInterval + 1 }))
+    },
+  },
+  {
+    key: 'clearScreen', label: 'Clear screen',
+    render: rc => toggleText(rc.config.clearScreen, rc.theme, 'on', 'off'),
+    onAdjust: (_input, key, ctx) => { if (isToggleKey(key)) ctx.global.updateConfig(c => ({ ...c, clearScreen: !c.clearScreen })) },
+  },
+  {
+    key: 'privacyMode', label: 'Privacy mode',
+    render: rc => toggleText(rc.config.privacyMode, rc.theme, 'on', 'off'),
+    onAdjust: (_input, key, ctx) => { if (isToggleKey(key)) ctx.global.updateConfig(c => ({ ...c, privacyMode: !c.privacyMode })) },
+  },
+  {
+    key: 'privacyKey', label: 'Privacy key',
+    render: rc => <Text bold color={rc.theme.cost}>{rc.config.privacyToggleKey === ' ' ? 'space' : rc.config.privacyToggleKey}</Text>,
+    onAdjust: (input, key, ctx) => {
+      if (ctx.textInput.isPrintable(input, key)) {
+        const clean = sanitizeTyped(input)
+        if (clean.length === 1) ctx.global.updateConfig(c => ({ ...c, privacyToggleKey: clean }))
+      }
+      if (key.backspace || key.delete) ctx.global.updateConfig(c => ({ ...c, privacyToggleKey: 'p' }))
+    },
+  },
+  {
+    key: 'timezone', label: 'Timezone',
+    render: rc => rc.tzEdit !== null
+      ? <><Text dimColor>[</Text><CaretText value={rc.tzEdit ?? ''} caret={rc.tzCaret} color={rc.theme.accent} /><Text dimColor>]</Text></>
+      : <Text bold color={rc.theme.cost}>{rc.tzDisplay}</Text>,
+    below: (rc, focused) => (focused && rc.tzError ? <Text color={rc.theme.crit}>  {rc.tzError}</Text> : null),
+    onAdjust: (_input, key, ctx) => {
+      if (key.return) {
+        const initial = ctx.global.config.timezone ?? ''
+        ctx.timezoneEditor.setValue(initial)
+        ctx.timezoneEditor.setCaret(initial.length)
+        ctx.timezoneEditor.setError(null)
+      }
+      if (key.leftArrow || key.rightArrow) {
+        ctx.global.updateConfig(c => ({ ...c, timezone: c.timezone === null ? systemTimezone() : null }))
+      }
+    },
+  },
+  {
+    key: 'dashboard', label: 'Dashboard',
+    render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.dashboardLayout === 'grid' ? 'grid (all)' : 'single (cycle)'}</Text>),
+    onAdjust: (_input, key, ctx) => { if (isToggleKey(key)) ctx.global.updateConfig(c => ({ ...c, dashboardLayout: c.dashboardLayout === 'grid' ? 'single' : 'grid' })) },
+  },
+  {
+    key: 'defaultFocus', label: 'Default focus',
+    render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.defaultFocus === 'all' ? 'All' : 'Last account'}</Text>),
+    onAdjust: (_input, key, ctx) => { if (isToggleKey(key)) ctx.global.updateConfig(c => ({ ...c, defaultFocus: c.defaultFocus === 'all' ? 'last' : 'all' })) },
+  },
+  {
+    key: 'networkAccess', label: 'Network access',
+    render: rc => <Text bold color={rc.config.allowNetworkAccess ? rc.theme.crit : rc.theme.ok}>{rc.config.allowNetworkAccess ? 'LAN (unsafe)' : 'local only'}</Text>,
+    onAdjust: (_input, key, ctx) => { if (isToggleKey(key)) ctx.global.updateConfig(c => ({ ...c, allowNetworkAccess: !c.allowNetworkAccess })) },
+  },
+  {
+    key: 'allowedHosts', label: 'Allowed hosts',
+    render: rc => rc.allowedHostsEdit !== null
+      ? <><Text dimColor>[</Text><CaretText value={rc.allowedHostsEdit ?? ''} caret={rc.allowedHostsCaret} color={rc.theme.accent} /><Text dimColor>]</Text></>
+      : <Text bold color={rc.theme.cost}>{rc.config.allowedHosts.join(', ') || 'none'}</Text>,
+    below: (rc, focused) => (
+      <>
+        {focused && rc.allowedHostsError ? <Text color={rc.theme.crit}>  {rc.allowedHostsError}</Text> : null}
+        {rc.config.allowNetworkAccess ? <Text color={rc.theme.crit}>  Warning: dashboard data and settings will be exposed to your local network after daemon restart.</Text> : null}
+      </>
+    ),
+    onAdjust: (_input, key, ctx) => {
+      if (key.return) {
+        const initial = ctx.global.config.allowedHosts.join(', ')
+        ctx.allowedHostsEditor.setValue(initial)
+        ctx.allowedHostsEditor.setCaret(initial.length)
+        ctx.allowedHostsEditor.setError(null)
+      }
+    },
+  },
+  {
+    key: 'resetTimes', label: 'Reset times',
+    render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.resetDisplay === 'relative' ? 'time remaining' : 'exact date/time'}</Text>),
+    onAdjust: (_input, key, ctx) => { if (isToggleKey(key)) ctx.global.updateConfig(c => ({ ...c, resetDisplay: c.resetDisplay === 'relative' ? 'absolute' : 'relative' })) },
+  },
+]
+
+export const THEME_SETTINGS: SettingRow[] = [
+  {
+    key: 'preset', label: 'Preset',
+    render: rc => caret(<Text bold color={rc.theme.accent}>{themePresetLabel(rc.config.appearance.preset)}</Text>),
+    onAdjust: (_input, key, ctx) => {
+      if (!isToggleKey(key)) return
+      const direction = step(key)
+      ctx.global.updateConfig(current => {
+        const choices = THEME_PRESET_IDS.filter(preset => preset !== 'custom' || current.appearance.custom)
+        const currentIndex = Math.max(0, choices.findIndex(v => v === current.appearance.preset))
+        const preset = choices[(currentIndex + direction + choices.length) % choices.length]!
+        return { ...current, appearance: { ...current.appearance, preset, ...(isDarkOnlyThemePreset(preset) ? { mode: 'dark' as const } : {}) } }
+      })
+    },
+  },
+  {
+    key: 'appAppearance', label: 'App appearance',
+    render: rc => caret(<Text bold color={rc.theme.cost}>{appearanceModeLabel(rc.config.appearance.mode)}</Text>),
+    onAdjust: (_input, key, ctx) => {
+      if (!isToggleKey(key)) return
+      const direction = step(key)
+      ctx.global.updateConfig(current => {
+        if (isDarkOnlyThemePreset(current.appearance.preset)) return current
+        const choices = ['auto', 'light', 'dark'] as const
+        const currentIndex = choices.indexOf(current.appearance.mode)
+        return { ...current, appearance: { ...current.appearance, mode: choices[(currentIndex + direction + choices.length) % choices.length]! } }
+      })
+    },
+  },
+  {
+    key: 'terminalColors', label: 'Terminal colors',
+    render: rc => caret(<Text bold color={rc.theme.accent}>{terminalModeLabel(rc.config.appearance.terminal)}</Text>),
+    onAdjust: (_input, key, ctx) => {
+      if (!isToggleKey(key)) return
+      const direction = step(key)
+      ctx.global.updateConfig(current => {
+        const choices = ['ansi', 'dark', 'light', 'off'] as const
+        const currentIndex = choices.indexOf(current.appearance.terminal)
+        return { ...current, appearance: { ...current.appearance, terminal: choices[(currentIndex + direction + choices.length) % choices.length]! } }
+      })
+    },
+  },
+]
+
+export const DESKTOP_FIXED_SETTINGS: SettingRow[] = [
+  {
+    key: 'trayApp', label: 'Tray app',
+    render: rc => toggleText(rc.config.tray.enabled, rc.theme, 'on', 'off'),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, enabled: !c.tray.enabled } })) },
+  },
+  {
+    key: 'menuBarValues', label: 'Menu bar values',
+    render: rc => toggleText(rc.config.tray.showMenuBarText, rc.theme, 'shown', 'icon only', rc.theme.unknown),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, showMenuBarText: !c.tray.showMenuBarText } })) },
+  },
+  {
+    key: 'summary', label: 'Summary',
+    render: rc => caret(<Text bold color={rc.theme.accent}>{rc.config.tray.displayMetric === 'smartHeadroom' ? 'smart usage' : 'tightest quota'}</Text>),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, displayMetric: c.tray.displayMetric === 'smartHeadroom' ? 'tightestRemaining' : 'smartHeadroom' } })) },
+  },
+  {
+    key: 'trayRefresh', label: 'Tray refresh',
+    render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.tray.pollIntervalSec}s</Text>),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, pollIntervalSec: cycleNumber([15, 30, 60, 120], c.tray.pollIntervalSec, step(key)) } })) },
+  },
+  {
+    key: 'activeWindow', label: 'Active window',
+    render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.tray.activeTimeoutMin}m</Text>),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, activeTimeoutMin: cycleNumber([5, 10, 15, 30], c.tray.activeTimeoutMin, step(key)) } })) },
+  },
+  {
+    key: 'graphRange', label: 'Graph range',
+    render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.desktop.graphRangeDays} days</Text>),
+    onAdjust: (input, key, ctx) => {
+      if (!isAdjustKey(input, key)) return
+      ctx.global.updateConfig(c => ({
+        ...c,
+        desktop: { ...c.desktop, graphRangeDays: cycleNumber(DESKTOP_GRAPH_RANGES, c.desktop.graphRangeDays, step(key)) as Config['desktop']['graphRangeDays'] },
+      }))
+    },
+  },
+  {
+    key: 'launchAtLogin', label: 'Launch at login',
+    render: rc => toggleText(rc.config.tray.launchAtLogin, rc.theme, 'on', 'off', rc.theme.unknown),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, launchAtLogin: !c.tray.launchAtLogin } })) },
+  },
+]
+
+export const GENERAL_ROWS = GENERAL_SETTINGS.length
+export const THEME_ROWS = THEME_SETTINGS.length
+export const DESKTOP_FIXED_ROWS = DESKTOP_FIXED_SETTINGS.length
+
+export const SETTINGS_TABS = ['general', 'theme', 'desktop', 'providers', 'accounts'] as const
 export type SettingsTab = typeof SETTINGS_TABS[number]
 const SETTINGS_TAB_LABELS: Record<SettingsTab, string> = {
   general: 'General',
+  theme: 'Theme',
+  desktop: 'Desktop App',
   providers: 'Providers',
   accounts: 'Accounts',
 }
@@ -59,12 +306,17 @@ export const SettingsView = memo(function SettingsView({
   trackedAccounts: TrackedAccountRow[]
   accountIdentities: Map<string, AccountIdentity>
 }) {
+  const theme = useTuiTheme()
   if (accountForm) return <AccountFormView form={accountForm} accounts={config.accounts} />
 
   const editingTz = tzEdit !== null
   const editingAllowedHosts = allowedHostsEdit !== null
   const tzDisplay = config.timezone === null ? `System (${resolvedTz})` : config.timezone
   const tabFocused = cursor < 0
+  const rc: RowRenderCtx = {
+    config, theme, tzEdit, tzCaret, tzError, tzDisplay,
+    allowedHostsEdit, allowedHostsCaret, allowedHostsError,
+  }
 
   return (
     <Box flexDirection="column" marginTop={1}>
@@ -77,77 +329,81 @@ export const SettingsView = memo(function SettingsView({
       {activeTab === 'general' && (
         <>
           <Text bold dimColor>General</Text>
-          <Row cursor={cursor} idx={0} label="Refresh interval">
-            <Text dimColor>{glyphs().caretL} </Text><Text bold color="yellow">{config.interval}s</Text><Text dimColor> {glyphs().caretR}</Text>
-          </Row>
-          <Row cursor={cursor} idx={1} label="Billing poll">
-            <Text dimColor>{glyphs().caretL} </Text><Text bold color="yellow">{config.billingInterval}m</Text><Text dimColor> {glyphs().caretR}</Text>
-          </Row>
-          <Row cursor={cursor} idx={2} label="Clear screen">
-            <Text bold color={config.clearScreen ? 'green' : 'red'}>{config.clearScreen ? 'on' : 'off'}</Text>
-          </Row>
-          <Row cursor={cursor} idx={3} label="Privacy mode">
-            <Text bold color={config.privacyMode ? 'green' : 'red'}>{config.privacyMode ? 'on' : 'off'}</Text>
-          </Row>
-          <Row cursor={cursor} idx={4} label="Privacy key">
-            <Text bold color="yellow">{config.privacyToggleKey === ' ' ? 'space' : config.privacyToggleKey}</Text>
-          </Row>
-          <Row cursor={cursor} idx={5} label="Timezone">
-            {editingTz ? (
-              <><Text dimColor>[</Text><CaretText value={tzEdit ?? ''} caret={tzCaret} color="cyan" /><Text dimColor>]</Text></>
-            ) : (
-              <Text bold color="yellow">{tzDisplay}</Text>
+          {GENERAL_SETTINGS.map((row, i) => (
+            <Fragment key={row.key}>
+              <Row cursor={cursor} idx={i} label={row.label}>{row.render(rc)}</Row>
+              {row.below?.(rc, cursor === i)}
+            </Fragment>
+          ))}
+        </>
+      )}
+
+      {activeTab === 'theme' && (
+        <>
+          <Text bold dimColor>Theme</Text>
+          {THEME_SETTINGS.map((row, i) => (
+            <Fragment key={row.key}>
+              <Row cursor={cursor} idx={i} label={row.label}>{row.render(rc)}</Row>
+              {row.below?.(rc, cursor === i)}
+            </Fragment>
+          ))}
+          <Box marginTop={1} flexDirection="column">
+            <Text dimColor>  Auto follows the operating system in the web and desktop apps.</Text>
+            <Text dimColor>  Terminal colors never repaint your terminal background.</Text>
+            {config.appearance.preset === 'custom' && (
+              <Text dimColor>  Custom colors are edited in the web dashboard and shared here.</Text>
             )}
-          </Row>
-          {cursor === 5 && tzError && <Text color="red">  {tzError}</Text>}
-          <Row cursor={cursor} idx={6} label="Dashboard">
-            <Text dimColor>{glyphs().caretL} </Text>
-            <Text bold color="yellow">{config.dashboardLayout === 'grid' ? 'grid (all)' : 'single (cycle)'}</Text>
-            <Text dimColor> {glyphs().caretR}</Text>
-          </Row>
-          <Row cursor={cursor} idx={7} label="Default focus">
-            <Text dimColor>{glyphs().caretL} </Text>
-            <Text bold color="yellow">{config.defaultFocus === 'all' ? 'All' : 'Last account'}</Text>
-            <Text dimColor> {glyphs().caretR}</Text>
-          </Row>
-          <Row cursor={cursor} idx={8} label="Network access">
-            <Text bold color={config.allowNetworkAccess ? 'red' : 'green'}>
-              {config.allowNetworkAccess ? 'LAN (unsafe)' : 'local only'}
-            </Text>
-          </Row>
-          <Row cursor={cursor} idx={9} label="Allowed hosts">
-            {editingAllowedHosts ? (
-              <><Text dimColor>[</Text><CaretText value={allowedHostsEdit ?? ''} caret={allowedHostsCaret} color="cyan" /><Text dimColor>]</Text></>
-            ) : (
-              <Text bold color="yellow">{config.allowedHosts.join(', ') || 'none'}</Text>
-            )}
-          </Row>
-          {cursor === 9 && allowedHostsError && <Text color="red">  {allowedHostsError}</Text>}
-          {config.allowNetworkAccess && (
-            <Text color="red">  Warning: dashboard data and settings will be exposed to your local network after daemon restart.</Text>
-          )}
-          <Row cursor={cursor} idx={10} label="Reset times">
-            <Text dimColor>{glyphs().caretL} </Text>
-            <Text bold color="yellow">{config.resetDisplay === 'relative' ? 'time remaining' : 'exact date/time'}</Text>
-            <Text dimColor> {glyphs().caretR}</Text>
-          </Row>
+          </Box>
+        </>
+      )}
+
+      {activeTab === 'desktop' && (
+        <>
+          <Text bold dimColor>Desktop App</Text>
+          {DESKTOP_FIXED_SETTINGS.map((row, i) => (
+            <Fragment key={row.key}>
+              <Row cursor={cursor} idx={i} label={row.label}>{row.render(rc)}</Row>
+              {row.below?.(rc, cursor === i)}
+            </Fragment>
+          ))}
+          <Box marginTop={1}><Text bold dimColor>Menu bar pins</Text><Text dimColor>  up to 2 providers, in order</Text></Box>
+          {PROVIDER_ORDER.map((pid, i) => {
+            const idx = DESKTOP_FIXED_ROWS + i
+            const selected = cursor === idx
+            const pinned = config.tray.pinnedProviders.includes(pid)
+            const position = config.tray.pinnedProviders.indexOf(pid)
+            const meta = PROVIDERS[pid]
+            return (
+              <Box key={pid}>
+                <Text color={selected ? theme.accent : undefined}>{selected ? glyphs().caretR : ' '} </Text>
+                <Box width={20}><Text color={meta.color}>{glyphs().dot} </Text><Text bold={pinned}>{meta.name}</Text></Box>
+                <Text color={pinned ? theme.ok : undefined} dimColor={!pinned}>{pinned ? `[${position + 1}] pinned` : '[ ] not pinned'}</Text>
+              </Box>
+            )
+          })}
         </>
       )}
 
       {activeTab === 'providers' && (
         <>
           <Text bold dimColor>Providers</Text>
+          <Box>
+            <Text color={cursor === 0 ? theme.accent : undefined}>{cursor === 0 ? glyphs().caretR : ' '} </Text>
+            <Box width={20}><Text bold>Discover accounts</Text></Box>
+            {toggleText(config.accountDetection.enabled, theme, 'on', 'off')}
+          </Box>
           {PROVIDER_ORDER.map((pid, i) => {
-            const selected = cursor === i
+            const selected = cursor === i + 1
             const enabled = !config.disabledProviders.includes(pid)
+            const discovery = providerDetectionEnabled(config.accountDetection, pid)
             const p = PROVIDERS[pid]
             return (
               <Box key={pid}>
-                <Text color={selected ? 'green' : undefined}>{selected ? glyphs().caretR : ' '} </Text>
-                <Text bold={enabled} color={enabled ? p.color : undefined} dimColor={!enabled}>{enabled ? `[${glyphs().check}]` : '[ ]'}</Text>
+                <Text color={selected ? theme.accent : undefined}>{selected ? glyphs().caretR : ' '} </Text>
                 <Text color={p.color}> {glyphs().dot} </Text>
-                <Box width={9}><Text bold={selected}>{p.name}</Text></Box>
-                <Text dimColor>{enabled ? 'tracking' : 'off'}</Text>
+                <Box width={16}><Text bold={selected}>{p.name}</Text></Box>
+                <Box width={18}><Text color={enabled ? theme.ok : undefined} dimColor={!enabled}>{enabled ? `[${glyphs().check}] tracking` : '[ ] tracking'}</Text></Box>
+                <Text color={discovery ? theme.ok : undefined} dimColor={!discovery}>{discovery ? `[${glyphs().check}] auto-detect` : '[ ] auto-detect'}</Text>
               </Box>
             )
           })}
@@ -168,23 +424,25 @@ export const SettingsView = memo(function SettingsView({
             const rawIdentityLabel = identity?.email || identity?.displayName || acc.name
             const identityLabel = config.privacyMode ? redactEmail(rawIdentityLabel) : rawIdentityLabel
             const plan = identity?.plan ?? null
+            const ignored = acc.source === 'ignored'
+            const sourceLabel = acc.source === 'auto' ? 'auto tracking' : ignored ? 'ignored' : 'configured'
             return (
               <Box key={`${acc.source}:${acc.id}`}>
-                <Text color={selected ? 'green' : undefined}>{selected ? glyphs().caretR : ' '} </Text>
-                <Text color={acc.color || provider.color}>{isActive ? glyphs().dot : glyphs().radioOff} </Text>
-                <Box width={28}><Text bold>{truncateName(identityLabel, 27)}</Text></Box>
+                <Text color={selected ? theme.accent : undefined}>{selected ? glyphs().caretR : ' '} </Text>
+                <Text color={ignored ? theme.unknown : acc.color || provider.color}>{ignored ? glyphs().warn : isActive ? glyphs().dot : glyphs().radioOff} </Text>
+                <Box width={28}><Text bold={!ignored} dimColor={ignored}>{truncateName(identityLabel, 27)}</Text></Box>
                 <Box width={9}><Text color={provider.color}>{provider.name}</Text></Box>
                 <Box width={18}><Text dimColor>{plan ? truncateName(plan, 17) : ''}</Text></Box>
-                <Box width={12}><Text dimColor>{acc.source === 'auto' ? 'auto tracking' : 'configured'}</Text></Box>
-                <Text dimColor>{truncateName(acc.homeDir, 24)}</Text>
+                <Box width={14}><Text dimColor>{sourceLabel}</Text></Box>
+                <Text dimColor>{config.privacyMode ? '[path hidden]' : truncateName(acc.homeDir, 24)}</Text>
               </Box>
             )
           })}
           <Box>
-            <Text color={cursor === trackedAccounts.length ? 'green' : undefined}>
+            <Text color={cursor === trackedAccounts.length ? theme.accent : undefined}>
               {cursor === trackedAccounts.length ? glyphs().caretR : ' '}{' '}
             </Text>
-            <Text color="greenBright">+ </Text>
+            <Text color={theme.accent}>+ </Text>
             <Text>Add account</Text>
           </Box>
         </>
@@ -197,11 +455,17 @@ export const SettingsView = memo(function SettingsView({
         <Text dimColor>type IANA name (e.g. Europe/London) {glyphs().middot} empty = System {glyphs().middot} Enter save {glyphs().middot} Esc cancel</Text>
       ) : editingAllowedHosts ? (
         <Text dimColor>comma-separated exact DNS names {glyphs().middot} Enter save {glyphs().middot} Esc cancel</Text>
+      ) : activeTab === 'theme' ? (
+        <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  {glyphs().arrowL}{glyphs().arrowR} adjust  {glyphs().middot}  s/Esc close</Text>
+      ) : activeTab === 'desktop' ? (
+        <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  {glyphs().arrowL}{glyphs().arrowR}/space adjust  {glyphs().middot}  pins are capped at 2  {glyphs().middot}  s/Esc close</Text>
       ) : activeTab === 'providers' ? (
-        <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  space toggle provider  {glyphs().middot}  s/Esc close</Text>
+        <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  space tracking/global discovery  {glyphs().middot}  a per-provider auto-detect  {glyphs().middot}  s/Esc close</Text>
       ) : activeTab === 'accounts' && cursor >= 0 && cursor < trackedAccounts.length ? (
         trackedAccounts[cursor]?.source === 'auto' ? (
-          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter configure  {glyphs().middot}  space activate  {glyphs().middot}  s/Esc close</Text>
+          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter configure  {glyphs().middot}  space activate  {glyphs().middot}  x ignore  {glyphs().middot}  s/Esc close</Text>
+        ) : trackedAccounts[cursor]?.source === 'ignored' ? (
+          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter/x turn on  {glyphs().middot}  s/Esc close</Text>
         ) : (
           <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  {glyphs().shift}{glyphs().arrowU}{glyphs().arrowD} reorder  {glyphs().middot}  Enter edit  {glyphs().middot}  space activate  {glyphs().middot}  d delete  {glyphs().middot}  s/Esc close</Text>
         )
@@ -214,10 +478,23 @@ export const SettingsView = memo(function SettingsView({
   )
 })
 
+function themePresetLabel(preset: Config['appearance']['preset']): string {
+  return themePresetOption(preset).name
+}
+
+function appearanceModeLabel(mode: Config['appearance']['mode']): string {
+  return mode === 'auto' ? 'Auto (system)' : mode === 'light' ? 'Light' : 'Dark'
+}
+
+function terminalModeLabel(mode: Config['appearance']['terminal']): string {
+  return mode === 'ansi' ? 'Terminal managed' : mode === 'off' ? 'No color' : mode === 'light' ? 'Light terminal' : 'Dark terminal'
+}
+
 function SettingsTabBar({ active, focused }: { active: SettingsTab; focused: boolean }) {
+  const theme = useTuiTheme()
   return (
     <Box>
-      <Text color={focused ? 'green' : undefined}>{focused ? glyphs().caretR : ' '} </Text>
+      <Text color={focused ? theme.accent : undefined}>{focused ? glyphs().caretR : ' '} </Text>
       {SETTINGS_TABS.map((tab, i) => {
         const selected = tab === active
         return (
@@ -233,24 +510,12 @@ function SettingsTabBar({ active, focused }: { active: SettingsTab; focused: boo
   )
 }
 
-export function CaretText({ value, caret, color }: { value: string; caret: number; color?: string }) {
-  const c = Math.max(0, Math.min(caret, value.length))
-  if (c >= value.length) {
-    return <><Text bold color={color}>{value}</Text><Text color={color}>{glyphs().vbar}</Text></>
-  }
-  return (
-    <>
-      <Text bold color={color}>{value.slice(0, c)}</Text>
-      <Text inverse color={color}>{value[c]}</Text>
-      <Text bold color={color}>{value.slice(c + 1)}</Text>
-    </>
-  )
-}
 
 function Row({ cursor, idx, label, children }: { cursor: number; idx: number; label: string; children: React.ReactNode }) {
+  const theme = useTuiTheme()
   return (
     <Box>
-      <Text color={cursor === idx ? 'green' : undefined}>{cursor === idx ? glyphs().caretR : ' '} </Text>
+      <Text color={cursor === idx ? theme.accent : undefined}>{cursor === idx ? glyphs().caretR : ' '} </Text>
       <Box width={20}><Text>{label}</Text></Box>
       {children}
     </Box>
@@ -258,6 +523,7 @@ function Row({ cursor, idx, label, children }: { cursor: number; idx: number; la
 }
 
 function AccountFormView({ form, accounts }: { form: AccountForm; accounts: Account[] }) {
+  const theme = useTuiTheme()
   const previewId = form.mode === 'add'
     ? generateAccountId(form.name || 'account', accounts)
     : form.editingId ?? ''
@@ -292,7 +558,7 @@ function AccountFormView({ form, accounts }: { form: AccountForm; accounts: Acco
         </Box>
       </Box>
 
-      {form.error && <Box marginTop={1}><Text color="red">{glyphs().warn} {form.error}</Text></Box>}
+      {form.error && <Box marginTop={1}><Text color={theme.crit}>{glyphs().warn} {form.error}</Text></Box>}
 
       <Box marginTop={1}>
         <Text dimColor>tab/{glyphs().arrowU}{glyphs().arrowD} </Text><Text>switch field</Text><Text dimColor>  {glyphs().middot}  </Text>

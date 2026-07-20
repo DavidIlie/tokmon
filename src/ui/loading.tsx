@@ -9,6 +9,7 @@ import { glyphs } from '../glyphs'
 import * as fmt from '../format'
 import { redactEmail } from '../config'
 import { truncateName, metricValueText } from './shared'
+import { useTuiTheme } from './theme'
 
 type Group = { provider: ProviderId; accounts: Account[] }
 
@@ -64,6 +65,7 @@ export function LoadingView({ groups, stats, cols, rows, readyInput, privacyMode
   readyInput?: (id: string) => ReadyInput | undefined
   privacyMode?: boolean
 }) {
+  const theme = useTuiTheme()
   const resolveReady = readyInput ?? ((id: string) => statsReadyInput(stats.get(id)))
   const sp = glyphs().spinner
   const [frame, setFrame] = useState(0)
@@ -83,7 +85,7 @@ export function LoadingView({ groups, stats, cols, rows, readyInput, privacyMode
 
   return (
     <Box flexDirection="column">
-      <Text bold color="greenBright">{glyphs().dotSel} tokmon</Text>
+      <Text bold color={theme.accent}>{glyphs().dotSel} tokmon</Text>
 
       <Box marginTop={1}>
         <Text dimColor>Detecting installed tools{glyphs().ellipsis}</Text>
@@ -116,14 +118,14 @@ export function LoadingView({ groups, stats, cols, rows, readyInput, privacyMode
               <Text>{namePad}</Text>
               <Text>  </Text>
               {errored ? (
-                <Text color="red">{glyphs().warn} </Text>
+                <Text color={theme.crit}>{glyphs().warn} </Text>
               ) : ready ? (
-                <Text color="green">{glyphs().check} </Text>
+                <Text color={theme.ok}>{glyphs().check} </Text>
               ) : (
-                <Text color="green">{sp[frame % sp.length]} </Text>
+                <Text color={theme.accent}>{sp[frame % sp.length]} </Text>
               )}
               {errored ? (
-                <Text color="red">{headlineFor(g, items, privacyMode)}</Text>
+                <Text color={theme.crit}>{headlineFor(g, items, privacyMode)}</Text>
               ) : ready ? (
                 <Text>{headlineFor(g, items, privacyMode)}</Text>
               ) : (

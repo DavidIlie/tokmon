@@ -10,6 +10,7 @@ import type { WebSnapshot } from './contract'
 import { billingIntervalFor, summaryIntervalFor } from './config-control'
 import { mountWsRpc } from './ws'
 import { isAllowedHostHeader, isSameOriginRequest } from './request-guard'
+import { resolveDaemonChannel, type DaemonChannel } from './daemon-channel'
 
 const LOOPBACK_HOST = '127.0.0.1'
 const NETWORK_HOST = '0.0.0.0'
@@ -28,11 +29,16 @@ export interface StartOptions {
   config: Config
   port?: number
   log?: boolean
+  /** Explicit packaged dashboard directory. Electron cannot rely on import.meta.url discovery inside asar. */
+  webRoot?: string
+  /** Explicit host version for bundled embedders whose module URL is inside an asar. */
+  version?: string
   /** Injected by the daemon so the lock can be published before web resources start. */
   wsToken?: string
   protocolVersion?: number
   capabilities?: readonly string[]
   ownerKind?: 'cli' | 'desktop'
+  channel?: DaemonChannel
 }
 
 function header(req: IncomingMessage, name: string): string | undefined {
@@ -71,6 +77,7 @@ function createRouter(
   protocolVersion: number,
   capabilities: readonly string[],
   ownerKind: 'cli' | 'desktop',
+  channel: DaemonChannel,
 ): (req: IncomingMessage, res: ServerResponse) => void {
   return (req, res) => {
     const url = req.url || '/'
@@ -95,6 +102,7 @@ function createRouter(
         protocolVersion,
         capabilities,
         ownerKind,
+        channel,
         // Discovery requires this proof; public health checks retain their useful 200 response.
         owner: tokenMatches(header(req, 'x-tokmon-token'), wsToken),
       })
@@ -128,10 +136,11 @@ function createRouter(
 export async function startWebServer(opts: StartOptions): Promise<WebServerController> {
   const state = { config: opts.config }
   const tz = tzFor(state.config)
-  const version = appVersion()
+  const version = opts.version ?? appVersion()
   const protocolVersion = opts.protocolVersion ?? TOKMON_PROTOCOL_VERSION
   const capabilities = opts.capabilities ?? TOKMON_CAPABILITIES
   const ownerKind = opts.ownerKind ?? 'cli'
+  const channel = resolveDaemonChannel(opts.channel)
   const summaryIntervalMs = summaryIntervalFor(state.config)
   const billingIntervalMs = billingIntervalFor(state.config)
   const wsToken = opts.wsToken ?? randomBytes(32).toString('base64url')
@@ -145,7 +154,7 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
   let closeWsRpc: (() => Promise<void>) | null = null
   try {
     if (isDevMode()) vite = await createViteDevServer(server, log)
-    const webRoot = vite ? null : findWebRoot()
+    const webRoot = vite ? null : (opts.webRoot ?? findWebRoot())
     if (!vite && !webRoot) log('  ⚠ no dashboard available — see the page for build/dev instructions')
 
     engine = createDataEngine({ version, config: state.config, tz, summaryIntervalMs, billingIntervalMs, resolved })
@@ -159,6 +168,7 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
       protocolVersion,
       capabilities,
       ownerKind,
+      channel,
     ))
     closeWsRpc = await mountWsRpc(server, { engine, state })
     const bindHost = state.config.allowNetworkAccess ? NETWORK_HOST : LOOPBACK_HOST

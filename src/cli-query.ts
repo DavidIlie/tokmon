@@ -104,7 +104,7 @@ async function cliSource(account: WebAccount): Promise<CliSource> {
     providerId: account.providerId,
     provider: PROVIDERS[account.providerId].name,
     accountId: account.id,
-    account: account.email || account.displayName || account.name,
+    account: account.identity?.accessibleLabel ?? (account.email || account.displayName || account.name),
     homeDir: account.homeDir,
     locations: await providerLocations(account.providerId, account.homeDir ?? undefined),
   }

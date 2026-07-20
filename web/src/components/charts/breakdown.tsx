@@ -6,6 +6,8 @@ import { shortModel, TOKEN_BUCKET } from '../../lib/colors'
 import { AXIS, ChartShell, GRID, singleTip, useEnterOnce, useMediaQuery } from '../chart'
 import { Panel } from '../ui/panel'
 import { EmptyHint } from '../ui/primitives'
+import { useTheme } from '../theme-provider'
+import { dataInkColor } from '../../lib/theme-visualization'
 
 const BAR_FILL = { fill: 'var(--color-bg-2)' }
 const BAR_LABEL = { fill: 'var(--color-fg-dim)', fontSize: 10, fontFamily: 'var(--font-mono)' } as const
@@ -140,13 +142,15 @@ export function ProviderDonut({ derived, height = 280, periodLabel }: { derived:
 }
 
 export function TokenComposition({ derived, periodLabel }: { derived: Derived; periodLabel?: string }) {
+  const theme = useTheme()
   const c = derived.tokenComposition
   const total = sumTokens(c)
+  const preset = theme.appearance.preset
   const rows = [
-    { key: 'cacheRead', label: 'cache read', value: c.cacheRead, color: TOKEN_BUCKET.cacheRead },
-    { key: 'input', label: 'input', value: c.input, color: TOKEN_BUCKET.input },
-    { key: 'output', label: 'output', value: c.output, color: TOKEN_BUCKET.output },
-    { key: 'cacheCreate', label: 'cache write', value: c.cacheCreate, color: TOKEN_BUCKET.cacheCreate },
+    { key: 'cacheRead', label: 'cache read', value: c.cacheRead, color: dataInkColor(preset, 0, TOKEN_BUCKET.cacheRead) },
+    { key: 'input', label: 'input', value: c.input, color: dataInkColor(preset, 1, TOKEN_BUCKET.input) },
+    { key: 'output', label: 'output', value: c.output, color: dataInkColor(preset, 2, TOKEN_BUCKET.output) },
+    { key: 'cacheCreate', label: 'cache write', value: c.cacheCreate, color: dataInkColor(preset, 3, TOKEN_BUCKET.cacheCreate) },
   ]
   return (
     <Panel title="token composition" titleTag={periodLabel} captureName="token-composition" right={<span className="tnum text-xs text-fg-dim">{fmtTokens(total)}</span>}>

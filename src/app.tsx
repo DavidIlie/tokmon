@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react'
 import { Box, Text, useInput, useApp } from 'ink'
 import { useMouse } from '@zenobius/ink-mouse'
 import {
@@ -17,7 +17,7 @@ import { TableProviderBar, ControlBar, TokenTable } from './ui/table'
 import { Onboarding, type OnboardItem } from './ui/onboarding'
 import { LoadingView, accountReady, statsReadyInput, type ReadyInput } from './ui/loading'
 import {
-  SettingsView, GENERAL_ROWS,
+  SettingsView, DESKTOP_FIXED_ROWS, GENERAL_ROWS, THEME_ROWS,
   type AccountIdentity, type SettingsTab,
 } from './ui/settings'
 import { deriveSlots, findActiveSlot, computeChrome } from './ui/app-layout.logic'
@@ -44,6 +44,7 @@ import { useDegradedPolling } from './ui/hooks/use-degraded-polling'
 import { useRefreshAll } from './ui/hooks/use-refresh-all'
 import { useConfigState } from './ui/hooks/use-config-state'
 import { useAccountForm } from './ui/hooks/use-account-form'
+import { TuiThemeProvider, useTuiTheme } from './ui/theme'
 
 export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode = 'degraded' }: {
   interval?: number
@@ -96,14 +97,35 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
   const billingMs = cfg.billingInterval * 60_000
   const tz = resolveTimezone(cfg.timezone)
   const configReady = config !== null
+  const snapshot = daemon.snapshot
+  const daemonDetected = useMemo(
+    () => [...new Set((snapshot?.accounts ?? []).map(account => account.providerId))],
+    [snapshot],
+  )
+  const detectedProviders = connected ? daemonDetected : detected
 
-  const accounts = useMemo(() => buildAccounts(cfg, detected), [cfg, detected])
-  const trackedAccountRows = useMemo(() => getTrackedAccountRows(cfg, detected, accounts), [cfg, detected, accounts])
+  const accounts = useMemo(() => connected
+    ? (snapshot?.accounts ?? []).map(account => ({
+        id: account.id,
+        providerId: account.providerId,
+        name: account.name,
+        color: account.color,
+        homeDir: account.homeDir ?? undefined,
+      }))
+    : buildAccounts(cfg, detectedProviders), [cfg, connected, detectedProviders, snapshot])
+  const trackedAccountRows = useMemo(
+    () => getTrackedAccountRows(cfg, detectedProviders, accounts),
+    [cfg, detectedProviders, accounts],
+  )
   const settingsRowCount = settingsTab === 'general'
     ? GENERAL_ROWS
-    : settingsTab === 'providers'
-      ? PROVIDER_ORDER.length
-      : trackedAccountRows.length + 1
+    : settingsTab === 'theme'
+      ? THEME_ROWS
+      : settingsTab === 'desktop'
+        ? DESKTOP_FIXED_ROWS + PROVIDER_ORDER.length
+      : settingsTab === 'providers'
+          ? PROVIDER_ORDER.length + 1
+          : trackedAccountRows.length + 1
   const accountsRef = useRef<Account[]>([])
   accountsRef.current = accounts
   const rowCountRef = useRef(0)
@@ -131,7 +153,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
 
   const needsOnboarding = configReady && !cfg.onboarded
   const newProviders = configReady && cfg.onboarded
-    ? PROVIDER_ORDER.filter(p => !cfg.knownProviders.includes(p) && detected.includes(p))
+    ? PROVIDER_ORDER.filter(p => !cfg.knownProviders.includes(p) && detectedProviders.includes(p))
     : []
   const showPicker = needsOnboarding || newProviders.length > 0
 
@@ -155,7 +177,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     tableVisible: tab === 1,
   })
 
-  const snapshot = daemon.snapshot
   const daemonRefreshRef = useRef(daemon.refresh)
   const degradedRefreshRef = useRef(refreshAllDegraded)
   daemonRefreshRef.current = daemon.refresh
@@ -278,15 +299,16 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     tooSmall: TOO_SMALL, showSettings, accountsCount: accounts.length,
   })
   const pickerProviders = needsOnboarding ? PROVIDER_ORDER : newProviders
-  const onboardEnabled = onboardSel ?? detected
+  const onboardEnabled = onboardSel ?? detectedProviders
   const onboardItems: OnboardItem[] = pickerProviders.map(pid => ({
     id: pid, name: PROVIDERS[pid].name, color: PROVIDERS[pid].color,
-    detected: detected.includes(pid), enabled: onboardEnabled.includes(pid),
+    detected: detectedProviders.includes(pid), enabled: onboardEnabled.includes(pid),
   }))
 
   useEffect(() => {
+    if (connected) return
     void detectProviders().then(setDetected)
-  }, [])
+  }, [connected])
 
   const tableKey = useMemo(
     () => `${effTableProvider}|${tableAccounts.map(acctKey).join(',')}|${tz}`,
@@ -335,7 +357,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     if (i < 0 || i >= pickerProviders.length) return
     const pid = pickerProviders[i]
     setOnboardSel(prev => {
-      const base = prev ?? detected
+      const base = prev ?? detectedProviders
       return base.includes(pid) ? base.filter(p => p !== pid) : [...base, pid]
     })
   }
@@ -390,7 +412,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     accountForm, setAccountForm,
     openAddAccount, openConfigureAccount, openEditAccount, commitAccountForm,
     cycleFormField, cycleProvider, cycleColor, deleteAccount, moveAccount,
-  } = useAccountForm({ cfg, detected, updateConfig, trackedAccountRows, setSettingsCursor })
+  } = useAccountForm({ cfg, detected: detectedProviders, updateConfig, trackedAccountRows, setSettingsCursor })
 
   async function toggleWeb(): Promise<void> {
     if (connected) {
@@ -484,41 +506,46 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
 
   if (!config) return <Box padding={1}><Text dimColor>Loading...</Text></Box>
 
-  if (resizing) return <ResizingView cols={live.cols} rows={live.rows} />
+  if (resizing) return <TuiThemeProvider appearance={cfg.appearance}><ResizingView cols={live.cols} rows={live.rows} /></TuiThemeProvider>
 
   if (showPicker) {
     return (
-      <Box flexDirection="column" paddingX={2} paddingY={1} height={rows}>
-        <Onboarding
-          items={onboardItems} cursor={onboardCursor} onToggle={toggleOnboard} onConfirm={confirmOnboarding}
-          heading={needsOnboarding ? 'Welcome to tokmon' : 'New providers detected'}
-          subheading={needsOnboarding
-            ? 'Pick the tools you want to track. You can change this anytime in settings.'
-            : 'tokmon found these installed since you last set up. Pick which to track.'}
-        />
-      </Box>
+      <TuiThemeProvider appearance={cfg.appearance}>
+        <Box flexDirection="column" paddingX={2} paddingY={1} height={rows}>
+          <Onboarding
+            items={onboardItems} cursor={onboardCursor} onToggle={toggleOnboard} onConfirm={confirmOnboarding}
+            heading={needsOnboarding ? 'Welcome to tokmon' : 'New providers detected'}
+            subheading={needsOnboarding
+              ? 'Pick the tools you want to track. You can change this anytime in settings.'
+              : 'tokmon found these installed since you last set up. Pick which to track.'}
+          />
+        </Box>
+      </TuiThemeProvider>
     )
   }
 
   if (showLoader) {
     return (
-      <Box flexDirection="column" paddingX={2} paddingY={1} height={rows} overflow="hidden">
-        <LoadingView groups={allGroups} stats={stats} cols={cols} rows={rows} readyInput={readyInputFor} privacyMode={cfg.privacyMode} />
-      </Box>
+      <TuiThemeProvider appearance={cfg.appearance}>
+        <Box flexDirection="column" paddingX={2} paddingY={1} height={rows} overflow="hidden">
+          <LoadingView groups={allGroups} stats={stats} cols={cols} rows={rows} readyInput={readyInputFor} privacyMode={cfg.privacyMode} />
+        </Box>
+      </TuiThemeProvider>
     )
   }
 
   if (TOO_SMALL && !showSettings) {
-    return <TinyFallback groups={groups} stats={stats} rows={rows} cols={cols} refreshStatus={refreshStatus} />
+    return <TuiThemeProvider appearance={cfg.appearance}><TinyFallback groups={groups} stats={stats} rows={rows} cols={cols} refreshStatus={refreshStatus} /></TuiThemeProvider>
   }
 
   rowCountRef.current = tokenRows.length
 
   return (
-    <Box flexDirection="column" paddingX={2} paddingY={1} height={rows} overflow="hidden">
+    <TuiThemeProvider appearance={cfg.appearance}>
+      <Box flexDirection="column" paddingX={2} paddingY={1} height={rows} overflow="hidden">
       <Box justifyContent="space-between">
         <Box>
-          <Text bold color="greenBright">{glyphs().dotSel} tokmon</Text>
+          <ThemedBrand />
           <Text dimColor>  {glyphs().middot}  usage {intervalLabel}s  {glyphs().middot}  limits {billingIntervalLabel}m</Text>
         </Box>
         <Box>
@@ -536,11 +563,11 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
       )}
 
       {cfg.allowNetworkAccess && (
-        <Text color="red">{glyphs().warn} unsafe network access enabled {glyphs().middot} dashboard may be reachable from your LAN after daemon restart</Text>
+        <ThemedError>{glyphs().warn} unsafe network access enabled {glyphs().middot} dashboard may be reachable from your LAN after daemon restart</ThemedError>
       )}
 
       {configSaveError && (
-        <Text color="red">{glyphs().warn} {configSaveError}</Text>
+        <ThemedError>{glyphs().warn} {configSaveError}</ThemedError>
       )}
 
       <RefreshStatusLine status={refreshStatus} />
@@ -570,7 +597,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
           </Box>
           {tab === 0 && (
             <>
-              <DashboardView groups={groups} stats={stats} cols={cols} budget={gridBudget} focusId={focusId} layout={cfg.dashboardLayout} page={dashPage} privacyMode={cfg.privacyMode} resetDisplay={cfg.resetDisplay} tz={tz} />
+              <DashboardView groups={groups} stats={stats} cols={cols} budget={gridBudget} computed={dashLayout} page={dashPage} privacyMode={cfg.privacyMode} resetDisplay={cfg.resetDisplay} tz={tz} />
               {slots.length > 1 && (
                 <Box marginTop={1}>
                   <Text dimColor>focus  </Text>
@@ -611,6 +638,17 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
       )}
 
       {(tab === 0 || showSettings) && <Footer hasAccounts={slots.length > 1} paginated={tab === 0 && dashPaginated} cols={cols} />}
-    </Box>
+      </Box>
+    </TuiThemeProvider>
   )
+}
+
+function ThemedBrand() {
+  const theme = useTuiTheme()
+  return <Text bold color={theme.accent}>{glyphs().dotSel} tokmon</Text>
+}
+
+function ThemedError({ children }: { children: ReactNode }) {
+  const theme = useTuiTheme()
+  return <Text color={theme.crit}>{children}</Text>
 }

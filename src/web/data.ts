@@ -8,6 +8,7 @@ import { colorHex, namedHex } from '../shared/colors'
 import type {
   WebSnapshot, WebAccount, WebProviderInfo, AccountFetchState, PeakStatus,
 } from './contract'
+import { deriveAccountIdentity, deriveProviderHeadroom, deriveQuotaViews } from '../usage-semantics'
 
 export interface ResolvedAccount {
   account: Account
@@ -64,10 +65,15 @@ export function assembleSnapshot(opts: {
   tableUpdatedAt?: Map<string, number>
   seeded?: boolean
   peak?: PeakStatus | null
+  config: Config
 }): WebSnapshot {
+  const providerOrdinals = new Map<string, number>()
   const accounts: WebAccount[] = opts.resolved.map(r => {
     const u = opts.usage.get(r.account.id)
     const billing = opts.billing.get(r.account.id) ?? null
+    const ordinal = (providerOrdinals.get(r.account.providerId) ?? 0) + 1
+    providerOrdinals.set(r.account.providerId, ordinal)
+    const quotas = deriveQuotaViews(billing?.metrics ?? [])
     return {
       id: r.account.id,
       providerId: r.account.providerId,
@@ -78,7 +84,22 @@ export function assembleSnapshot(opts: {
       hasBilling: r.hasBilling,
       email: billing?.email ?? null,
       displayName: billing?.displayName ?? null,
+      identity: deriveAccountIdentity({
+        name: r.account.name,
+        email: billing?.email,
+        displayName: billing?.displayName,
+        providerName: PROVIDERS[r.account.providerId].name,
+        ordinal,
+        privacyMode: opts.config.privacyMode,
+      }),
+      quotas,
+      headroom: deriveProviderHeadroom([{
+        id: r.account.id,
+        lastActivityAt: u?.dashboard?.lastActivityAt ?? null,
+        quotas,
+      }], opts.config.tray.activeTimeoutMin, Date.now(), opts.config.tray.displayMetric),
       plan: billing?.plan ?? null,
+      lastActivityAt: u?.dashboard?.lastActivityAt ?? null,
       dashboard: u?.dashboard ?? null,
       table: u?.table ?? null,
       billing,
@@ -91,6 +112,13 @@ export function assembleSnapshot(opts: {
     }
   })
 
+  const accountsByProvider = new Map<string, WebAccount[]>()
+  for (const account of accounts) {
+    const group = accountsByProvider.get(account.providerId) ?? []
+    group.push(account)
+    accountsByProvider.set(account.providerId, group)
+  }
+
   const seen = new Set<string>()
   const providers: WebProviderInfo[] = []
   for (const r of opts.resolved) {
@@ -100,6 +128,16 @@ export function assembleSnapshot(opts: {
       id: r.account.providerId,
       name: PROVIDERS[r.account.providerId].name,
       color: namedHex(PROVIDERS[r.account.providerId].color),
+      headroom: deriveProviderHeadroom(
+        (accountsByProvider.get(r.account.providerId) ?? []).map(account => ({
+          id: account.id,
+          lastActivityAt: account.lastActivityAt,
+          quotas: account.quotas ?? [],
+        })),
+        opts.config.tray.activeTimeoutMin,
+        Date.now(),
+        opts.config.tray.displayMetric,
+      ),
     })
   }
 

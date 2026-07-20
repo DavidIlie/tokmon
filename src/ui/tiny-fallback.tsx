@@ -6,6 +6,7 @@ import type { AccountStats } from '../stats'
 import { truncateName } from './shared'
 import { RefreshStatusLine } from './refresh-status'
 import type { RefreshStatus } from './hooks/use-refresh-all'
+import { useTuiTheme } from './theme'
 
 export function TinyFallback({ groups, stats, rows, cols, refreshStatus }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
@@ -14,13 +15,14 @@ export function TinyFallback({ groups, stats, rows, cols, refreshStatus }: {
   cols: number
   refreshStatus: RefreshStatus
 }) {
+  const theme = useTuiTheme()
   const maxLines = Math.max(1, rows - 4)
   const visible = groups.slice(0, maxLines)
   const hidden = groups.length - visible.length
   const w = Math.max(8, cols - 2)
   return (
     <Box flexDirection="column" paddingX={1} height={rows} overflow="hidden">
-      <Text bold color="greenBright">{glyphs().dotSel} tokmon</Text>
+      <Text bold color={theme.accent}>{glyphs().dotSel} tokmon</Text>
       {groups.length === 0 ? (
         <Text dimColor>No providers {glyphs().emDash} s=settings</Text>
       ) : (

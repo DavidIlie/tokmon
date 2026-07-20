@@ -11,7 +11,9 @@ import {
   type FolderPickerRow,
 } from '../../lib/folder-picker.logic'
 import { Check, ChevronUp, ChevronDown, Folder, X } from '../icons'
-import { FOCUS, useDialogTrap } from './use-dialog-trap'
+import { Dialog } from '../ui/dialog'
+import { Button } from '../ui/button'
+import { FOCUS_RING } from '../ui/primitives'
 import { type AccountDraft, previewAccountId, buildAccountFromDraft } from './account-editor.logic'
 import { Field } from './primitives'
 
@@ -22,12 +24,9 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
   onCancel: () => void
   onSubmit: (acct: Account, mode: 'add' | 'edit', editingId: string | null) => void
 }) {
-  const editorRef = useRef<HTMLDivElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
   const accent = namedColorHex(editor.color)
-
-  useDialogTrap(editorRef, { active: true, onEscape: onCancel, initialFocusRef: nameRef })
 
   const previewId = previewAccountId(editor, accounts)
 
@@ -38,15 +37,14 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
   }
 
   return (
-    <div
-      className="dialog-fade fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto overscroll-contain bg-bg-0/60 p-4 backdrop-blur-sm"
-      onMouseDown={e => { if (e.target === e.currentTarget) onCancel() }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="account-editor-title"
+    <Dialog
+      onClose={onCancel}
+      labelledBy="account-editor-title"
+      initialFocusRef={nameRef}
+      showClose={false}
+      className="my-8 w-full max-w-[460px] border-l-2"
+      panelStyle={{ borderLeftColor: accent }}
     >
-      <div ref={editorRef} tabIndex={-1} className="dialog-pop my-8 w-full max-w-[460px] overflow-hidden rounded-md border-l-2 border border-line-2 bg-bg-1 focus:outline-none"
-        style={{ borderLeftColor: accent }}>
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           <span className="size-2.5 rounded-full" style={{ background: accent }} aria-hidden />
           <h2 id="account-editor-title" className="font-display text-xs uppercase tracking-wider text-fg-bright">
@@ -64,7 +62,7 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
                   <button key={pid} type="button"
                     onClick={() => onChange({ ...editor, providerId: pid })}
                     aria-pressed={sel}
-                    className={`flex items-center gap-1.5 rounded border px-2 py-1 text-xs transition ${FOCUS} ${
+                    className={`flex items-center gap-1.5 rounded border px-2 py-1 text-xs transition ${FOCUS_RING} ${
                       sel ? 'border-line-2 bg-bg-3 text-fg-bright' : 'border-line text-fg-dim hover:text-fg'
                     }`}>
                     <span className="size-2 rounded-full" style={{ background: namedColorHex(meta.color) }} aria-hidden />
@@ -87,7 +85,7 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
               spellCheck={false}
               onChange={e => { setError(null); onChange({ ...editor, name: sanitizeTyped(e.target.value) }) }}
               onKeyDown={e => { if (e.key === 'Enter') submit() }}
-              className={`w-full rounded border border-line bg-bg-2 px-2.5 py-1.5 text-sm text-fg ${FOCUS}`}
+              className={`w-full rounded border border-line bg-bg-2 px-2.5 py-1.5 text-sm text-fg ${FOCUS_RING}`}
             />
           </Field>
 
@@ -107,7 +105,7 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
                   <button key={c} type="button"
                     aria-label={c} aria-pressed={sel} title={c}
                     onClick={() => onChange({ ...editor, color: c })}
-                    className={`size-6 rounded-full border-2 transition ${FOCUS} ${sel ? 'scale-110' : 'border-transparent hover:scale-105'}`}
+                    className={`size-6 rounded-full border-2 transition ${FOCUS_RING} ${sel ? 'scale-110' : 'border-transparent hover:scale-105'}`}
                     style={{ background: namedColorHex(c), borderColor: sel ? 'var(--color-fg-bright)' : 'transparent' }}
                   />
                 )
@@ -121,17 +119,16 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
             <span className="ml-auto text-[10px] text-fg-faint">{editor.mode === 'add' ? 'auto-generated from name' : 'fixed'}</span>
           </div>
 
-          {error && <p className="text-xs text-warning" role="alert">{error}. Check the highlighted account fields and try again.</p>}
+          {error && <p className="text-xs text-critical" role="alert">{error}. Check the highlighted account fields and try again.</p>}
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-3">
-          <button type="button" onClick={onCancel} className={`rounded border border-line bg-bg-1 px-3 py-1.5 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg ${FOCUS}`}>cancel</button>
-          <button type="button" onClick={submit} className={`flex items-center gap-1.5 rounded border border-accent/60 bg-bg-1 px-3 py-1.5 text-xs text-accent transition hover:bg-bg-2 active:scale-[0.97] ${FOCUS}`}>
+          <Button variant="secondary" onClick={onCancel}>cancel</Button>
+          <Button variant="primary" onClick={submit}>
             <Check className="size-3.5" /> {editor.mode === 'add' ? 'Add account' : 'Save account'}
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }
 
@@ -210,14 +207,14 @@ function HomeDirectoryField({ value, onChange, onEnter }: {
             spellCheck={false}
             onChange={e => { closePicker(); onChange(sanitizeTyped(e.target.value)) }}
             onKeyDown={e => { if (e.key === 'Enter') onEnter() }}
-            className={`min-w-0 flex-1 bg-transparent py-1.5 font-mono text-sm text-fg ${FOCUS}`}
+            className={`min-w-0 flex-1 bg-transparent py-1.5 font-mono text-sm text-fg ${FOCUS_RING}`}
           />
         </div>
         <button
           type="button"
           onClick={openPicker}
           disabled={loading}
-          className={`flex shrink-0 items-center gap-1 border-l border-line bg-bg-1 px-2.5 py-1.5 text-xs text-fg-dim transition hover:bg-bg-3 hover:text-fg disabled:opacity-50 ${FOCUS}`}
+          className={`flex shrink-0 items-center gap-1 border-l border-line bg-bg-1 px-2.5 py-1.5 text-xs text-fg-dim transition hover:bg-bg-3 hover:text-fg disabled:opacity-50 ${FOCUS_RING}`}
         >
           <ChevronDown className="size-3.5" /> Browse
         </button>
@@ -231,19 +228,19 @@ function HomeDirectoryField({ value, onChange, onEnter }: {
               {currentPath}
             </div>
             {loading && <span className="shrink-0 text-[10px] uppercase tracking-wide text-fg-faint">loading</span>}
-            <button type="button" onClick={closePicker} aria-label="Close folder picker" className={`rounded p-1 text-fg-faint transition hover:text-fg ${FOCUS}`}>
+            <button type="button" onClick={closePicker} aria-label="Close folder picker" className={`rounded p-1 text-fg-faint transition hover:text-fg ${FOCUS_RING}`}>
               <X className="size-3.5" />
             </button>
           </div>
 
           {error ? (
             <div className="px-2.5 py-3">
-              <div className="text-xs text-warning">can't read {displayFolderPath(requestedPath)}</div>
+              <div className="text-xs text-critical">can't read {displayFolderPath(requestedPath)}</div>
               <button
                 type="button"
                 onClick={() => { if (!loading) void browse(requestedPath) }}
                 disabled={loading}
-                className={`mt-2 rounded border border-line bg-bg-2 px-2 py-1 text-[11px] text-fg-dim transition hover:border-line-2 hover:text-fg disabled:opacity-50 ${FOCUS}`}
+                className={`mt-2 rounded border border-line bg-bg-2 px-2 py-1 text-[11px] text-fg-dim transition hover:border-line-2 hover:text-fg disabled:opacity-50 ${FOCUS_RING}`}
               >
                 retry
               </button>
@@ -257,7 +254,7 @@ function HomeDirectoryField({ value, onChange, onEnter }: {
                     type="button"
                     onClick={() => navigate(row.path)}
                     disabled={loading}
-                    className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition hover:bg-bg-3 hover:text-fg disabled:opacity-50 ${FOCUS} ${
+                    className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition hover:bg-bg-3 hover:text-fg disabled:opacity-50 ${FOCUS_RING} ${
                       row.kind === 'parent' ? 'text-fg-dim' : 'text-fg'
                     }`}
                   >
@@ -276,14 +273,9 @@ function HomeDirectoryField({ value, onChange, onEnter }: {
               </div>
 
               <div className="flex items-center justify-end gap-2 border-t border-line px-2.5 py-2">
-                <button
-                  type="button"
-                  onClick={selectCurrent}
-                  disabled={!listing || loading}
-                  className={`flex items-center gap-1.5 rounded border border-accent/60 bg-bg-1 px-2.5 py-1.5 text-xs text-accent transition hover:bg-bg-2 active:scale-[0.97] disabled:opacity-50 ${FOCUS}`}
-                >
+                <Button variant="primary" onClick={selectCurrent} disabled={!listing || loading}>
                   <Check className="size-3.5" /> Select this folder
-                </button>
+                </Button>
               </div>
             </>
           )}

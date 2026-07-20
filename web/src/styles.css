@@ -33,9 +33,21 @@
      (yellow), red burn, green savings, bright-green UI accent (TUI title). */
   --color-cost: #d9c074;
   --color-positive: #6caa71;
+  --color-ok: #79be7e;
   --color-warning: #b45648;
+  --color-critical: #e5584b;
+  --color-unknown: #8d9090;
   --color-prompt: #79be7e;
   --color-accent: #79be7e;
+
+  /* Extended semantic palette shared with desktop/TUI theme contracts. */
+  --color-card: #161617;
+  --color-card-hover: #1d1d1e;
+  --color-divider: #262627;
+  --color-track: #343435;
+  --color-accent-tint: #18251a;
+  --color-accent-on: #0a0a0a;
+  --color-focus-ring: #79be7e;
 
   /* provider brand (distinct hues for stacked charts) */
   --color-p-claude: #00d787;
@@ -67,9 +79,19 @@ html.light, .light {
   --color-fg-bright: #0d1010;
   --color-cost: #9a7b1c;
   --color-positive: #2f8f57;
+  --color-ok: #2f8f57;
   --color-warning: #b0403a;
+  --color-critical: #b0403a;
+  --color-unknown: #5a6060;
   --color-prompt: #2f8f57;
   --color-accent: #2f8f57;
+  --color-card: #eceeee;
+  --color-card-hover: #e1e4e4;
+  --color-divider: #d4d9d9;
+  --color-track: #bcc2c2;
+  --color-accent-tint: #e0eee5;
+  --color-accent-on: #f4f5f5;
+  --color-focus-ring: #2f8f57;
 }
 
 /* Pin the dark palette on any element (e.g. a share-export wrapper) even when the
@@ -89,9 +111,39 @@ html.light, .light {
   --color-fg-bright: #f3f5f5;
   --color-cost: #d9c074;
   --color-positive: #6caa71;
+  --color-ok: #79be7e;
   --color-warning: #b45648;
+  --color-critical: #e5584b;
+  --color-unknown: #8d9090;
   --color-prompt: #79be7e;
   --color-accent: #79be7e;
+  --color-card: #161617;
+  --color-card-hover: #1d1d1e;
+  --color-divider: #262627;
+  --color-track: #343435;
+  --color-accent-tint: #18251a;
+  --color-accent-on: #0a0a0a;
+  --color-focus-ring: #79be7e;
+}
+
+/* Phosphor collapses data ink into one deliberate terminal-green family.
+   Semantic danger/cost still retain distinct tokens for non-color cues. */
+html[data-theme-preset="phosphor"] body {
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-accent) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--color-accent) 4%, transparent) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+[data-theme-preset="phosphor"] {
+  --color-p-claude: color-mix(in oklab, var(--color-accent) 100%, var(--color-fg-dim));
+  --color-p-codex: color-mix(in oklab, var(--color-accent) 86%, var(--color-fg-dim));
+  --color-p-cursor: color-mix(in oklab, var(--color-accent) 72%, var(--color-fg-dim));
+  --color-p-copilot: color-mix(in oklab, var(--color-accent) 58%, var(--color-fg-dim));
+  --color-p-pi: color-mix(in oklab, var(--color-accent) 48%, var(--color-fg-dim));
+  --color-p-opencode: color-mix(in oklab, var(--color-accent) 78%, var(--color-fg-dim));
+  --color-p-antigravity: color-mix(in oklab, var(--color-accent) 64%, var(--color-fg-dim));
+  --color-p-gemini: color-mix(in oklab, var(--color-accent) 92%, var(--color-fg-dim));
 }
 
 @layer base {

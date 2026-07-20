@@ -4,10 +4,10 @@ import * as fmt from '../format'
 import { PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
 import type { TableRow } from '../types'
-import { ClickableBox } from './shared'
-import { CaretText } from './settings'
+import { CaretText, ClickableBox } from './shared'
 import { glyphs } from '../glyphs'
 import { modelColor } from '../shared/colors'
+import { useTuiTheme } from './theme'
 
 const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -45,30 +45,31 @@ export const ControlBar = memo(function ControlBar({ views, period, sort, model,
   showPeriod: boolean
   showModel: boolean
 }) {
+  const theme = useTuiTheme()
   return (
     <Box>
       {showPeriod && (
         <>
           {views.map((v, i) => (
             <Box key={v} marginRight={2}>
-              {i === period ? <Text bold color="cyan">[{v}]</Text> : <Text dimColor>{v}</Text>}
+              {i === period ? <Text bold color={theme.accent}>[{v}]</Text> : <Text dimColor>{v}</Text>}
             </Box>
           ))}
           <Text dimColor>  </Text>
         </>
       )}
-      <Text dimColor>sort </Text><Text bold color="magenta">{sort}</Text>
+      <Text dimColor>sort </Text><Text bold color={theme.accent}>{sort}</Text>
       <Text dimColor>  o cycle  {glyphs().middot}  </Text>
       {showModel && (
         <>
-          <Text dimColor>model </Text><Text bold color={model ? modelColor(model) : 'cyan'}>{model ?? 'all'}</Text>
+          <Text dimColor>model </Text><Text bold color={model ? modelColor(model) : theme.accent}>{model ?? 'all'}</Text>
           <Text dimColor>  m model  {glyphs().middot}  </Text>
         </>
       )}
       {searching
-        ? <><Text dimColor>/</Text><CaretText value={search} caret={searchCaret} color="cyan" /></>
+        ? <><Text dimColor>/</Text><CaretText value={search} caret={searchCaret} color={theme.accent} /></>
         : search
-          ? <><Text dimColor>filter </Text><Text bold color="green">{search}</Text><Text dimColor> (/ edit {glyphs().middot} esc clear)</Text></>
+          ? <><Text dimColor>filter </Text><Text bold color={theme.positive}>{search}</Text><Text dimColor> (/ edit {glyphs().middot} esc clear)</Text></>
           : <Text dimColor>/ filter</Text>}
     </Box>
   )
@@ -82,6 +83,7 @@ export const TokenTable = memo(function TokenTable({ rows, cursor, expanded, max
   cols: number
   onRowClick: (idx: number) => void
 }) {
+  const theme = useTuiTheme()
   if (rows.length === 0) return <Text dimColor>No usage in this period (or filtered out).</Text>
 
   const wide = cols > 90
@@ -123,14 +125,14 @@ export const TokenTable = memo(function TokenTable({ rows, cursor, expanded, max
           <Box key={r.label} flexDirection="column">
             <ClickableBox onClick={() => onRowClick(idx)}>
               <Text inverse={selected}>
-                <Text color={selected ? undefined : 'cyan'}>{selected ? `${glyphs().caretR} ` : '  '}{fmt.col(fmtLabel(r.label), W.label, 'left')}</Text>
+                <Text color={selected ? undefined : theme.accent}>{selected ? `${glyphs().caretR} ` : '  '}{fmt.col(fmtLabel(r.label), W.label, 'left')}</Text>
                 <Text dimColor={!selected}>{fmt.col(r.models.join(', '), W.models, 'left')}</Text>
                 <Text>{fmt.col(fmt.tokens(r.input), W.input)}</Text>
                 <Text>{fmt.col(fmt.tokens(r.output), W.output)}</Text>
                 <Text>{fmt.col(fmt.tokens(r.cacheCreate), W.cc)}</Text>
                 <Text>{fmt.col(fmt.tokens(r.cacheRead), W.cr)}</Text>
                 {W.total > 0 && <Text>{fmt.col(fmt.tokens(r.total), W.total)}</Text>}
-                <Text bold color={selected ? undefined : 'yellow'}>{fmt.col(fmt.currency(r.cost), W.cost)}</Text>
+                <Text bold color={selected ? undefined : theme.cost}>{fmt.col(fmt.currency(r.cost), W.cost)}</Text>
               </Text>
             </ClickableBox>
             {idx === expanded && <RowDetail row={r} indent={W.label + 2} />}
@@ -139,14 +141,14 @@ export const TokenTable = memo(function TokenTable({ rows, cursor, expanded, max
       })}
       <Text dimColor>{glyphs().rule.repeat(lineW + 2)}</Text>
       <Text>
-        <Text bold color="greenBright">  {fmt.col('Total', W.label, 'left')}</Text>
+        <Text bold color={theme.accent}>  {fmt.col('Total', W.label, 'left')}</Text>
         <Text>{fmt.col('', W.models, 'left')}</Text>
-        <Text bold color="yellow">{fmt.col(fmt.tokens(totals.input), W.input)}</Text>
-        <Text bold color="yellow">{fmt.col(fmt.tokens(totals.output), W.output)}</Text>
-        <Text bold color="yellow">{fmt.col(fmt.tokens(totals.cacheCreate), W.cc)}</Text>
-        <Text bold color="yellow">{fmt.col(fmt.tokens(totals.cacheRead), W.cr)}</Text>
-        {W.total > 0 && <Text bold color="yellow">{fmt.col(fmt.tokens(totals.input + totals.output + totals.cacheCreate + totals.cacheRead), W.total)}</Text>}
-        <Text bold color="yellowBright">{fmt.col(fmt.currency(totals.cost), W.cost)}</Text>
+        <Text bold color={theme.cost}>{fmt.col(fmt.tokens(totals.input), W.input)}</Text>
+        <Text bold color={theme.cost}>{fmt.col(fmt.tokens(totals.output), W.output)}</Text>
+        <Text bold color={theme.cost}>{fmt.col(fmt.tokens(totals.cacheCreate), W.cc)}</Text>
+        <Text bold color={theme.cost}>{fmt.col(fmt.tokens(totals.cacheRead), W.cr)}</Text>
+        {W.total > 0 && <Text bold color={theme.cost}>{fmt.col(fmt.tokens(totals.input + totals.output + totals.cacheCreate + totals.cacheRead), W.total)}</Text>}
+        <Text bold color={theme.cost}>{fmt.col(fmt.currency(totals.cost), W.cost)}</Text>
       </Text>
       <Box height={1} />
       <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} navigate  {glyphs().middot}  Enter detail  {glyphs().middot}  o sort  {glyphs().middot}  g/G top/bottom  {glyphs().middot}  {clampedCursor + 1}/{rows.length}</Text>
@@ -155,6 +157,7 @@ export const TokenTable = memo(function TokenTable({ rows, cursor, expanded, max
 })
 
 function RowDetail({ row, indent }: { row: TableRow; indent: number }) {
+  const theme = useTuiTheme()
   return (
     <Box flexDirection="column" paddingLeft={indent}>
       {row.breakdown.map((m, i) => (
@@ -165,7 +168,7 @@ function RowDetail({ row, indent }: { row: TableRow; indent: number }) {
           <Text>{fmt.col(fmt.tokens(m.output), 8)} out  </Text>
           <Text>{fmt.col(fmt.tokens(m.cacheCreate), 8)} cc  </Text>
           <Text>{fmt.col(fmt.tokens(m.cacheRead), 9)} cr  </Text>
-          <Text bold color="yellow">{fmt.currency(m.cost)}</Text>
+          <Text bold color={theme.cost}>{fmt.currency(m.cost)}</Text>
         </Text>
       ))}
     </Box>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { containsEmail, redactEmail } from '@shared'
+import { FOCUS_RING } from './ui/primitives'
 
 export function privacyText(value: string, privacyMode: boolean): string {
   return privacyMode ? redactEmail(value) : value
@@ -18,7 +19,7 @@ export function PrivacyLabel({ value, privacyMode, className, title }: {
     <button
       type="button"
       onClick={() => setRevealed(true)}
-      className={`min-w-0 cursor-pointer truncate rounded text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${className ?? ''}`}
+      className={`min-w-0 cursor-pointer truncate rounded text-left ${FOCUS_RING} ${className ?? ''}`}
       title="Click to reveal email"
       aria-label="Email hidden. Click to reveal."
     >

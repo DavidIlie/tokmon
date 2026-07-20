@@ -1,10 +1,12 @@
 import { useState } from 'react'
-import { getTrackedAccountRows, PROVIDER_META, type Account, type Config, type TrackedAccountRow, type WebAccount, type WebSnapshot } from '@shared'
+import { getTrackedAccountRows, PROVIDER_META, setDetectedAccountExcluded, type Account, type Config, type TrackedAccountRow, type WebAccount, type WebSnapshot } from '@shared'
 import { namedColorHex } from '../../lib/colors'
-import { ChevronUp, ChevronDown, Pencil, Plus, Trash } from '../icons'
+import { ChevronUp, ChevronDown, Pencil, Plus, Refresh, Trash, X } from '../icons'
 import { PrivacyLabel } from '../privacy-label'
-import { FOCUS } from './use-dialog-trap'
+import { Button } from '../ui/button'
+import { FOCUS_RING } from '../ui/primitives'
 import { Section, IconBtn } from './primitives'
+import { accountIdentityText } from '../../lib/account-identity'
 
 function accountFromSnapshot(row: TrackedAccountRow, snapshot: WebSnapshot | null): WebAccount | null {
   if (!snapshot) return null
@@ -42,10 +44,9 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
 
   return (
     <Section title="Accounts" right={
-      <button type="button" onClick={onAdd}
-        className={`flex items-center gap-1 rounded border border-accent/60 bg-bg-1 px-2 py-1 text-[11px] text-accent transition hover:bg-bg-2 ${FOCUS}`}>
+      <Button variant="primary" size="xs" onClick={onAdd}>
         <Plus className="size-3" /> Add account
-      </button>
+      </Button>
     }>
       {accounts.length === 0 ? (
         <p className="rounded border border-line bg-bg-2/50 px-3 py-3 text-xs text-fg-faint">
@@ -56,21 +57,23 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
           {accounts.map(acc => {
             const meta = PROVIDER_META[acc.providerId]
             const live = accountFromSnapshot(acc, snapshot)
-            const identity = live?.email || live?.displayName || acc.name || meta.name
+            const identity = live ? accountIdentityText(live, meta.name) : acc.name || meta.name
             const plan = live?.plan ?? live?.billing?.plan ?? null
             const hex = namedColorHex(acc.color || meta.color)
             const active = acc.id === draft.activeAccountId
             const configured = acc.source === 'configured'
+            const ignored = acc.source === 'ignored'
             return (
-              <li key={`${acc.source}:${acc.id}`} className="flex items-center gap-2.5 rounded border border-line bg-bg-2/60 px-2.5 py-2">
+              <li key={`${acc.source}:${acc.id}`} className={`flex items-center gap-2.5 rounded border border-line px-2.5 py-2 ${ignored ? 'bg-bg-1 opacity-75' : 'bg-bg-2/60'}`}>
                 <button
                   type="button"
                   role="radio"
                   aria-checked={active}
+                  disabled={ignored}
                   aria-label={`Set ${acc.name} active`}
                   title={active ? 'Active account (click to clear)' : 'Set active'}
                   onClick={() => setActive(active ? null : acc.id)}
-                  className={`relative inline-flex size-4 shrink-0 items-center justify-center rounded-full border transition ${FOCUS}`}
+                  className={`relative inline-flex size-4 shrink-0 items-center justify-center rounded-full border transition ${FOCUS_RING}`}
                   style={{ borderColor: hex }}
                 >
                   {active && <span className="size-2 rounded-full" style={{ background: hex }} />}
@@ -84,13 +87,13 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                       <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-dim">{plan}</span>
                     )}
                     <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fg-faint">
-                      {acc.source === 'auto' ? 'auto' : 'configured'}
+                      {acc.source === 'auto' ? 'detected' : ignored ? 'ignored' : 'manual'}
                     </span>
                   </div>
-                  <div className="truncate font-mono text-[11px] text-fg-faint">{acc.homeDir}</div>
+                  <div className="truncate font-mono text-[11px] text-fg-faint">{draft.privacyMode ? 'path hidden' : acc.homeDir}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5">
-                  {pendingDeleteId === acc.id ? <span className="mr-1 text-[10px] text-warning" role="alert">Delete?</span> : null}
+                  {pendingDeleteId === acc.id ? <span className="mr-1 text-[10px] text-critical" role="alert">Delete?</span> : null}
                   {configured && acc.explicitIndex !== undefined ? (
                     <>
                       <IconBtn label="Move up" disabled={acc.explicitIndex === 0} onClick={() => move(acc.explicitIndex!, -1)}><ChevronUp className="size-3.5" /></IconBtn>
@@ -98,9 +101,19 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                       <IconBtn label="Edit account" onClick={() => onEdit(acc)}><Pencil className="size-3.5" /></IconBtn>
                       <IconBtn label={pendingDeleteId === acc.id ? 'Confirm delete account' : 'Delete account'} danger onClick={() => requestRemove(acc.id)}><Trash className="size-3.5" /></IconBtn>
                     </>
-                  ) : (
-                    <IconBtn label="Configure account" onClick={() => onConfigure(acc)}><Pencil className="size-3.5" /></IconBtn>
-                  )}
+                  ) : ignored ? (
+                    <IconBtn label="Turn detected account on" onClick={() => acc.excludedRef && patch(c => ({
+                      ...c,
+                      accountDetection: setDetectedAccountExcluded(c.accountDetection, acc.excludedRef!, false),
+                    }))}><Refresh className="size-3.5" /></IconBtn>
+                  ) : (<>
+                    <IconBtn label="Configure as manual account" onClick={() => onConfigure(acc)}><Pencil className="size-3.5" /></IconBtn>
+                    <IconBtn label="Turn detected account off" onClick={() => patch(c => ({
+                      ...c,
+                      activeAccountId: c.activeAccountId === acc.id ? null : c.activeAccountId,
+                      accountDetection: setDetectedAccountExcluded(c.accountDetection, { providerId: acc.providerId, homeDir: acc.homeDir }, true),
+                    }))}><X className="size-3.5" /></IconBtn>
+                  </>)}
                 </div>
               </li>
             )

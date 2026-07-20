@@ -18,6 +18,11 @@ export type MetricFormat =
   | { kind: 'count'; suffix?: string }
 
 export interface Metric {
+  /** Optional semantic metadata preserved from providers for shared headroom. */
+  key?: string
+  role?: 'session' | 'weekly' | 'model' | 'other' | 'unbounded'
+  modelId?: string | null
+  active?: boolean
   label: string
   used: number
   limit: number | null

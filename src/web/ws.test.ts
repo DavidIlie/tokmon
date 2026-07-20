@@ -4,6 +4,7 @@ import { connect } from 'node:net'
 import test from 'node:test'
 import { DEFAULTS } from '../config'
 import { createDaemonRpcClient } from '../client/daemon-rpc-client'
+import { RefreshFailure } from '../rpc/contract'
 import type { DataEngine } from './data-engine'
 import type { WebSnapshot } from './contract'
 import { mountWsRpc } from './ws'
@@ -85,17 +86,94 @@ test('loopback dashboard websocket requires no browser token', async (t) => {
   }
 })
 
+test('client normalizes additive config omissions from older protocol-v3 daemons', async (t) => {
+  const {
+    appearance: _appearance,
+    desktop: _desktop,
+    tray: _tray,
+    ...preTrayConfig
+  } = DEFAULTS
+  const oldConfig = preTrayConfig as unknown as typeof DEFAULTS
+  const engine: DataEngine = {
+    snapshot: () => null,
+    start: () => {},
+    subscribe: () => () => {},
+    subscribeConfig: (onConfig) => {
+      onConfig(oldConfig)
+      return () => {}
+    },
+    touch: () => {},
+    refresh: async () => {},
+    setConfig: () => {},
+    broadcastConfig: () => {},
+    stop: () => {},
+  }
+  const server = createServer()
+  const closeRpc = await mountWsRpc(server, { engine, state: { config: oldConfig } })
+  let client: ReturnType<typeof createDaemonRpcClient> | null = null
+  let unsubscribe: (() => void) | null = null
+  let resolveSubscriberError!: (error: unknown) => void
+  const subscriberError = new Promise<unknown>(resolve => { resolveSubscriberError = resolve })
+  try {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(0, '127.0.0.1', resolve)
+      })
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === 'EPERM') {
+        t.skip('the sandbox disallows binding ephemeral loopback ports')
+        return
+      }
+      throw cause
+    }
+    const address = server.address()
+    assert.ok(address && typeof address === 'object')
+    client = createDaemonRpcClient(`http://127.0.0.1:${address.port}`, {
+      transport: 'node',
+      onSubscriberError: resolveSubscriberError,
+    })
+
+    const fetched = await client.getConfig()
+    assert.deepEqual(fetched.config.tray, DEFAULTS.tray)
+    assert.deepEqual(fetched.config.desktop, DEFAULTS.desktop)
+    assert.deepEqual(fetched.config.appearance, DEFAULTS.appearance)
+
+    const streamed = await new Promise<typeof fetched>((resolve) => {
+      unsubscribe = client!.subscribeConfig((state) => {
+        resolve(state)
+        throw new Error('subscriber callback failed')
+      })
+    })
+    assert.match(String(await subscriberError), /subscriber callback failed/)
+    assert.deepEqual(streamed.config.tray, DEFAULTS.tray)
+    assert.deepEqual(streamed.config.desktop, DEFAULTS.desktop)
+    assert.deepEqual(streamed.config.appearance, DEFAULTS.appearance)
+    assert.equal((await client.getConfig()).config.revision, DEFAULTS.revision)
+  } finally {
+    ;(unsubscribe as (() => void) | null)?.()
+    await client?.close()
+    await closeRpc()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
+})
+
 test('refresh RPC acknowledges only after the data engine pass completes', async (t) => {
   let release!: () => void
   const refreshGate = new Promise<void>(resolve => { release = resolve })
   let failRefresh = false
+  let defectRefresh = false
   const engine: DataEngine = {
     snapshot: () => null,
     start: () => {},
     subscribe: () => () => {},
     subscribeConfig: () => () => {},
     touch: () => {},
-    refresh: () => failRefresh ? Promise.reject(new Error('provider refresh failed')) : refreshGate,
+    refresh: () => defectRefresh
+      ? Promise.reject(new Error('legacy refresh defect'))
+      : failRefresh
+        ? Promise.reject(new AggregateError([new Error('provider unavailable')], 'provider refresh failed'))
+        : refreshGate,
     setConfig: () => {},
     broadcastConfig: () => {},
     stop: () => {},
@@ -120,9 +198,11 @@ test('refresh RPC acknowledges only after the data engine pass completes', async
     assert.ok(address && typeof address === 'object')
     // A dashboard served from loopback must be able to speak to its daemon
     // directly. Browser URLs are intentionally capability-free.
+    const connStates: string[] = []
     client = createDaemonRpcClient(`http://127.0.0.1:${address.port}`, {
       transport: 'node',
       reconnectAttempts: 0,
+      onConn: state => { connStates.push(state) },
     })
 
     let settled = false
@@ -133,8 +213,26 @@ test('refresh RPC acknowledges only after the data engine pass completes', async
     await pending
     assert.equal(settled, true)
 
+    connStates.length = 0
     failRefresh = true
-    await assert.rejects(client.refresh('all'), /provider refresh failed/)
+    await assert.rejects(client.refresh('all'), (error: unknown) => {
+      assert.ok(error instanceof RefreshFailure)
+      assert.equal(error.kind, 'refresh')
+      assert.match(error.message, /provider refresh failed/)
+      return true
+    })
+    assert.deepEqual(connStates, [])
+    assert.equal((await client.getConfig()).config.revision, DEFAULTS.revision)
+    assert.deepEqual(connStates, [])
+
+    // Protocol-v3 daemons predating RefreshFailure sent refresh rejections as
+    // defects. They remain request-local in the new client.
+    failRefresh = false
+    defectRefresh = true
+    await assert.rejects(client.refresh('all'), /legacy refresh defect/)
+    assert.deepEqual(connStates, [])
+    assert.equal((await client.getConfig()).config.revision, DEFAULTS.revision)
+    assert.deepEqual(connStates, [])
   } finally {
     release()
     await client?.close()

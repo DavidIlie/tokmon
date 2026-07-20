@@ -1,7 +1,6 @@
 import { PROVIDER_ORDER } from '../providers'
-import { sanitizeTyped } from '../config'
-import { systemTimezone } from '../tz'
-import { GENERAL_ROWS, SETTINGS_TABS } from './settings'
+import { providerDetectionEnabled, setDetectedAccountExcluded, setProviderDetectionEnabled, toggleProviderSelection } from '../config'
+import { DESKTOP_FIXED_ROWS, DESKTOP_FIXED_SETTINGS, GENERAL_ROWS, GENERAL_SETTINGS, SETTINGS_TABS, THEME_ROWS, THEME_SETTINGS } from './settings'
 import type { InputKey, KeyContext } from './keybinding-context'
 
 export function handleSettings(input: string, key: InputKey, ctx: KeyContext): void {
@@ -29,9 +28,13 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
   }
   const rowCount = tab === 'general'
     ? GENERAL_ROWS
-    : tab === 'providers'
-      ? PROVIDER_ORDER.length
-      : trackedAccounts.length + 1
+    : tab === 'theme'
+      ? THEME_ROWS
+      : tab === 'desktop'
+        ? DESKTOP_FIXED_ROWS + PROVIDER_ORDER.length
+      : tab === 'providers'
+          ? PROVIDER_ORDER.length + 1
+          : trackedAccounts.length + 1
 
   if (key.tab) { switchTab(key.shift ? -1 : 1); return }
   if (input === '[') { switchTab(-1); return }
@@ -54,17 +57,65 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
   if (key.downArrow) { setCursor(current => Math.min(rowCount - 1, current + 1)); return }
 
   if (tab === 'general') {
-    handleGeneralSetting(input, key, ctx)
+    GENERAL_SETTINGS[cursor]?.onAdjust(input, key, ctx)
+    return
+  }
+  if (tab === 'theme') {
+    THEME_SETTINGS[cursor]?.onAdjust(input, key, ctx)
+    return
+  }
+  if (tab === 'desktop') {
+    if (cursor < DESKTOP_FIXED_ROWS) {
+      DESKTOP_FIXED_SETTINGS[cursor]?.onAdjust(input, key, ctx)
+      return
+    }
+    // Menu-bar pins: the provider rows below the fixed settings.
+    const provider = PROVIDER_ORDER[cursor - DESKTOP_FIXED_ROWS]
+    if (provider && (input === ' ' || key.leftArrow || key.rightArrow || key.return)) {
+      updateConfig(current => ({
+        ...current,
+        tray: {
+          ...current.tray,
+          pinnedProviders: toggleProviderSelection(current.tray.pinnedProviders, provider, new Set(PROVIDER_ORDER), 2),
+        },
+      }))
+    }
     return
   }
   if (tab === 'providers') {
-    if (cursor < PROVIDER_ORDER.length && (input === ' ' || key.return || key.leftArrow || key.rightArrow)) {
-      toggleProvider(PROVIDER_ORDER[cursor])
+    if (cursor === 0 && (input === ' ' || key.return || key.leftArrow || key.rightArrow)) {
+      updateConfig(current => ({
+        ...current,
+        accountDetection: { ...current.accountDetection, enabled: !current.accountDetection.enabled },
+      }))
+      return
+    }
+    const provider = PROVIDER_ORDER[cursor - 1]
+    if (provider && input === 'a') {
+      updateConfig(current => ({
+        ...current,
+        accountDetection: setProviderDetectionEnabled(
+          current.accountDetection,
+          provider,
+          !providerDetectionEnabled(current.accountDetection, provider),
+        ),
+      }))
+      return
+    }
+    if (provider && (input === ' ' || key.return || key.leftArrow || key.rightArrow)) {
+      toggleProvider(provider)
     }
     return
   }
   if (cursor < trackedAccounts.length) {
     const row = trackedAccounts[cursor]
+    if (row.source === 'ignored' && (key.return || input === 'x')) {
+      if (row.excludedRef) updateConfig(current => ({
+        ...current,
+        accountDetection: setDetectedAccountExcluded(current.accountDetection, row.excludedRef!, false),
+      }))
+      return
+    }
     if (key.return) {
       if (row.source === 'configured') {
         const account = config.accounts.find(candidate => candidate.id === row.explicitId)
@@ -78,70 +129,19 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
       deleteAccount(row.explicitId)
       return
     }
+    if (row.source === 'auto' && input === 'x') {
+      updateConfig(current => ({
+        ...current,
+        activeAccountId: current.activeAccountId === row.id ? null : current.activeAccountId,
+        accountDetection: setDetectedAccountExcluded(current.accountDetection, {
+          providerId: row.providerId,
+          homeDir: row.homeDir,
+        }, true),
+      }))
+      return
+    }
     if (input === ' ') { updateConfig(current => ({ ...current, activeAccountId: row.id })); return }
     return
   }
   if (cursor === trackedAccounts.length && key.return) openAddAccount()
-
-  function handleGeneralSetting(value: string, inputKey: InputKey, context: KeyContext): void {
-    const index = context.settings.cursor
-    if (index === 0) {
-      if (inputKey.leftArrow) updateConfig(current => ({ ...current, interval: Math.max(1, current.interval - 1) }))
-      if (inputKey.rightArrow) updateConfig(current => ({ ...current, interval: current.interval + 1 }))
-      return
-    }
-    if (index === 1) {
-      if (inputKey.leftArrow) updateConfig(current => ({ ...current, billingInterval: Math.max(1, current.billingInterval - 1) }))
-      if (inputKey.rightArrow) updateConfig(current => ({ ...current, billingInterval: current.billingInterval + 1 }))
-      return
-    }
-    if (index === 2 && (inputKey.leftArrow || inputKey.rightArrow || inputKey.return)) {
-      updateConfig(current => ({ ...current, clearScreen: !current.clearScreen })); return
-    }
-    if (index === 3 && (inputKey.leftArrow || inputKey.rightArrow || inputKey.return)) {
-      updateConfig(current => ({ ...current, privacyMode: !current.privacyMode })); return
-    }
-    if (index === 4) {
-      if (textInput.isPrintable(value, inputKey)) {
-        const clean = sanitizeTyped(value)
-        if (clean.length === 1) updateConfig(current => ({ ...current, privacyToggleKey: clean }))
-      }
-      if (inputKey.backspace || inputKey.delete) updateConfig(current => ({ ...current, privacyToggleKey: 'p' }))
-      return
-    }
-    if (index === 5) {
-      if (inputKey.return) {
-        const initial = config.timezone ?? ''
-        timezoneEditor.setValue(initial)
-        timezoneEditor.setCaret(initial.length)
-        timezoneEditor.setError(null)
-      }
-      if (inputKey.leftArrow || inputKey.rightArrow) {
-        updateConfig(current => ({ ...current, timezone: current.timezone === null ? systemTimezone() : null }))
-      }
-      return
-    }
-    if (index === 6 && (inputKey.leftArrow || inputKey.rightArrow || inputKey.return)) {
-      updateConfig(current => ({ ...current, dashboardLayout: current.dashboardLayout === 'grid' ? 'single' : 'grid' }))
-      return
-    }
-    if (index === 7 && (inputKey.leftArrow || inputKey.rightArrow || inputKey.return)) {
-      updateConfig(current => ({ ...current, defaultFocus: current.defaultFocus === 'all' ? 'last' : 'all' }))
-      return
-    }
-    if (index === 8 && (inputKey.leftArrow || inputKey.rightArrow || inputKey.return)) {
-      updateConfig(current => ({ ...current, allowNetworkAccess: !current.allowNetworkAccess }))
-      return
-    }
-    if (index === 9 && inputKey.return) {
-      const initial = config.allowedHosts.join(', ')
-      context.allowedHostsEditor.setValue(initial)
-      context.allowedHostsEditor.setCaret(initial.length)
-      context.allowedHostsEditor.setError(null)
-      return
-    }
-    if (index === 10 && (inputKey.leftArrow || inputKey.rightArrow || inputKey.return)) {
-      updateConfig(current => ({ ...current, resetDisplay: current.resetDisplay === 'relative' ? 'absolute' : 'relative' }))
-    }
-  }
 }

@@ -1,21 +1,6 @@
-import { randomBytes } from 'node:crypto'
-import { loadConfig } from '../config'
-import { flushDisk } from '../providers/usage-core'
-import { TOKMON_CAPABILITIES, TOKMON_PROTOCOL_VERSION } from '../rpc/contract'
-import { startWebServer, type WebServerController } from './server'
+import { acquireOrAttachDaemon, type DaemonController } from './daemon-controller'
 import { openBrowser } from './open'
-import { appVersion } from './static'
-import {
-  acquireLock,
-  isAlive,
-  readLock,
-  reclaimAbandonedLock,
-  reclaimDeadLock,
-  unlinkLock,
-  verifyLock,
-  writeLock,
-  type DaemonLock,
-} from './lockfile'
+import { unlinkLock, type DaemonLock } from './lockfile'
 
 interface DaemonArgs { port?: number; open: boolean; help: boolean }
 
@@ -56,6 +41,7 @@ function handshake(lock: DaemonLock): void {
     protocolVersion: lock.protocolVersion,
     capabilities: lock.capabilities,
     ownerKind: lock.ownerKind,
+    channel: lock.channel,
   }) + '\n')
 }
 
@@ -76,126 +62,50 @@ export async function runDaemon(args: string[], opts: RunDaemonOptions): Promise
   const { port, open, help } = parseDaemonArgs(args)
   if (help && opts.foreground) { process.stdout.write(SERVE_HELP); return }
 
-  const version = appVersion()
-  let current = readLock()
-  // Invalid or legacy files are not trusted as locks. Reclaim them only when
-  // their recorded owner is dead, or when an ownerless partial is old enough
-  // that it cannot be an in-progress atomic acquisition.
-  if (!current && reclaimAbandonedLock()) current = readLock()
-  const live = await verifyLock(current, TOKMON_PROTOCOL_VERSION)
-  if (live) {
-    if (opts.foreground) describeExisting(live, open)
-    else handshake(live)
-    return
-  }
-
-  // A concurrent child has acquired the reservation but has not published its
-  // listening port yet. Wait for that owner instead of starting a second daemon.
-  if (current?.state === 'starting' && current.protocolVersion === TOKMON_PROTOCOL_VERSION && isAlive(current.pid)) {
-    for (let attempt = 0; attempt < 60; attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 50))
-      const winner = await verifyLock(readLock(), TOKMON_PROTOCOL_VERSION, 250)
-      if (winner) {
-        if (opts.foreground) describeExisting(winner, open)
-        else handshake(winner)
-        return
-      }
-    }
-  }
-
-  // Never remove a live, incompatible daemon: it might belong to another version.
-  // The caller can stop it explicitly; silently replacing it would violate singleton ownership.
-  if (current && isAlive(current.pid)) {
-    const message = 'tokmon: another daemon owns the lock but could not be verified (version/token mismatch)'
-    if (opts.foreground) { process.stderr.write(message + '\n'); process.exitCode = 1 }
-    return
-  }
-  if (current) reclaimDeadLock()
-
-  const ownerId = randomBytes(32).toString('base64url')
-  const token = randomBytes(32).toString('base64url')
-  const reservation: DaemonLock = {
-    pid: process.pid,
-    port: 0,
-    url: '',
-    wsToken: token,
-    version,
-    protocolVersion: TOKMON_PROTOCOL_VERSION,
-    capabilities: [...TOKMON_CAPABILITIES],
-    ownerKind: 'cli',
-    startedAt: Date.now(),
-    ownerId,
-    state: 'starting',
-  }
-
-  if (!acquireLock(reservation)) {
-    // Another TUI won the race. It may still be publishing its ready lock.
-    for (let attempt = 0; attempt < 60; attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 50))
-      const winner = await verifyLock(readLock(), TOKMON_PROTOCOL_VERSION, 250)
-      if (winner) {
-        if (opts.foreground) describeExisting(winner, open)
-        else handshake(winner)
-        return
-      }
-    }
-    if (opts.foreground) { process.stderr.write('tokmon: daemon startup is already in progress\n'); process.exitCode = 1 }
-    return
-  }
-
-  let controller: WebServerController | null = null
+  let daemon: DaemonController
   try {
-    const config = await loadConfig()
-    controller = await startWebServer({
-      config,
+    daemon = await acquireOrAttachDaemon({
+      ownerKind: 'cli',
       port,
       log: opts.foreground,
-      wsToken: token,
-      ownerKind: reservation.ownerKind,
-      protocolVersion: reservation.protocolVersion,
-      capabilities: reservation.capabilities,
     })
-    const ready: DaemonLock = {
-      ...reservation,
-      port: controller.port,
-      url: controller.url,
-      state: 'ready',
-    }
-    if (!writeLock(ready)) throw new Error('lost daemon lock ownership during startup')
-
-    let shuttingDown = false
-    const shutdown = async (exitCode = 0) => {
-      if (shuttingDown) return
-      shuttingDown = true
-      if (opts.foreground) process.stdout.write('\n  stopping tokmon web…\n')
-      try { await controller?.stop() } catch {}
-      await flushDisk().catch(() => {})
-      unlinkLock(ownerId)
-      process.exit(exitCode)
-    }
-    process.once('exit', () => { unlinkLock(ownerId) })
-    process.once('SIGINT', () => { void shutdown(0) })
-    process.once('SIGTERM', () => { void shutdown(0) })
-
-    if (opts.foreground) {
-      process.stdout.write(`\n  ◆ tokmon web  →  ${controller.url}\n`)
-      process.stdout.write('    live dashboard · Ctrl-C to stop\n\n')
-      if (config.allowNetworkAccess) {
-        process.stdout.write('    ⚠ unsafe network access enabled — dashboard is reachable from your LAN\n\n')
-      }
-      if (open) {
-        openBrowser(controller.url)
-        process.stdout.write('    opening browser…\n')
-      }
-    } else {
-      // No stdin coupling: this process is a durable daemon, not a child of one TUI.
-      handshake(ready)
-    }
-    await new Promise<void>(() => {})
   } catch (error) {
-    try { await controller?.stop() } catch {}
-    unlinkLock(ownerId)
     const message = `tokmon: failed to start web server: ${(error as Error).message}`
     if (opts.foreground) { process.stderr.write(message + '\n'); process.exitCode = 1 }
+    return
   }
+
+  if (daemon.role === 'attached') {
+    if (opts.foreground) describeExisting(daemon.lock, open)
+    else handshake(daemon.lock)
+    return
+  }
+
+  let shuttingDown = false
+  const shutdown = async (exitCode = 0) => {
+    if (shuttingDown) return
+    shuttingDown = true
+    if (opts.foreground) process.stdout.write('\n  stopping tokmon web…\n')
+    await daemon.stop()
+    process.exit(exitCode)
+  }
+  process.once('exit', () => { unlinkLock(daemon.lock.ownerId) })
+  process.once('SIGINT', () => { void shutdown(0) })
+  process.once('SIGTERM', () => { void shutdown(0) })
+
+  if (opts.foreground) {
+    process.stdout.write(`\n  ◆ tokmon web  →  ${daemon.baseUrl}\n`)
+    process.stdout.write('    live dashboard · Ctrl-C to stop\n\n')
+    if (daemon.config?.allowNetworkAccess) {
+      process.stdout.write('    ⚠ unsafe network access enabled — dashboard is reachable from your LAN\n\n')
+    }
+    if (open) {
+      openBrowser(daemon.baseUrl)
+      process.stdout.write('    opening browser…\n')
+    }
+  } else {
+    // No stdin coupling: this process is a durable daemon, not a child of one TUI.
+    handshake(daemon.lock)
+  }
+  await new Promise<void>(() => {})
 }

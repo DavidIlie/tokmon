@@ -62,6 +62,14 @@ test('limitMetric flags a primary metric only when requested', () => {
   assert.equal(limitMetric({ percent: 10, kind: 'session' }, true)?.primary, true)
 })
 
+test('limitMetric preserves scoped-model activity for smart headroom', () => {
+  const metric = limitMetric({ percent: 47, kind: 'weekly_scoped', scope: { model: { display_name: 'Fable' } }, is_active: true })
+  assert.equal(metric?.label, 'Fable')
+  assert.equal(metric?.role, 'model')
+  assert.equal(metric?.active, true)
+  assert.equal(metric?.modelId, 'fable')
+})
+
 test('usageMetric maps utilization used against a fixed limit of 100', () => {
   const metric = usageMetric('Session', { utilization: 30, resets_at: 1_700_000_000_000 })
   assert.ok(metric)

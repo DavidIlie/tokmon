@@ -2,16 +2,14 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { extname } from 'node:path'
 import { TOKMON_PROTOCOL_VERSION } from '../rpc/contract'
 import {
-  isAlive,
-  probeHealth,
   readLock,
-  reclaimDeadLock,
+  retireIncompatibleCliOwner,
   verifyLock,
   type LockfileOptions,
 } from '../web/lockfile'
+import { daemonChannelFromWire, resolveDaemonChannel, type DaemonChannel } from '../web/daemon-channel'
 
 const HANDSHAKE_TIMEOUT_MS = process.platform === 'win32' ? 15_000 : 10_000
-const UPGRADE_SHUTDOWN_TIMEOUT_MS = 5_000
 
 export type DaemonKind = 'spawned' | 'degraded'
 
@@ -58,6 +56,7 @@ interface Handshake {
   protocolVersion: number
   capabilities: string[]
   ownerKind: 'cli' | 'desktop'
+  channel: DaemonChannel
 }
 
 function parseHandshake(line: string): Handshake | null {
@@ -71,7 +70,8 @@ function parseHandshake(line: string): Handshake | null {
       && Array.isArray(value.capabilities)
       && value.capabilities.every(capability => typeof capability === 'string')
       && (value.ownerKind === 'cli' || value.ownerKind === 'desktop')
-      ? value as Handshake
+      && daemonChannelFromWire(value.channel) !== null
+      ? { ...value, channel: daemonChannelFromWire(value.channel) } as Handshake
       : null
   } catch { return null }
 }
@@ -85,66 +85,28 @@ async function attach(opts: LockfileOptions, protocolVersion: number): Promise<D
   return lock ? connected(lock.url) : null
 }
 
-const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
-
-/**
- * An owner-verified older daemon cannot serve a newer RPC contract. Retire that
- * exact owner before entering the normal singleton startup race. An unverified
- * lock is never signalled: degraded mode remains the safe fallback in that case.
- */
-async function retireIncompatibleDaemon(
-  opts: LockfileOptions,
-  protocolVersion: number,
-  timeoutMs: number,
-): Promise<void> {
-  const lock = readLock(opts)
-  if (
-    !lock || lock.state !== 'ready' || lock.protocolVersion === protocolVersion ||
-    lock.ownerKind === 'desktop' ||
-    lock.pid === process.pid || !isAlive(lock.pid)
-  ) return
-
-  const authenticated = await probeHealth(
-    lock.url,
-    lock.wsToken,
-    lock,
-    Math.min(1_000, timeoutMs),
-  )
-  if (!authenticated) return
-
-  try { process.kill(lock.pid, 'SIGTERM') } catch {
-    if (!isAlive(lock.pid)) reclaimDeadLock(opts)
-    return
-  }
-
-  const deadline = Date.now() + Math.min(timeoutMs, UPGRADE_SHUTDOWN_TIMEOUT_MS)
-  while (Date.now() < deadline) {
-    const current = readLock(opts)
-    if (!current || current.ownerId !== lock.ownerId) return
-    if (!isAlive(lock.pid)) {
-      reclaimDeadLock(opts)
-      return
-    }
-    await delay(50)
-  }
-}
-
 export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<DaemonHandle> {
   const protocolVersion = TOKMON_PROTOCOL_VERSION
   const timeoutMs = opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS
-  const existing = await attach(opts, protocolVersion)
+  const baseEnv = opts.env ?? process.env
+  const channel = resolveDaemonChannel(opts.channel, baseEnv)
+  const lockOpts: LockfileOptions = { cachePath: opts.cachePath, channel }
+  const existing = await attach(lockOpts, protocolVersion)
   if (existing) return existing
 
-  await retireIncompatibleDaemon(opts, protocolVersion, timeoutMs)
-  const upgraded = await attach(opts, protocolVersion)
+  await retireIncompatibleCliOwner(lockOpts, protocolVersion, timeoutMs)
+  const upgraded = await attach(lockOpts, protocolVersion)
   if (upgraded) return upgraded
 
   const entry = opts.entry ?? process.argv[1]
   if (!entry) return degraded()
   const execPath = opts.execPath ?? process.execPath
   const args = ['__daemon', '--port', '0', '--no-open']
-  const baseEnv = opts.env ?? process.env
-  const env = opts.cachePath ? { ...baseEnv, TOKMON_DAEMON_CACHE_DIR: opts.cachePath } : baseEnv
+  const env = {
+    ...baseEnv,
+    TOKMON_CHANNEL: channel,
+    ...(opts.cachePath ? { TOKMON_DAEMON_CACHE_DIR: opts.cachePath } : {}),
+  }
 
   return new Promise<DaemonHandle>((resolve) => {
     let child: ChildProcess
@@ -169,7 +131,7 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
       child.unref()
       resolve(handle)
     }
-    const tryAttach = (final = false) => { void attach(opts, protocolVersion).then(found => {
+    const tryAttach = (final = false) => { void attach(lockOpts, protocolVersion).then(found => {
       if (found) { finish(found); return }
       if (final) { finish(degraded()); return }
       if (!settled && !pollTimer) {
@@ -191,7 +153,7 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
         const line = stdout.slice(0, newline).trim()
         stdout = stdout.slice(newline + 1)
         const handshake = parseHandshake(line)
-        if (!handshake || handshake.protocolVersion !== protocolVersion) continue
+        if (!handshake || handshake.protocolVersion !== protocolVersion || handshake.channel !== channel) continue
         // A handshake alone is not authority. Re-read the owner-only lock and health-check it.
         tryAttach()
         return

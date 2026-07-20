@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { ChevronDown } from '../icons'
-
-const FOCUS = 'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent'
+import { FOCUS_RING } from './primitives'
 
 export function Segmented<T extends string>({
   options, value, onChange, size = 'sm', btnClassName, containerClassName, ariaLabel,
@@ -19,14 +18,15 @@ export function Segmented<T extends string>({
   const activeClass = size === 'xs' ? 'bg-bg-3 text-accent' : 'bg-bg-2 text-accent'
   const inactiveClass = size === 'xs' ? 'text-fg-faint hover:text-fg' : 'text-fg-dim hover:text-fg'
   return (
-    <div className={containerClassName ?? defaultContainer} role="group" aria-label={ariaLabel}>
+    <div className={containerClassName ?? defaultContainer} role="radiogroup" aria-label={ariaLabel}>
       {options.map(o => (
         <button
           key={String(o.value)}
           type="button"
-          aria-pressed={value === o.value}
+          role="radio"
+          aria-checked={value === o.value}
           onClick={() => onChange(o.value)}
-          className={`${btnClassName ?? defaultBtn} ${FOCUS} ${value === o.value ? activeClass : inactiveClass}`}
+          className={`${btnClassName ?? defaultBtn} ${FOCUS_RING} ${value === o.value ? activeClass : inactiveClass}`}
         >{o.label}</button>
       ))}
     </div>
@@ -86,7 +86,7 @@ export function Dropdown({ label, value, children }: {
             items?.[event.key === 'ArrowDown' ? 0 : items.length - 1]?.focus()
           })
         }}
-        className={`flex items-center gap-1.5 rounded border border-line bg-bg-1 px-2 py-1 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg max-sm:py-2 ${FOCUS}`}
+        className={`flex items-center gap-1.5 rounded border border-line bg-bg-1 px-2 py-1 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg max-sm:py-2 ${FOCUS_RING}`}
       >
         <span className="text-fg-faint">{label}:</span>
         <span className="text-fg">{value}</span>
@@ -115,7 +115,7 @@ export function MenuItem({ active, onClick, children }: {
       type="button"
       role="menuitem"
       onClick={onClick}
-      className={`flex min-w-0 items-center gap-2 rounded px-2 py-1 text-left text-xs transition ${FOCUS} ${
+      className={`flex min-w-0 items-center gap-2 rounded px-2 py-1 text-left text-xs transition ${FOCUS_RING} ${
         active ? 'bg-bg-3 text-fg-bright' : 'text-fg-dim hover:bg-bg-3 hover:text-fg'
       }`}
     >

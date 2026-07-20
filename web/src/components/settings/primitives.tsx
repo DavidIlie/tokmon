@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { FOCUS } from './use-dialog-trap'
+import { FOCUS_RING } from '../ui/primitives'
 
 export function Section({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
   return (
@@ -46,7 +46,7 @@ export function NumberStepper({ label, value, min, unit, onChange }: { label: st
   }
   return (
     <div className="flex items-center overflow-hidden rounded border border-line">
-      <button type="button" aria-label="decrease" onClick={() => set(value - 1)} className={`px-2 py-1 text-xs text-fg-dim transition hover:bg-bg-3 hover:text-fg ${FOCUS}`}>−</button>
+      <button type="button" aria-label="decrease" onClick={() => set(value - 1)} className={`px-2 py-1 text-xs text-fg-dim transition hover:bg-bg-3 hover:text-fg ${FOCUS_RING}`}>−</button>
       <input
         type="number"
         name={label.toLowerCase().replace(/\s+/g, '-')}
@@ -62,10 +62,10 @@ export function NumberStepper({ label, value, min, unit, onChange }: { label: st
         }}
         onBlur={commit}
         aria-label={`${label} (${unit})`}
-        className={`tnum w-12 border-x border-line bg-bg-2 px-1 py-1 text-center text-xs text-fg ${FOCUS} [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
+        className={`tnum w-12 border-x border-line bg-bg-2 px-1 py-1 text-center text-xs text-fg ${FOCUS_RING} [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
       />
       <span className="px-1.5 text-[10px] text-fg-faint">{unit}</span>
-      <button type="button" aria-label="increase" onClick={() => set(value + 1)} className={`px-2 py-1 text-xs text-fg-dim transition hover:bg-bg-3 hover:text-fg ${FOCUS}`}>+</button>
+      <button type="button" aria-label="increase" onClick={() => set(value + 1)} className={`px-2 py-1 text-xs text-fg-dim transition hover:bg-bg-3 hover:text-fg ${FOCUS_RING}`}>+</button>
     </div>
   )
 }
@@ -80,8 +80,8 @@ export function IconBtn({ label, onClick, disabled, danger, children }: {
       title={label}
       disabled={disabled}
       onClick={onClick}
-      className={`rounded p-1 text-fg-faint transition disabled:opacity-30 ${FOCUS} ${
-        danger ? 'hover:bg-warning/15 hover:text-warning' : 'hover:bg-bg-3 hover:text-fg'
+      className={`rounded p-1 text-fg-faint transition disabled:opacity-30 ${FOCUS_RING} ${
+        danger ? 'hover:bg-critical/15 hover:text-critical' : 'hover:bg-bg-3 hover:text-fg'
       } disabled:hover:bg-transparent disabled:hover:text-fg-faint`}
     >
       {children}

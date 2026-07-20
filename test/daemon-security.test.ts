@@ -8,7 +8,9 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { attachOrSpawn } from '../src/client/daemon-handle.ts'
 import { createDaemonRpcClient } from '../src/client/daemon-rpc-client.ts'
+import { DEFAULTS, PROVIDER_IDS, type Config } from '../src/config.ts'
 import { TOKMON_CAPABILITIES, TOKMON_PROTOCOL_VERSION } from '../src/rpc/contract.ts'
+import { acquireOrAttachDaemon, type DaemonController } from '../src/web/daemon-controller.ts'
 import {
   acquireLock,
   lockfilePath,
@@ -33,6 +35,7 @@ function lock(ownerId = 'b'.repeat(43)): DaemonLock {
     protocolVersion: TOKMON_PROTOCOL_VERSION,
     capabilities: [...TOKMON_CAPABILITIES],
     ownerKind: 'cli',
+    channel: 'release',
     startedAt: Date.now(),
     ownerId,
     state: 'starting',
@@ -50,6 +53,10 @@ test('daemon lock is exclusive, owner-only, and mode 0600', async () => {
     assert.equal((await stat(lockfilePath({ cachePath }))).mode & 0o777, 0o600)
     assert.equal(unlinkLock('not-the-owner', { cachePath }), false)
     assert.equal(readLock({ cachePath })?.state, 'starting')
+    const { channel: _legacyChannel, ...legacyReleaseLock } = first
+    await writeFile(lockfilePath({ cachePath }), JSON.stringify(legacyReleaseLock), { mode: 0o600 })
+    assert.equal(readLock({ cachePath })?.channel, 'release')
+    assert.equal(readLock({ cachePath, channel: 'dev' }), null)
     assert.equal(writeLock({ ...first, state: 'ready' }, { cachePath }), true)
     assert.equal(readLock({ cachePath })?.state, 'ready')
     assert.equal(unlinkLock(first.ownerId, { cachePath }), true)
@@ -124,12 +131,14 @@ test('health verification requires the owner token on an ephemeral loopback port
       protocolVersion: TOKMON_PROTOCOL_VERSION,
       capabilities: TOKMON_CAPABILITIES,
       ownerKind: 'cli' as const,
+      channel: 'release' as const,
     }
     assert.equal(await probeHealth(url, token, expected), true)
     assert.equal(await probeHealth(url, 'wrong-token', expected), false)
     assert.equal(await probeHealth(url, token, { ...expected, version: 'wrong-version' }), false)
     assert.equal(await probeHealth(url, token, { ...expected, protocolVersion: TOKMON_PROTOCOL_VERSION + 1 }), false)
     assert.equal(await probeHealth(url, token, { ...expected, ownerKind: 'desktop' }), false)
+    assert.equal(await probeHealth(url, token, { ...expected, channel: 'dev' }), false)
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()))
   }
@@ -204,6 +213,7 @@ function testDaemon(root: string, options: {
   version: string
   protocolVersion: number
   ownerKind: 'cli' | 'desktop'
+  legacy?: boolean
 }): { child: ChildProcess; handshake: Promise<Handshake> } {
   const child = spawn(process.execPath, ['--input-type=module', '--eval', `
     import { createServer } from 'node:http'
@@ -216,11 +226,17 @@ function testDaemon(root: string, options: {
     const protocolVersion = Number(process.env.TOKMON_TEST_PROTOCOL_VERSION)
     const capabilities = JSON.parse(process.env.TOKMON_TEST_CAPABILITIES)
     const ownerKind = process.env.TOKMON_TEST_OWNER_KIND
+    const legacy = process.env.TOKMON_TEST_LEGACY === '1'
     const lockPath = join(cachePath, 'daemon.json')
     const server = createServer((req, res) => {
       const owner = req.headers['x-tokmon-token'] === token
       res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ ok: true, owner, version, protocolVersion, capabilities, ownerKind }))
+      res.end(JSON.stringify({
+        ok: true,
+        owner,
+        version,
+        ...(legacy ? {} : { protocolVersion, capabilities, ownerKind, channel: 'release' }),
+      }))
     })
     server.listen(0, '127.0.0.1', async () => {
       const address = server.address()
@@ -230,9 +246,7 @@ function testDaemon(root: string, options: {
         url: 'http://127.0.0.1:' + address.port,
         wsToken: token,
         version,
-        protocolVersion,
-        capabilities,
-        ownerKind,
+        ...(legacy ? {} : { protocolVersion, capabilities, ownerKind, channel: 'release' }),
         startedAt: Date.now(),
         ownerId,
         state: 'ready',
@@ -266,6 +280,7 @@ function testDaemon(root: string, options: {
       TOKMON_TEST_PROTOCOL_VERSION: String(options.protocolVersion),
       TOKMON_TEST_CAPABILITIES: JSON.stringify(TOKMON_CAPABILITIES),
       TOKMON_TEST_OWNER_KIND: options.ownerKind,
+      TOKMON_TEST_LEGACY: options.legacy ? '1' : '0',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -364,6 +379,96 @@ test('a new client replaces an authenticated protocol-incompatible CLI daemon in
         await new Promise(resolve => setTimeout(resolve, 20))
       }
     }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a new client safely takes over an authenticated legacy CLI lock', { timeout: 20_000 }, async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('signal-based upgrade assertion is POSIX-specific')
+    return
+  }
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-daemon-legacy-upgrade-'))
+  await mkdir(join(root, 'home'), { recursive: true })
+  const old = testDaemon(root, {
+    version: '0.28.1',
+    protocolVersion: TOKMON_PROTOCOL_VERSION - 1,
+    ownerKind: 'cli',
+    legacy: true,
+  })
+  let replacementPid: number | null = null
+  try {
+    await old.handshake
+    const cachePath = join(root, 'cache')
+    assert.equal(readLock({ cachePath }), null, 'strict discovery must not trust a legacy lock')
+    const handle = await attachOrSpawn({
+      cachePath,
+      entry: join(process.cwd(), 'src/cli.tsx'),
+      execArgv: ['--import', 'tsx'],
+      env: {
+        ...process.env,
+        HOME: join(root, 'home'),
+        TOKMON_WEB_MODE: 'prod',
+      },
+      timeoutMs: 5_000,
+    })
+    assert.equal(handle.kind, 'spawned')
+    await waitForExit(old.child, 3_000)
+    const replacement = readLock({ cachePath })
+    assert.ok(replacement)
+    assert.equal(replacement.protocolVersion, TOKMON_PROTOCOL_VERSION)
+    assert.equal(replacement.channel, 'release')
+    replacementPid = replacement.pid
+  } finally {
+    if (old.child.exitCode === null && old.child.signalCode === null) old.child.kill('SIGKILL')
+    await waitForExit(old.child).catch(() => {})
+    if (replacementPid) {
+      try { process.kill(replacementPid, 'SIGTERM') } catch {}
+      for (let i = 0; i < 50 && readLock({ cachePath: join(root, 'cache') }); i++) {
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('the desktop controller can own after safely retiring an authenticated legacy CLI', { timeout: 20_000 }, async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('signal-based upgrade assertion is POSIX-specific')
+    return
+  }
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-desktop-legacy-upgrade-'))
+  await mkdir(join(root, 'home'), { recursive: true })
+  const old = testDaemon(root, {
+    version: '0.28.1',
+    protocolVersion: TOKMON_PROTOCOL_VERSION - 1,
+    ownerKind: 'cli',
+    legacy: true,
+  })
+  let controller: DaemonController | null = null
+  try {
+    await old.handshake
+    const config: Config = {
+      ...DEFAULTS,
+      accounts: [],
+      disabledProviders: [...PROVIDER_IDS],
+      knownProviders: [],
+      onboarded: true,
+    }
+    controller = await acquireOrAttachDaemon({
+      ownerKind: 'desktop',
+      cachePath: join(root, 'cache'),
+      port: 0,
+      config,
+    })
+    assert.equal(controller.role, 'owner')
+    assert.equal(controller.lock.ownerKind, 'desktop')
+    assert.equal(controller.lock.channel, 'release')
+    await waitForExit(old.child, 3_000)
+  } finally {
+    await controller?.stop()
+    if (old.child.exitCode === null && old.child.signalCode === null) old.child.kill('SIGKILL')
+    await waitForExit(old.child).catch(() => {})
     await rm(root, { recursive: true, force: true })
   }
 })

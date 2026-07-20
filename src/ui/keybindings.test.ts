@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { DEFAULTS } from '../config'
+import { DEFAULTS, type Config } from '../config'
 import {
   handleKey,
   handleTerminalFocusInput,
@@ -9,6 +9,7 @@ import {
   type InputKey,
   type KeyContext,
 } from './keybindings'
+import { DESKTOP_FIXED_ROWS } from './settings'
 
 test('terminal focus reports are recognized without becoming text input', () => {
   assert.equal(terminalFocusEvent('[I'), 'in')
@@ -118,4 +119,189 @@ test('the exported router keeps onboarding modal over refresh', () => {
   ctx.onboarding.show = true
   handleKey('R', key, ctx)
   assert.equal(refreshes, 0)
+})
+
+test('theme settings persist preset, appearance, and terminal policy through config updates', () => {
+  const ctx = context()
+  let config = DEFAULTS
+  ctx.settings.show = true
+  ctx.settings.tab = 'theme'
+  ctx.global.config = config
+  ctx.global.updateConfig = updater => {
+    config = updater(config)
+    ctx.global.config = config
+  }
+
+  handleKey('', { ...key, rightArrow: true }, ctx)
+  assert.equal(config.appearance.preset, 'phosphor')
+  assert.equal(config.appearance.mode, 'dark')
+
+  ctx.settings.cursor = 1
+  handleKey('', { ...key, rightArrow: true }, ctx)
+  assert.equal(config.appearance.mode, 'dark', 'phosphor remains dark-only')
+
+  ctx.settings.cursor = 2
+  handleKey('', { ...key, rightArrow: true }, ctx)
+  assert.equal(config.appearance.terminal, 'dark')
+})
+
+test('desktop settings persist tray behavior and enforce the two-provider pin cap', () => {
+  const ctx = context()
+  let config = DEFAULTS
+  ctx.settings.show = true
+  ctx.settings.tab = 'desktop'
+  ctx.global.config = config
+  ctx.global.updateConfig = updater => {
+    config = updater(config)
+    ctx.global.config = config
+  }
+
+  ctx.settings.cursor = 1
+  handleKey(' ', key, ctx)
+  assert.equal(config.tray.showMenuBarText, false)
+
+  ctx.settings.cursor = 2
+  handleKey('', { ...key, rightArrow: true }, ctx)
+  assert.equal(config.tray.displayMetric, 'tightestRemaining')
+
+  ctx.settings.cursor = 5
+  handleKey('', { ...key, rightArrow: true }, ctx)
+  assert.equal(config.desktop.graphRangeDays, 30)
+
+  for (const providerIndex of [0, 1, 2]) {
+    ctx.settings.cursor = DESKTOP_FIXED_ROWS + providerIndex
+    handleKey(' ', key, ctx)
+  }
+  assert.deepEqual(config.tray.pinnedProviders, ['claude', 'codex'])
+})
+
+test('provider settings separate tracking from global and per-provider discovery', () => {
+  const ctx = context()
+  let config = DEFAULTS
+  ctx.settings.show = true
+  ctx.settings.tab = 'providers'
+  ctx.global.config = config
+  ctx.global.updateConfig = updater => { config = updater(config); ctx.global.config = config }
+  ctx.settings.toggleProvider = provider => ctx.global.updateConfig(current => ({
+    ...current,
+    disabledProviders: current.disabledProviders.includes(provider)
+      ? current.disabledProviders.filter(id => id !== provider)
+      : [...current.disabledProviders, provider],
+  }))
+
+  ctx.settings.cursor = 0
+  handleKey(' ', key, ctx)
+  assert.equal(config.accountDetection.enabled, false)
+  handleKey(' ', key, ctx)
+  assert.equal(config.accountDetection.enabled, true)
+
+  ctx.settings.cursor = 1
+  handleKey('a', key, ctx)
+  assert.deepEqual(config.accountDetection.disabledProviders, ['claude'])
+  assert.deepEqual(config.disabledProviders, [])
+  handleKey(' ', key, ctx)
+  assert.deepEqual(config.disabledProviders, ['claude'])
+})
+
+test('account settings can ignore and restore an automatically detected account', () => {
+  const ctx = context()
+  let config: Config = { ...DEFAULTS, activeAccountId: 'claude-alt' }
+  ctx.settings.show = true
+  ctx.settings.tab = 'accounts'
+  ctx.settings.cursor = 0
+  ctx.settings.trackedAccounts = [{
+    id: 'claude-alt', providerId: 'claude', name: 'alt@example.com', homeDir: '/tmp/claude-alt',
+    color: 'green', source: 'auto',
+  }]
+  ctx.global.config = config
+  ctx.global.updateConfig = updater => { config = updater(config); ctx.global.config = config }
+
+  handleKey('x', key, ctx)
+  assert.equal(config.activeAccountId, null)
+  assert.deepEqual(config.accountDetection.excludedAccounts, [{ providerId: 'claude', homeDir: '/tmp/claude-alt' }])
+
+  ctx.settings.trackedAccounts = [{
+    id: 'ignored:claude:/tmp/claude-alt', providerId: 'claude', name: 'Claude account', homeDir: '/tmp/claude-alt',
+    color: 'green', source: 'ignored', excludedRef: { providerId: 'claude', homeDir: '/tmp/claude-alt' },
+  }]
+  handleKey('x', key, ctx)
+  assert.deepEqual(config.accountDetection.excludedAccounts, [])
+})
+
+test('general settings dispatch is index-aligned with the declarative schema', () => {
+  const ctx = context()
+  let config = DEFAULTS
+  ctx.settings.show = true
+  ctx.settings.tab = 'general'
+  ctx.global.config = config
+  ctx.global.updateConfig = updater => { config = updater(config); ctx.global.config = config }
+
+  // row 0 — refresh interval: right increments, left decrements with a floor of 1.
+  ctx.settings.cursor = 0
+  handleKey('', { ...key, rightArrow: true }, ctx)
+  assert.equal(config.interval, 3)
+  handleKey('', { ...key, leftArrow: true }, ctx)
+  handleKey('', { ...key, leftArrow: true }, ctx)
+  handleKey('', { ...key, leftArrow: true }, ctx)
+  assert.equal(config.interval, 1, 'floored at 1')
+
+  // row 2 — clear screen toggles on return.
+  ctx.settings.cursor = 2
+  handleKey('', { ...key, return: true }, ctx)
+  assert.equal(config.clearScreen, false)
+
+  // row 3 — privacy mode toggles.
+  ctx.settings.cursor = 3
+  handleKey('', { ...key, rightArrow: true }, ctx)
+  assert.equal(config.privacyMode, false)
+
+  // row 6 — dashboard layout toggles grid/single.
+  ctx.settings.cursor = 6
+  handleKey('', { ...key, return: true }, ctx)
+  assert.equal(config.dashboardLayout, 'single')
+
+  // row 8 — network access toggles.
+  ctx.settings.cursor = 8
+  handleKey('', { ...key, rightArrow: true }, ctx)
+  assert.equal(config.allowNetworkAccess, true)
+
+  // row 10 — reset display toggles relative/absolute.
+  ctx.settings.cursor = 10
+  handleKey('', { ...key, rightArrow: true }, ctx)
+  assert.equal(config.resetDisplay, 'absolute')
+})
+
+test('general privacy-key row captures a printable and resets on delete', () => {
+  const ctx = context()
+  let config = DEFAULTS
+  ctx.settings.show = true
+  ctx.settings.tab = 'general'
+  ctx.settings.cursor = 4
+  ctx.global.config = config
+  ctx.global.updateConfig = updater => { config = updater(config); ctx.global.config = config }
+  ctx.textInput.isPrintable = () => true
+
+  handleKey('x', key, ctx)
+  assert.equal(config.privacyToggleKey, 'x')
+  handleKey('', { ...key, backspace: true }, ctx)
+  assert.equal(config.privacyToggleKey, 'p')
+})
+
+test('general timezone and allowed-hosts rows open their editors on return', () => {
+  const ctx = context()
+  ctx.settings.show = true
+  ctx.settings.tab = 'general'
+  ctx.global.config = { ...DEFAULTS, timezone: 'UTC', allowedHosts: ['a.example'] }
+
+  let tzOpened: unknown = undefined
+  ctx.timezoneEditor.setValue = ((value: unknown) => { tzOpened = value }) as never
+  ctx.settings.cursor = 5
+  handleKey('', { ...key, return: true }, ctx)
+  assert.equal(tzOpened, 'UTC')
+
+  let hostsOpened: unknown = undefined
+  ctx.allowedHostsEditor.setValue = ((value: unknown) => { hostsOpened = value }) as never
+  ctx.settings.cursor = 9
+  handleKey('', { ...key, return: true }, ctx)
+  assert.equal(hostsOpened, 'a.example')
 })

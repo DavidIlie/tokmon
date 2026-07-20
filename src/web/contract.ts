@@ -1,5 +1,6 @@
 import type { DashboardData, TableData } from '../types'
 import type { BillingResult, ProviderId } from '../providers/types'
+import type { AccountIdentityView, HeadroomView, QuotaView } from '../usage-semantics'
 
 export type {
   DashboardData,
@@ -14,8 +15,15 @@ export type {
   MetricFormat,
   ProviderId,
 } from '../providers/types'
+export type { AccountIdentityView, HeadroomFactor, HeadroomView, MetricRole, QuotaView } from '../usage-semantics'
+export { usageFromHeadroom } from '../usage-semantics'
+export type { Severity } from '../usage-semantics'
+export { severity, severityTag, accountIdentityText } from '../usage-semantics'
 
-export type { Config, Account, TrackedAccountRow, TrackedAccountSource } from '../config-schema'
+export type {
+  Config, Account, TrayConfig, AccountDetectionConfig, DetectedAccountRef, DesktopGraphRange,
+  TrackedAccountRow, TrackedAccountSource,
+} from '../config-schema'
 export type { TrackedAccountCandidate } from '../config-schema'
 export {
   normalizeConfig,
@@ -23,6 +31,9 @@ export {
   normalizeAllowedHosts,
   repairConfig,
   DEFAULTS,
+  DEFAULT_TRAY_CONFIG,
+  DEFAULT_ACCOUNT_DETECTION_CONFIG,
+  DESKTOP_GRAPH_RANGES,
   generateAccountId,
   pickAccentColor,
   isValidTimezone,
@@ -30,11 +41,51 @@ export {
   PROVIDER_META,
   PROVIDER_ORDER,
   getTrackedAccountRows,
+  providerDetectionEnabled,
+  setProviderDetectionEnabled,
+  setDetectedAccountExcluded,
   sanitizeTyped,
   containsEmail,
   redactEmail,
+  MAX_PINNED_PROVIDERS,
+  cleanProviderSelection,
+  toggleProviderSelection,
+  moveProviderSelection,
 } from '../config-schema'
 export { describeConfigUpdateFailure, reconcileSettingsDraft } from '../config-sync'
+export type { ConfigState } from '../rpc/contract'
+export type { PrivacyShortcutEvent } from '../privacy-shortcut'
+export { matchesPrivacyShortcut } from '../privacy-shortcut'
+export type {
+  AppearanceConfig,
+  AppearanceMode,
+  BuiltInThemePreset,
+  ThemePreset,
+  ThemePresetOption,
+  EditableThemeTokens,
+  ResolvedThemeTokens,
+  TerminalThemePolicy,
+} from '../theme'
+export {
+  BUILT_IN_THEME_PRESET_IDS,
+  DEFAULT_APPEARANCE,
+  IMPORTED_THEME_CATALOG,
+  IMPORTED_THEME_IDS,
+  THEME_PRESET_IDS,
+  THEME_PRESET_OPTIONS,
+  isBuiltInThemePreset,
+  isDarkOnlyThemePreset,
+  isThemePreset,
+  themePresetOption,
+  resolveTheme,
+  resolveTerminalTheme,
+  repairAppearance,
+  normalizeAppearance,
+  normalizeHexColor,
+  relativeLuminance,
+  contrastRatio,
+  validateThemeContrast,
+} from '../theme'
 
 export type AccountFetchState = 'pending' | 'ready' | 'error'
 
@@ -55,7 +106,13 @@ export interface WebAccount {
   hasBilling: boolean
   email?: string | null
   displayName?: string | null
+  /** Daemon-produced render contract. Optional for cached/older snapshots. */
+  identity?: AccountIdentityView
+  quotas?: QuotaView[]
+  headroom?: HeadroomView
   plan?: string | null
+  /** Newest real usage event for this account, as Unix milliseconds. */
+  lastActivityAt: number | null
   dashboard: DashboardData | null
   table: TableData | null
   billing: BillingResult | null
@@ -71,6 +128,7 @@ export interface WebProviderInfo {
   id: ProviderId
   name: string
   color: string
+  headroom?: HeadroomView
 }
 
 export interface WebSnapshot {
@@ -78,7 +136,8 @@ export interface WebSnapshot {
   generatedAt: number
   tz: string
   intervalMs: number
-  billingIntervalMs: number
+  /** Optional only for snapshots from daemons predating the split billing cadence. */
+  billingIntervalMs?: number
   providers: WebProviderInfo[]
   accounts: WebAccount[]
   seeded: boolean

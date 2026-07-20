@@ -10,7 +10,10 @@ export function formatCurrency(value: number, opts: CurrencyOptions = {}): strin
   const abs = Math.abs(value)
   if (abs >= 100_000) return `${sign}$${(value / 1000).toFixed(0)}k`
   if (abs >= 10_000) return `${sign}$${(value / 1000).toFixed(1)}k`
-  if (abs >= 1) return `${sign}$${value.toFixed(2)}`
+  if (abs >= 1) {
+    const polarity = value < 0 ? '-' : ''
+    return `${sign}${polarity}$${abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
   if (abs >= 0.01) return `${sign}$${value.toFixed(3)}`
   if (abs === 0) return '$0.00'
   return `${sign}$${value.toFixed(4)}`
@@ -88,20 +91,38 @@ export function formatDayLabel(label: string): string {
   return label
 }
 
+export interface ResetParts {
+  days: number
+  hours: number
+  minutes: number
+  totalMinutes: number
+}
+
+/**
+ * The single rounding rule for "time until reset", shared by the web/TUI
+ * relative label and the desktop compact copy so they can never disagree on a
+ * boundary. Whole minutes, rounded up (never under-report the time left) and
+ * floored at 1 for any positive remainder. Returns null once the reset has
+ * passed (diff ≤ 0) or the input is not finite. Surfaces keep their own display
+ * style ("3h 0m" vs "3h"); only the arithmetic is shared.
+ */
+export function resetParts(diffMs: number): ResetParts | null {
+  if (!Number.isFinite(diffMs) || diffMs <= 0) return null
+  const totalMinutes = Math.max(1, Math.ceil(diffMs / 60_000))
+  return {
+    days: Math.floor(totalMinutes / (24 * 60)),
+    hours: Math.floor((totalMinutes % (24 * 60)) / 60),
+    minutes: totalMinutes % 60,
+    totalMinutes,
+  }
+}
+
 export function formatResetIn(iso: string, now = Date.now()): string {
-  const diff = new Date(iso).getTime() - now
-  if (!Number.isFinite(diff) || diff <= 0) return 'now'
-
-  const minutes = Math.round(diff / 60_000)
-  if (minutes < 60) return `${minutes}m`
-
-  const hours = Math.floor(minutes / 60)
-  const mins = minutes % 60
-  if (hours < 24) return `${hours}h ${mins}m`
-
-  const days = Math.floor(hours / 24)
-  const hrs = hours % 24
-  return `${days}d ${hrs}h`
+  const parts = resetParts(new Date(iso).getTime() - now)
+  if (!parts) return 'now'
+  if (parts.days > 0) return `${parts.days}d ${parts.hours}h`
+  if (parts.hours > 0) return `${parts.hours}h ${parts.minutes}m`
+  return `${parts.minutes}m`
 }
 
 export function formatResetAt(

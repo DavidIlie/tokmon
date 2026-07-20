@@ -7,6 +7,7 @@ import './styles.css'
 import { NuqsAdapter } from 'nuqs/adapters/react'
 import { App } from './app'
 import { ShareProvider } from './components/share-provider'
+import { ThemeProvider } from './components/theme-provider'
 import { installPreloadRecovery } from './lib/preload-recovery'
 
 installPreloadRecovery()
@@ -14,9 +15,11 @@ installPreloadRecovery()
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <NuqsAdapter>
-      <ShareProvider>
-        <App />
-      </ShareProvider>
+      <ThemeProvider>
+        <ShareProvider>
+          <App />
+        </ShareProvider>
+      </ThemeProvider>
     </NuqsAdapter>
   </StrictMode>,
 )

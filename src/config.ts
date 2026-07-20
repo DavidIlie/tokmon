@@ -4,15 +4,21 @@ import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { DEFAULTS, normalizeConfig, repairConfig, type Config, type Account } from './config-schema'
 
-export type { Config, Account } from './config-schema'
+export type { Config, Account, TrayConfig, AccountDetectionConfig, DetectedAccountRef, DesktopGraphRange } from './config-schema'
 export type { TrackedAccountRow, TrackedAccountSource } from './config-schema'
 export {
   DEFAULTS,
+  DEFAULT_TRAY_CONFIG,
+  DEFAULT_ACCOUNT_DETECTION_CONFIG,
+  DESKTOP_GRAPH_RANGES,
   ACCENT_COLORS,
   PROVIDER_IDS,
   COLOR_PALETTE,
   PROVIDER_META,
   getTrackedAccountRows,
+  providerDetectionEnabled,
+  setProviderDetectionEnabled,
+  setDetectedAccountExcluded,
   clampNum,
   normalizeConfig,
   repairConfig,
@@ -24,6 +30,10 @@ export {
   sanitizeTyped,
   containsEmail,
   redactEmail,
+  MAX_PINNED_PROVIDERS,
+  cleanProviderSelection,
+  toggleProviderSelection,
+  moveProviderSelection,
 } from './config-schema'
 
 export function envDir(name: string): string | undefined {

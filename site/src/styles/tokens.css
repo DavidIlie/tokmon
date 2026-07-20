@@ -1,0 +1,237 @@
+/*
+ * Tokmon marketing site — design tokens.
+ *
+ * SOURCE OF TRUTH: these values are the frozen "Tokmon" dark preset copied
+ * verbatim from the app at web/src/styles.css (the @theme block, dark defaults).
+ * This site ships dark-only, so only the dark values are mirrored here. If the
+ * app palette changes, re-sync from web/src/styles.css — do not hand-tune.
+ */
+
+/* Pixel display face — wordmark + section eyebrows. Copied from
+   web/src/assets/fonts/DepartureMono-Regular.woff2. */
+@font-face {
+  font-family: "Departure Mono";
+  src: url("/fonts/DepartureMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Self-host the UI face so the marketing page makes no font request to a
+   third party. These files come from the app's @fontsource dependency. */
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-display: "Departure Mono", "JetBrains Mono", ui-monospace, monospace;
+
+  /* surfaces (app --color-bg-*) */
+  --bg-0: #0a0a0a;
+  --bg-1: #101011;
+  --bg-2: #161617;
+  --bg-3: #1d1d1e;
+
+  /* lines */
+  --line: #262627;
+  --line-2: #343435;
+  --line-faint: #1a1a1b;
+
+  /* text */
+  --fg: #d4d6d6;
+  --fg-dim: #8d9090;
+  --fg-faint: #585b5b;
+  --fg-bright: #f3f5f5;
+
+  /* semantic — Terminal.app "Clear Dark" palette */
+  --cost: #d9c074;      /* gold $ amounts */
+  --positive: #6caa71;  /* green savings */
+  --ok: #79be7e;        /* bright-green UI accent */
+  --warning: #b45648;
+  --critical: #e5584b;
+  --unknown: #8d9090;
+  --accent: #79be7e;
+  --accent-tint: #18251a;
+  --accent-on: #0a0a0a;
+  --focus-ring: #79be7e;
+
+  /* provider brand hues (distinct for stacked charts). Grok has no brand hue
+     token in the app palette, so it inherits --fg-dim here — kept honest. */
+  --p-claude: #00d787;
+  --p-codex: #00d7ff;
+  --p-cursor: #5f87ff;
+  --p-copilot: #5fd7a7;
+  --p-pi: #e6b450;
+  --p-opencode: #d75f87;
+  --p-antigravity: #d75f5f;
+  --p-gemini: #af87ff;
+  --p-grok: #8d9090;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+}
+
+body {
+  margin: 0;
+  min-height: 100%;
+  overflow-x: hidden;
+  background-color: var(--bg-0);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  font-variant-ligatures: none;
+}
+
+h1, h2, h3, p, ul, ol, figure {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img, svg {
+  display: block;
+  max-width: 100%;
+}
+
+/* tabular figures on every numeric run */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.04em;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 35%, transparent);
+  color: var(--fg-bright);
+}
+
+/* Focus-visible: an accent ring everywhere keyboard focus lands. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ---- layout primitives ---- */
+.wrap {
+  width: 100%;
+  max-width: 1040px;
+  margin-inline: auto;
+  padding-inline: 24px;
+}
+
+.eyebrow {
+  font-family: var(--font-display);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.muted {
+  color: var(--fg-dim);
+}
+
+/* ---- buttons ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--fg-bright);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease, transform 120ms ease;
+}
+.btn:hover {
+  border-color: var(--accent);
+  background: var(--bg-3);
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-on);
+  font-weight: 600;
+}
+.btn-primary:hover {
+  background: color-mix(in oklab, var(--accent) 88%, white);
+  border-color: color-mix(in oklab, var(--accent) 88%, white);
+}
+/* Cards / panels */
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--bg-1) 92%, transparent);
+}
+
+/* Entrance motion — capped at 200ms, disabled under reduced-motion. */
+@keyframes tok-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.rise {
+  animation: tok-rise 0.2s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

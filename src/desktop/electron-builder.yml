@@ -1,0 +1,60 @@
+appId: com.davidilie.tokmon
+productName: Tokmon
+artifactName: tokmon-desktop-${version}-${os}-${arch}.${ext}
+asar: true
+directories:
+  output: release
+  buildResources: resources
+files:
+  - dist/**/*
+  - package.json
+extraResources:
+  - from: ../../dist/web
+    to: web
+    filter:
+      - "**/*"
+  - from: ../../THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
+  - from: ../../site/public/fonts/OFL.txt
+    to: site/public/fonts/OFL.txt
+mac:
+  icon: resources/icon.icns
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: true
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
+  extendInfo:
+    LSUIElement: true
+dmg:
+  # Sign before electron-builder generates the blockmap/update hashes so CI can
+  # verify the distributed disk image without invalidating updater metadata.
+  sign: true
+win:
+  icon: resources/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+linux:
+  executableName: tokmon-desktop
+  icon: resources/icon.png
+  category: Utility
+  syncDesktopName: true
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+publish:
+  provider: github
+  owner: DavidIlie
+  repo: tokmon
