@@ -9,3 +9,6 @@ src/desktop/release/
 site/node_modules/
 site/dist/
 site/.astro/
+.vercel/
+.env.local
+.env.*.local
