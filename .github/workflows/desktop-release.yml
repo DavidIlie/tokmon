@@ -36,7 +36,7 @@ jobs:
             artifact: desktop-macos
           - os: windows-2022
             platform: win
-            label: Windows signed
+            label: Windows installer
             artifact: desktop-windows
           - os: ubuntu-22.04
             platform: linux
@@ -209,7 +209,7 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir published
           node scripts/verify-desktop-release.mjs --platform all --release-dir published --version "${RELEASE_TAG#v}"
 
-  # Keep package registries behind the signed desktop release. A tag cannot
+  # Keep package registries behind the verified desktop release. A tag cannot
   # publish npm/GPR while signing, notarization, or update-feed verification is
   # failing. Manual desktop repair runs intentionally skip package publishing.
   publish:
