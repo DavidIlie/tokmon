@@ -12,7 +12,10 @@ function discover(directory) {
   }
 }
 
-for (const directory of ['src', 'test']) discover(directory)
+const directories = process.argv.slice(2)
+for (const directory of directories.length > 0 ? directories : ['src', 'test']) {
+  discover(directory)
+}
 testFiles.sort((left, right) => left.localeCompare(right, 'en'))
 
 if (testFiles.length === 0) {

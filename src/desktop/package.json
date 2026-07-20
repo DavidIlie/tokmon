@@ -15,7 +15,7 @@
     "dev": "pnpm run build && electron .",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test 'main/**/*.test.ts' 'renderer/**/*.test.ts'",
+    "test": "node ../../test/run-tests.mjs main renderer",
     "check": "pnpm run typecheck && pnpm run test",
     "pack": "electron-builder --dir --config electron-builder.yml",
     "dist": "electron-builder --config electron-builder.yml"
