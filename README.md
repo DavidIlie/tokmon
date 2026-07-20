@@ -342,8 +342,12 @@ pnpm run check:site
 pnpm run build:site
 ```
 
-The generated site is deployment-agnostic; `site/vercel.json` supports a
-separate Vercel project rooted at `site/` when a deployment is configured.
+The generated site is deployment-agnostic. For Vercel, import this repository
+and leave **Root Directory** at the repository root. The root `vercel.json`
+installs only the isolated `site/` workspace, builds Astro, and publishes
+`site/dist`; no environment variables or monorepo source-access toggle are
+required. Keeping the repository root available also lets `/docs` render this
+README directly at build time.
 
 ## CI/CD
 
