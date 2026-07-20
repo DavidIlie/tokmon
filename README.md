@@ -44,7 +44,7 @@ pnpm run dev:installed
 
 The installed app owns or attaches to the `dev` daemon and the TUI reuses that exact owner. Set `TOKMON_DESKTOP_APP_PATH` when the app is installed somewhere other than the platform default.
 
-Desktop release artifacts are built by `.github/workflows/desktop-release.yml`. Tagged releases require `MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`, `WIN_CSC_LINK`, and `WIN_CSC_KEY_PASSWORD`; missing signing credentials fail the release instead of silently publishing unsigned desktop binaries.
+Desktop release artifacts are built by `.github/workflows/desktop-release.yml`. Tagged releases require the macOS signing and notarization secrets `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_API_KEY`, `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`; missing Apple credentials fail the release instead of silently publishing an unsigned macOS app. Windows Authenticode signing is enabled when `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD` are configured, while Linux packages are published without platform signing.
 
 Installed release builds check GitHub Releases shortly after launch and every hour while Tokmon remains open. A discovered update downloads in the background, appears as a **Restart** action in the popover when ready, and is also installed during the next clean quit. **Check for Updates** is available from the tray context menu. Development builds never contact the release feed.
 

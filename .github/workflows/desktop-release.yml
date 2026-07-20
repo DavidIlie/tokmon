@@ -75,30 +75,43 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         shell: bash
         env:
-          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: test -n "$MAC_CSC_LINK" -a -n "$MAC_CSC_KEY_PASSWORD" -a -n "$APPLE_ID" -a -n "$APPLE_APP_SPECIFIC_PASSWORD" -a -n "$APPLE_TEAM_ID"
-      - name: Require Windows signing secrets
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: test -n "$CSC_LINK" -a -n "$CSC_KEY_PASSWORD" -a -n "$APPLE_API_KEY" -a -n "$APPLE_API_KEY_ID" -a -n "$APPLE_API_ISSUER"
+      - name: Detect optional Windows signing
         if: startsWith(matrix.os, 'windows')
         shell: bash
         env:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-        run: test -n "$WIN_CSC_LINK" -a -n "$WIN_CSC_KEY_PASSWORD"
+        run: |
+          if [[ -n "$WIN_CSC_LINK" && -n "$WIN_CSC_KEY_PASSWORD" ]]; then
+            echo "WIN_SIGNING_CONFIGURED=true" >> "$GITHUB_ENV"
+            echo "Windows Authenticode signing enabled."
+          else
+            echo "WIN_SIGNING_CONFIGURED=false" >> "$GITHUB_ENV"
+            echo "Windows Authenticode signing disabled; publishing an unsigned Windows installer."
+          fi
       - name: Package macOS
         if: startsWith(matrix.os, 'macos')
         working-directory: src/desktop
         env:
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           GH_TOKEN: ${{ github.token }}
-        run: pnpm exec electron-builder --config electron-builder.yml --publish never
+        shell: bash
+        run: |
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY_CONTENT" > "$key_path"
+          chmod 600 "$key_path"
+          export APPLE_API_KEY="$key_path"
+          pnpm exec electron-builder --config electron-builder.yml --publish never
       - name: Package Windows
         if: startsWith(matrix.os, 'windows')
         working-directory: src/desktop
@@ -136,7 +149,7 @@ jobs:
             spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
           done
       - name: Verify Windows Authenticode signatures
-        if: startsWith(matrix.os, 'windows')
+        if: startsWith(matrix.os, 'windows') && env.WIN_SIGNING_CONFIGURED == 'true'
         shell: pwsh
         run: |
           $files = @(
