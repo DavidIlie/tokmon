@@ -12,7 +12,9 @@ The root package version, desktop package version, and tag must match.
 - `APPLE_API_ISSUER`
 
 The workflow fails if they are missing. It signs and notarizes both app bundles,
-then separately notarizes and staples the DMG containers.
+then separately notarizes and staples the DMG containers. Because stapling
+changes the DMG bytes, the workflow rebuilds their differential blockmaps and
+refreshes the updater metadata before verification.
 
 Windows Authenticode is optional through `WIN_CSC_LINK` and
 `WIN_CSC_KEY_PASSWORD`. Without them, the workflow publishes an unsigned

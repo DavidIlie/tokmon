@@ -134,6 +134,7 @@ jobs:
               --wait
             xcrun stapler staple "$dmg"
           done
+          node scripts/refresh-macos-release-metadata.mjs --release-dir src/desktop/release
       - name: Package Windows
         if: startsWith(matrix.os, 'windows')
         working-directory: src/desktop
