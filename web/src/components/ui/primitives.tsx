@@ -1,5 +1,8 @@
 import type { ReactNode } from 'react'
 
+/** Shared focus-visible ring used by every interactive control. */
+export const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent'
+
 const SPARK = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
 
 export function Sparkline({ data, color = 'var(--color-accent)', className = '' }: {

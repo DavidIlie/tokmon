@@ -27,3 +27,24 @@ jobs:
       - run: pnpm --prefix web install --frozen-lockfile
       - run: pnpm run check
       - run: pnpm run build
+      - run: pnpm run check:desktop
+      - run: pnpm run build:desktop
+
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
+
+      - run: pnpm --prefix site install --frozen-lockfile
+      - run: pnpm run check:site
+      - run: pnpm run build:site

@@ -3,8 +3,10 @@ import { getTrackedAccountRows, PROVIDER_META, type Account, type Config, type T
 import { namedColorHex } from '../../lib/colors'
 import { ChevronUp, ChevronDown, Pencil, Plus, Trash } from '../icons'
 import { PrivacyLabel } from '../privacy-label'
-import { FOCUS } from './use-dialog-trap'
+import { Button } from '../ui/button'
+import { FOCUS_RING } from '../ui/primitives'
 import { Section, IconBtn } from './primitives'
+import { accountIdentityText } from '../../lib/account-identity'
 
 function accountFromSnapshot(row: TrackedAccountRow, snapshot: WebSnapshot | null): WebAccount | null {
   if (!snapshot) return null
@@ -42,10 +44,9 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
 
   return (
     <Section title="Accounts" right={
-      <button type="button" onClick={onAdd}
-        className={`flex items-center gap-1 rounded border border-accent/60 bg-bg-1 px-2 py-1 text-[11px] text-accent transition hover:bg-bg-2 ${FOCUS}`}>
+      <Button variant="primary" size="xs" onClick={onAdd}>
         <Plus className="size-3" /> Add account
-      </button>
+      </Button>
     }>
       {accounts.length === 0 ? (
         <p className="rounded border border-line bg-bg-2/50 px-3 py-3 text-xs text-fg-faint">
@@ -56,7 +57,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
           {accounts.map(acc => {
             const meta = PROVIDER_META[acc.providerId]
             const live = accountFromSnapshot(acc, snapshot)
-            const identity = live?.email || live?.displayName || acc.name || meta.name
+            const identity = live ? accountIdentityText(live, meta.name) : acc.name || meta.name
             const plan = live?.plan ?? live?.billing?.plan ?? null
             const hex = namedColorHex(acc.color || meta.color)
             const active = acc.id === draft.activeAccountId
@@ -70,7 +71,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                   aria-label={`Set ${acc.name} active`}
                   title={active ? 'Active account (click to clear)' : 'Set active'}
                   onClick={() => setActive(active ? null : acc.id)}
-                  className={`relative inline-flex size-4 shrink-0 items-center justify-center rounded-full border transition ${FOCUS}`}
+                  className={`relative inline-flex size-4 shrink-0 items-center justify-center rounded-full border transition ${FOCUS_RING}`}
                   style={{ borderColor: hex }}
                 >
                   {active && <span className="size-2 rounded-full" style={{ background: hex }} />}
@@ -90,7 +91,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                   <div className="truncate font-mono text-[11px] text-fg-faint">{acc.homeDir}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5">
-                  {pendingDeleteId === acc.id ? <span className="mr-1 text-[10px] text-warning" role="alert">Delete?</span> : null}
+                  {pendingDeleteId === acc.id ? <span className="mr-1 text-[10px] text-critical" role="alert">Delete?</span> : null}
                   {configured && acc.explicitIndex !== undefined ? (
                     <>
                       <IconBtn label="Move up" disabled={acc.explicitIndex === 0} onClick={() => move(acc.explicitIndex!, -1)}><ChevronUp className="size-3.5" /></IconBtn>

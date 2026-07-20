@@ -1,0 +1,5 @@
+# Isolate the marketing site from the repo-root pnpm workspace so
+# `pnpm --prefix site install` resolves its own lockfile under site/ and never
+# touches the root pnpm-lock.yaml or node_modules. `packages: []` makes this
+# directory its own workspace root (pnpm stops walking up at this file).
+packages: []

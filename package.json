@@ -1,24 +1,33 @@
 {
   "name": "tokmon",
-  "version": "0.28.2",
+  "version": "0.28.3",
   "description": "Terminal + web dashboard for Claude Code, Codex, Cursor, Grok, opencode, pi, Copilot, Gemini & more — usage, limits, and costs",
   "type": "module",
   "bin": {
     "tokmon": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "THIRD_PARTY_NOTICES.md",
+    "site/public/fonts/OFL.txt"
   ],
   "scripts": {
     "build": "pnpm run build:cli && pnpm run build:web",
     "build:cli": "tsup",
     "build:web": "pnpm --prefix web run build",
+    "build:desktop": "pnpm --filter @tokmon/desktop run build",
+    "build:site": "pnpm --prefix site run build",
     "typecheck": "tsc --noEmit",
     "test": "node test/run-tests.mjs",
     "check": "pnpm run typecheck && pnpm run test && pnpm --prefix web run check",
+    "check:desktop": "pnpm --filter @tokmon/desktop run check",
+    "check:site": "pnpm --prefix site run check && pnpm --prefix site run test",
     "web:install": "pnpm --prefix web install",
-    "dev": "tsx src/cli.tsx",
-    "dev:web": "pnpm --prefix web run dev"
+    "dev": "node scripts/dev-runner.mjs dev",
+    "dev:web": "node scripts/dev-runner.mjs dev:web",
+    "dev:desktop": "node scripts/dev-runner.mjs dev:desktop",
+    "dev:installed": "node scripts/dev-runner.mjs dev:installed",
+    "dev:site": "pnpm --prefix site run dev"
   },
   "dependencies": {
     "@effect/platform-node": "4.0.0-beta.59",

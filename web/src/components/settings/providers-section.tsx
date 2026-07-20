@@ -1,7 +1,7 @@
 import { PROVIDER_META, PROVIDER_ORDER, type Config, type ProviderId } from '@shared'
 import { namedColorHex } from '../../lib/colors'
 import { Check } from '../icons'
-import { FOCUS } from './use-dialog-trap'
+import { FOCUS_RING } from '../ui/primitives'
 import { Section } from './primitives'
 
 export function ProvidersSection({ draft, patch }: { draft: Config; patch: (fn: (c: Config) => Config) => void }) {
@@ -26,7 +26,7 @@ export function ProvidersSection({ draft, patch }: { draft: Config; patch: (fn: 
               role="switch"
               aria-checked={enabled}
               onClick={() => toggle(pid, !enabled)}
-              className={`flex items-center gap-2.5 rounded border px-3 py-2 text-left text-xs transition ${FOCUS} ${
+              className={`flex items-center gap-2.5 rounded border px-3 py-2 text-left text-xs transition ${FOCUS_RING} ${
                 enabled ? 'border-line-2 bg-bg-2 text-fg' : 'border-line bg-bg-1 text-fg-faint hover:border-line-2'
               }`}
             >

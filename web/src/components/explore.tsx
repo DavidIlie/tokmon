@@ -8,6 +8,7 @@ import {
 import { fmtCost, fmtCount, fmtDayLabel, fmtNum, fmtTokens, sumTokens } from '../lib/format'
 import { modelColor, shortModel } from '../lib/colors'
 import { Panel } from './ui/panel'
+import { FOCUS_RING } from './ui/primitives'
 
 type Meta = { align?: 'right'; hiddenSm?: boolean }
 const col = createColumnHelper<TableRow>()
@@ -24,7 +25,7 @@ function useColumns(dateLabel: string): ColumnDef<TableRow, any>[] {
           type="button"
           aria-expanded={info.row.getIsExpanded()}
           onClick={e => { e.stopPropagation(); info.row.toggleExpanded() }}
-          className="flex items-center gap-1 rounded text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          className={`flex items-center gap-1 rounded text-left ${FOCUS_RING}`}
         >
           <span aria-hidden className={info.row.getIsExpanded() ? 'text-accent' : 'text-fg-faint'}>{info.row.getIsExpanded() ? '▾' : '▸'}</span>
           <span className="text-fg">{fmtDayLabel(info.getValue() as string)}</span>
@@ -84,7 +85,7 @@ export function ExploreTable({ rows, granLabel, q }: { rows: TableRow[]; granLab
                 return (
                   <th key={h.id} scope="col" aria-sort={sorted ? (sorted === 'asc' ? 'ascending' : 'descending') : undefined} className={`py-2 pr-3 font-normal ${meta?.align === 'right' ? 'text-right' : 'text-left'}${meta?.hiddenSm ? ' hidden sm:table-cell' : ''}`}>
                     {h.column.getCanSort() ? (
-                      <button type="button" onClick={h.column.getToggleSortingHandler()} className={`flex w-full items-center gap-1 rounded text-fg-faint transition hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${meta?.align === 'right' ? 'justify-end' : ''}`}>
+                      <button type="button" onClick={h.column.getToggleSortingHandler()} className={`flex w-full items-center gap-1 rounded text-fg-faint transition hover:text-fg ${FOCUS_RING} ${meta?.align === 'right' ? 'justify-end' : ''}`}>
                         {flexRender(h.column.columnDef.header, h.getContext())}
                         {sorted && <span className="text-accent">{sorted === 'asc' ? '▲' : '▼'}</span>}
                       </button>

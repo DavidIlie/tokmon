@@ -14,6 +14,11 @@ export function isDevMode(): boolean {
   const forced = process.env.TOKMON_WEB_MODE
   if (forced === 'dev') return true
   if (forced === 'prod') return false
+  // Source-path detection is useful for an actual `pnpm dev` process, but it
+  // also fires inside Node's isolated test workers. Starting Vite there leaves
+  // its optimizer service attached after the daemon has stopped and prevents
+  // the worker from settling. Tests can still opt into HMR explicitly.
+  if (process.env.NODE_TEST_CONTEXT) return false
   return import.meta.url.includes('/src/')
 }
 

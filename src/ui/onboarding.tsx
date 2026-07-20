@@ -1,6 +1,7 @@
 import { Box, Text } from 'ink'
 import { ClickableBox } from './shared'
 import { glyphs } from '../glyphs'
+import { useTuiTheme } from './theme'
 
 export interface OnboardItem {
   id: string
@@ -18,12 +19,13 @@ export function Onboarding({ items, cursor, onToggle, onConfirm, heading = 'Welc
   heading?: string
   subheading?: string
 }) {
+  const theme = useTuiTheme()
   const anyEnabled = items.some(it => it.enabled)
   const startIdx = items.length
   return (
     <Box flexDirection="column" marginTop={1}>
       <Box>
-        <Text bold color="greenBright">{heading}</Text>
+        <Text bold color={theme.accent}>{heading}</Text>
       </Box>
       <Text dimColor>{subheading}</Text>
       <Box height={1} />
@@ -33,16 +35,16 @@ export function Onboarding({ items, cursor, onToggle, onConfirm, heading = 'Welc
         const box = it.enabled ? `[${glyphs().check}]` : '[ ]'
         return (
           <ClickableBox key={it.id} onClick={() => onToggle(i)}>
-            <Text color={selected ? 'green' : undefined}>{selected ? glyphs().caretR : ' '} </Text>
+            <Text color={selected ? theme.accent : undefined}>{selected ? glyphs().caretR : ' '} </Text>
             <Text bold={it.enabled} color={it.enabled ? it.color : undefined} dimColor={!it.enabled}>{box}</Text>
             <Text color={it.color}> {glyphs().dot} </Text>
             <Box width={13} flexShrink={0}>
               <Text bold={selected} dimColor={!it.detected && !it.enabled} wrap="truncate">{it.name}</Text>
             </Box>
             {it.detected
-              ? <Text color="green" dimColor>installed</Text>
+              ? <Text color={theme.ok} dimColor>installed</Text>
               : it.enabled
-                ? <Text color="yellow" dimColor>manual</Text>
+                ? <Text color={theme.warn} dimColor>manual</Text>
                 : <Text dimColor>not found</Text>}
           </ClickableBox>
         )
@@ -50,8 +52,8 @@ export function Onboarding({ items, cursor, onToggle, onConfirm, heading = 'Welc
 
       <Box height={1} />
       <ClickableBox onClick={onConfirm}>
-        <Text color={cursor === startIdx ? 'green' : undefined}>{cursor === startIdx ? glyphs().caretR : ' '} </Text>
-        <Text bold color={anyEnabled ? 'greenBright' : undefined} dimColor={!anyEnabled}>
+        <Text color={cursor === startIdx ? theme.accent : undefined}>{cursor === startIdx ? glyphs().caretR : ' '} </Text>
+        <Text bold color={anyEnabled ? theme.accent : undefined} dimColor={!anyEnabled}>
           {anyEnabled ? `${glyphs().play} Start tokmon` : `${glyphs().play} Start (nothing selected)`}
         </Text>
       </ClickableBox>

@@ -1,6 +1,7 @@
 // Node-free module: no node:fs/os/path imports (required for Vite SPA build compatibility).
 
 import { PROVIDER_IDS, type ProviderId } from './providers/types'
+import { DEFAULT_APPEARANCE, repairAppearance, type AppearanceConfig } from './theme'
 
 export { PROVIDER_IDS } from './providers/types'
 
@@ -10,6 +11,92 @@ export interface Account {
   name: string
   homeDir: string
   color?: string
+}
+
+export interface TrayConfig {
+  enabled: boolean
+  showMenuBarText: boolean
+  displayMetric: 'smartHeadroom' | 'tightestRemaining'
+  pollIntervalSec: number
+  activeTimeoutMin: number
+  /** @deprecated Inert since the activity-promotion engine was removed; retained for compat. */
+  graceMin: number
+  /** @deprecated Inert since the activity-promotion engine was removed; retained for compat. */
+  promotionHoldMin: number
+  lowWatermarkPct: number
+  criticalWatermarkPct: number
+  /** @deprecated Superseded by `pinnedProviders`; migrated at read time. Retained for older daemons. */
+  pinnedAccount: string | null
+  /** @deprecated Account-scoped pins; migrated to `pinnedProviders` (account→provider) at read time. */
+  pins: string[]
+  /** Menu-bar pins: provider ids, max 2, order = menu-bar order. The source of truth. */
+  pinnedProviders: string[]
+  launchAtLogin: boolean
+  theme: 'dark'
+}
+
+/** Desktop-only preferences the tray/popover persists via the daemon config (CAS). */
+export interface DesktopConfig {
+  /** Provider ids whose popover card is expanded; multi-open, order-insensitive. */
+  expandedProviders: string[]
+}
+
+/** Clamp/dedupe/trim persisted pins to the invariant (≤2 non-empty, unique) shape. */
+export function normalizePins(raw: unknown, legacy?: string | null): string[] {
+  const source = Array.isArray(raw)
+    ? raw
+    : legacy && typeof legacy === 'string' && legacy.trim() ? [legacy] : []
+  return normalizeStringIdList(source, 2)
+}
+
+/** Dedupe/trim an id list to the invariant (non-empty strings, unique, ≤max) shape. */
+export function normalizeStringIdList(raw: unknown, max: number): string[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const value of raw) {
+    if (typeof value !== 'string') continue
+    const id = value.trim()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+    if (out.length >= max) break
+  }
+  return out
+}
+
+export const MAX_PINNED_PROVIDERS = 2
+
+/** Keep only selectable provider ids, preserving first-seen order. */
+export function cleanProviderSelection(
+  values: readonly string[],
+  knownProviderIds: ReadonlySet<string>,
+  max = Number.POSITIVE_INFINITY,
+): string[] {
+  return normalizeStringIdList(values.filter(value => knownProviderIds.has(value)), max)
+}
+
+/** Toggle one provider while enforcing membership, uniqueness, order, and cap. */
+export function toggleProviderSelection(
+  values: readonly string[],
+  providerId: string,
+  knownProviderIds: ReadonlySet<string>,
+  max = Number.POSITIVE_INFINITY,
+): string[] {
+  const current = cleanProviderSelection(values, knownProviderIds, max)
+  if (current.includes(providerId)) return current.filter(id => id !== providerId)
+  if (!knownProviderIds.has(providerId) || current.length >= max) return current
+  return [...current, providerId]
+}
+
+/** Move one selected provider without changing membership. */
+export function moveProviderSelection(values: readonly string[], providerId: string, direction: -1 | 1): string[] {
+  const next = [...values]
+  const index = next.indexOf(providerId)
+  const target = index + direction
+  if (index < 0 || target < 0 || target >= next.length) return next
+  ;[next[index], next[target]] = [next[target]!, next[index]!]
+  return next
 }
 
 export interface Config {
@@ -34,6 +121,10 @@ export interface Config {
   allowedHosts: string[]
   resetDisplay: 'relative' | 'absolute'
   knownProviders: ProviderId[]
+  /** Shared graphical and terminal appearance, persisted atomically by the daemon. */
+  appearance: AppearanceConfig
+  tray: TrayConfig
+  desktop: DesktopConfig
 }
 
 export interface ConfigRepair {
@@ -63,6 +154,30 @@ export interface TrackedAccountCandidate {
   color?: string | null
 }
 
+export const DEFAULT_TRAY_CONFIG: TrayConfig = {
+  enabled: true,
+  showMenuBarText: true,
+  displayMetric: 'smartHeadroom',
+  pollIntervalSec: 30,
+  activeTimeoutMin: 10,
+  graceMin: 30,
+  promotionHoldMin: 5,
+  lowWatermarkPct: 20,
+  criticalWatermarkPct: 5,
+  pinnedAccount: null,
+  pins: [],
+  pinnedProviders: [],
+  launchAtLogin: false,
+  theme: 'dark',
+}
+
+/** Bound the persisted expansion set to the known provider count with room to spare. */
+const MAX_EXPANDED_PROVIDERS = 32
+
+export const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
+  expandedProviders: [],
+}
+
 export const DEFAULTS: Config = {
   revision: 0,
   interval: 2,
@@ -82,6 +197,9 @@ export const DEFAULTS: Config = {
   allowedHosts: [],
   resetDisplay: 'relative',
   knownProviders: [],
+  appearance: { ...DEFAULT_APPEARANCE },
+  tray: { ...DEFAULT_TRAY_CONFIG },
+  desktop: { ...DEFAULT_DESKTOP_CONFIG },
 }
 
 const LEGACY_KNOWN: ProviderId[] = ['claude', 'codex', 'cursor']
@@ -195,6 +313,10 @@ export function clampNum(v: unknown, fallback: number, min: number): number {
   return typeof v === 'number' && Number.isFinite(v) && v >= min ? v : fallback
 }
 
+function finiteInRange(v: unknown, fallback: number, min: number, max: number): number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : fallback
+}
+
 export function isValidTimezone(tz: string): boolean {
   try {
     new Intl.DateTimeFormat('en-CA', { timeZone: tz })
@@ -301,6 +423,55 @@ export function repairConfig(input: unknown): ConfigRepair {
     reasons.push('allowedHosts contained invalid or duplicate hostnames')
   }
 
+  const appearanceRepair = repairAppearance(parsed.appearance)
+  if (parsed.appearance !== undefined && appearanceRepair.repaired) {
+    reasons.push(...appearanceRepair.reasons)
+  }
+
+  const rawTray = isRecord(parsed.tray) ? parsed.tray : {}
+  if (parsed.tray !== undefined && !isRecord(parsed.tray)) reasons.push('tray was not an object')
+  const tray: TrayConfig = {
+    enabled: typeof rawTray.enabled === 'boolean' ? rawTray.enabled : DEFAULT_TRAY_CONFIG.enabled,
+    showMenuBarText: typeof rawTray.showMenuBarText === 'boolean'
+      ? rawTray.showMenuBarText
+      : DEFAULT_TRAY_CONFIG.showMenuBarText,
+    displayMetric: rawTray.displayMetric === 'tightestRemaining' || rawTray.displayMetric === 'smartHeadroom'
+      ? rawTray.displayMetric
+      : DEFAULT_TRAY_CONFIG.displayMetric,
+    pollIntervalSec: finiteInRange(rawTray.pollIntervalSec, DEFAULT_TRAY_CONFIG.pollIntervalSec, 1, 86_400),
+    activeTimeoutMin: finiteInRange(rawTray.activeTimeoutMin, DEFAULT_TRAY_CONFIG.activeTimeoutMin, 1, 1_440),
+    graceMin: finiteInRange(rawTray.graceMin, DEFAULT_TRAY_CONFIG.graceMin, 1, 10_080),
+    promotionHoldMin: finiteInRange(rawTray.promotionHoldMin, DEFAULT_TRAY_CONFIG.promotionHoldMin, 0, 1_440),
+    lowWatermarkPct: finiteInRange(rawTray.lowWatermarkPct, DEFAULT_TRAY_CONFIG.lowWatermarkPct, 0, 100),
+    criticalWatermarkPct: finiteInRange(rawTray.criticalWatermarkPct, DEFAULT_TRAY_CONFIG.criticalWatermarkPct, 0, 100),
+    pinnedAccount: typeof rawTray.pinnedAccount === 'string' && rawTray.pinnedAccount.trim()
+      ? rawTray.pinnedAccount.trim()
+      : null,
+    pins: normalizePins(rawTray.pins, typeof rawTray.pinnedAccount === 'string' ? rawTray.pinnedAccount : null),
+    // Provider-scoped pins are the source of truth. The account→provider migration
+    // needs the live snapshot, so it happens in the renderer; here we only enforce
+    // the persisted invariant (unique non-empty strings, ≤2, order preserved).
+    pinnedProviders: normalizeStringIdList(rawTray.pinnedProviders, MAX_PINNED_PROVIDERS),
+    launchAtLogin: typeof rawTray.launchAtLogin === 'boolean'
+      ? rawTray.launchAtLogin
+      : DEFAULT_TRAY_CONFIG.launchAtLogin,
+    theme: rawTray.theme === 'dark' ? rawTray.theme : DEFAULT_TRAY_CONFIG.theme,
+  }
+  if (tray.graceMin < tray.activeTimeoutMin) {
+    tray.graceMin = Math.max(DEFAULT_TRAY_CONFIG.graceMin, tray.activeTimeoutMin)
+  }
+  if (tray.criticalWatermarkPct > tray.lowWatermarkPct) {
+    tray.criticalWatermarkPct = Math.min(DEFAULT_TRAY_CONFIG.criticalWatermarkPct, tray.lowWatermarkPct)
+  }
+  if (parsed.tray !== undefined && !sameJson(parsed.tray, tray)) reasons.push('tray contained invalid settings')
+
+  const rawDesktop = isRecord(parsed.desktop) ? parsed.desktop : {}
+  if (parsed.desktop !== undefined && !isRecord(parsed.desktop)) reasons.push('desktop was not an object')
+  const desktop: DesktopConfig = {
+    expandedProviders: normalizeStringIdList(rawDesktop.expandedProviders, MAX_EXPANDED_PROVIDERS),
+  }
+  if (parsed.desktop !== undefined && !sameJson(parsed.desktop, desktop)) reasons.push('desktop contained invalid settings')
+
   const activeAccountId = typeof parsed.activeAccountId === 'string' && (accountIds.has(parsed.activeAccountId) || PROVIDER_IDS.includes(parsed.activeAccountId as ProviderId))
     ? parsed.activeAccountId
     : null
@@ -339,6 +510,9 @@ export function repairConfig(input: unknown): ConfigRepair {
     allowedHosts,
     resetDisplay: parsed.resetDisplay === 'absolute' ? 'absolute' : 'relative',
     knownProviders,
+    appearance: appearanceRepair.appearance,
+    tray,
+    desktop,
   }
 
   for (const key of Object.keys(DEFAULTS) as (keyof Config)[]) {
@@ -352,7 +526,7 @@ export function normalizeConfig(parsed: unknown): Config {
   try {
     return repairConfig(parsed).config
   } catch {
-    return { ...DEFAULTS }
+    return { ...DEFAULTS, appearance: { ...DEFAULT_APPEARANCE }, tray: { ...DEFAULT_TRAY_CONFIG } }
   }
 }
 

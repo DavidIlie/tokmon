@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react'
 
-export const FOCUS = 'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent'
 export const FOCUSABLE = 'button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'
 
 export function useDialogTrap(
@@ -16,15 +15,30 @@ export function useDialogTrap(
 
   useEffect(() => {
     if (!active) return
-    const prev = document.activeElement as HTMLElement | null
     const panel = panelRef.current
+    const opener = document.activeElement as HTMLElement | null
     const firstFocusable = panel?.querySelector<HTMLElement>(FOCUSABLE)
     ;(initialFocusRef?.current ?? firstFocusable ?? panel)?.focus?.()
 
+    // Track the most recent focus target *inside* this panel. When the dialog
+    // unmounts we restore focus to the opener; if the opener is gone we fall
+    // back to this last-inside node rather than the first focusable control
+    // (which is often a destructive ✕ close button).
+    let lastInside: HTMLElement | null = document.activeElement as HTMLElement | null
+    const onFocusIn = (e: FocusEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && panelRef.current?.contains(target)) lastInside = target
+    }
+    document.addEventListener('focusin', onFocusIn)
+
     const onKey = (e: KeyboardEvent) => {
+      const p = panelRef.current
+      // While a nested dialog is open the background panel is marked `inert`;
+      // its trap must ignore keys so only the top-most dialog handles Esc/Tab.
+      if (!p || p.hasAttribute('inert')) return
       if (e.key === 'Escape') { e.stopPropagation(); escapeRef.current(); return }
-      if (e.key !== 'Tab' || !panelRef.current) return
-      const f = panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)
+      if (e.key !== 'Tab') return
+      const f = p.querySelectorAll<HTMLElement>(FOCUSABLE)
       const vis = Array.from(f).filter(el => el.offsetParent !== null || el === document.activeElement)
       if (vis.length === 0) return
       const first = vis[0], last = vis[vis.length - 1]
@@ -32,6 +46,11 @@ export function useDialogTrap(
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
     }
     document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('keydown', onKey); prev?.focus?.() }
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('focusin', onFocusIn)
+      const restore = opener && opener.isConnected ? opener : lastInside
+      restore?.focus?.()
+    }
   }, [active, initialFocusRef, panelRef])
 }

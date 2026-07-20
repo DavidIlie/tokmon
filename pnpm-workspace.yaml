@@ -1,5 +1,6 @@
 packages:
   - .
+  - src/desktop
 
 overrides:
   ws: 8.21.0
@@ -9,5 +10,6 @@ allowBuilds:
   msgpackr-extract: true
 
 onlyBuiltDependencies:
+  - electron
   - esbuild
   - msgpackr-extract

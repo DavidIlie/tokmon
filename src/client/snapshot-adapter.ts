@@ -14,6 +14,7 @@ export function toStatsMap(
   accounts: Account[],
 ): Map<string, AccountStats> {
   const byId = indexById(snapshot)
+  const providerHeadroom = new Map(snapshot?.providers.map(provider => [provider.id, provider.headroom] as const) ?? [])
   const out = new Map<string, AccountStats>()
   for (const account of accounts) {
     const wa = byId.get(account.id)
@@ -22,6 +23,10 @@ export function toStatsMap(
       dashboard: wa?.dashboard ?? null,
       billing: wa?.billing ?? null,
       billingUpdatedAt: wa?.billingUpdatedAt ?? null,
+      identity: wa?.identity,
+      quotas: wa?.quotas,
+      headroom: wa?.headroom,
+      providerHeadroom: providerHeadroom.get(account.providerId),
     })
   }
   return out

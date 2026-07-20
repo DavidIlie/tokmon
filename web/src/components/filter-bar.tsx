@@ -4,6 +4,8 @@ import { shortModel } from '../lib/colors'
 import { X } from './icons'
 import { PrivacyLabel, privacyText } from './privacy-label'
 import { Dropdown, Menu, MenuItem, Segmented } from './ui/controls'
+import { FOCUS_RING } from './ui/primitives'
+import { scopedAccountIdentityText } from '../lib/account-identity'
 
 export function FilterBar({ snapshot, derived, filters, setFilters, privacyMode = true }: {
   snapshot: WebSnapshot | null
@@ -25,8 +27,8 @@ export function FilterBar({ snapshot, derived, filters, setFilters, privacyMode 
     : usageAccounts
 
   const provName = (id: string) => providers.find(p => p.id === id)?.name ?? id
-  const acctLabel = (a: { providerId: string; name: string }) =>
-    a.name && a.name !== provName(a.providerId) ? `${provName(a.providerId)} · ${a.name}` : provName(a.providerId)
+  const acctLabel = (account: (typeof accounts)[number]) =>
+    scopedAccountIdentityText(account, provName(account.providerId))
   const selectedAccount = usageAccounts.find(a => a.id === filters.account)
 
   const handleToggleProvider = (id: string) => setFilters(f => {
@@ -51,7 +53,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters, privacyMode 
                 type="button"
                 aria-pressed={on}
                 onClick={() => handleToggleProvider(p.id)}
-                className="flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent max-sm:py-1.5"
+                className={`flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs transition max-sm:py-1.5 ${FOCUS_RING}`}
                 style={{
                   borderColor: on ? p.color : 'var(--color-line)',
                   color: dim ? 'var(--color-fg-faint)' : on ? p.color : 'var(--color-fg-dim)',
@@ -137,7 +139,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters, privacyMode 
           <div className="flex shrink-0 items-center gap-1.5">
             <span className="text-xs text-fg-faint">range:</span>
             <Segmented
-              options={PERIODS.map(p => ({ value: p.key, label: p.key === 'mtd' ? 'MTD' : p.key === 'all' ? '6M' : p.key }))}
+              options={PERIODS.map(p => ({ value: p.key, label: p.shortLabel }))}
               value={filters.period}
               onChange={period => setFilters(f => ({ ...f, period }))}
               size="sm"
@@ -149,7 +151,7 @@ export function FilterBar({ snapshot, derived, filters, setFilters, privacyMode 
             <button
               type="button"
               onClick={() => setFilters(f => ({ ...f, providers: [], models: [], account: 'all' }))}
-              className="flex items-center gap-1 rounded border border-line bg-bg-1 px-2 py-1 text-xs text-fg-faint transition hover:border-warning/60 hover:text-warning focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              className={`flex items-center gap-1 rounded border border-line bg-bg-1 px-2 py-1 text-xs text-fg-faint transition hover:border-line-2 hover:text-fg ${FOCUS_RING}`}
               title="Clear provider, model & account filters"
               aria-label="Clear provider, model and account filters"
             >

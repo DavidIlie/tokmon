@@ -5,7 +5,7 @@ import { dirname, join, relative } from 'node:path'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import type { UsageSummary, TableRow, ModelDetail, DashboardData, TableData } from '../types'
-import { dayKey, monthKey, weekKey, startOfDay, startOfMonth, startOfWeek, monthsAgoStart } from '../tz'
+import { dayKey, monthKey, weekKey, startOfDay, startOfMonth, startOfWeek } from '../tz'
 import { cacheDir } from '../config'
 import { finitePositive, safeNum } from './_shared/metric'
 import { UsageShardStore, type UsageCacheFingerprint } from './storage/usage-shard-store'
@@ -29,7 +29,8 @@ export interface Entry {
   cacheSavings: number
 }
 
-// tableSince keeps 6 calendar months; month-start alignment can reach ~214 days.
+// Cache eviction only affects derived shards. Source logs remain authoritative
+// and are reparsed when an old shard is absent.
 const PRUNE_AGE_MS = 230 * DAY_MS
 type Shard = { mods: string[]; rows: (number | string)[][] }
 const stores = new Map<string, UsageShardStore<Entry>>()
@@ -224,8 +225,8 @@ export function dashboardSince(tz: string): number {
   return Math.min(startOfMonth(now, tz), startOfWeek(now, tz), now - SPARK_DAYS * DAY_MS)
 }
 
-export function tableSince(tz: string): number {
-  return monthsAgoStart(Date.now(), 6, tz)
+export function tableSince(_tz: string): number {
+  return 0
 }
 
 function cleanEntry(e: Entry): Entry {
@@ -264,6 +265,7 @@ export function summarize(entries: Entry[], tz: string): DashboardData {
   const byDay = new Map<string, number>()
   let oldestToday = now
   let hadToday = false
+  let lastActivityAt: number | null = null
 
   const add = (s: UsageSummary, e: Entry) => {
     s.cost += e.cost
@@ -274,6 +276,9 @@ export function summarize(entries: Entry[], tz: string): DashboardData {
   }
   for (const raw of entries) {
     const e = cleanEntry(raw)
+    if (e.ts > 0 && (lastActivityAt === null || e.ts > lastActivityAt)) {
+      lastActivityAt = Math.floor(e.ts)
+    }
     if (e.ts >= monthStart) add(month, e)
     if (e.ts >= weekStart) add(week, e)
     if (e.ts >= todayStart) { add(today, e); hadToday = true; if (e.ts < oldestToday) oldestToday = e.ts }
@@ -287,7 +292,7 @@ export function summarize(entries: Entry[], tz: string): DashboardData {
 
   const series = lastDayKeys(now, tz, SPARK_DAYS).map(k => byDay.get(k) ?? 0)
 
-  return { today, week, month, burnRate, series }
+  return { today, week, month, burnRate, series, lastActivityAt }
 }
 
 function groupBy(entries: Entry[], keyFn: (e: Entry) => string): TableRow[] {

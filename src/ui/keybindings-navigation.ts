@@ -37,7 +37,11 @@ export function handleNavigation(input: string, key: InputKey, ctx: KeyContext):
     if (key.upArrow || key.downArrow || key.pageUp || key.pageDown || input === 'G' || input === 'g') return
   }
   if (table.tab !== 1) {
-    if (key.leftArrow || key.rightArrow) { global.setTab(current => (current + 1) % TABS.length); resetView() }
+    if (key.leftArrow || key.rightArrow) {
+      const step = key.leftArrow ? -1 : 1
+      global.setTab(current => (current + step + TABS.length) % TABS.length)
+      resetView()
+    }
     return
   }
 

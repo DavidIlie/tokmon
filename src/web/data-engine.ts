@@ -125,7 +125,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     version, tz, intervalMs: summaryIntervalMs,
     billingIntervalMs, resolved, usage, billing,
     summaryState, billingState, tableState,
-    summaryUpdatedAt, billingUpdatedAt, tableUpdatedAt, seeded, peak,
+    summaryUpdatedAt, billingUpdatedAt, tableUpdatedAt, seeded, peak, config: currentConfig,
   })
 
   const hydrateFromCache = () => {
@@ -134,7 +134,17 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       if (!cached || !Array.isArray(cached.accounts)) return
       for (const a of cached.accounts) {
         if (a.dashboard || a.table) {
-          usage.set(a.id, { dashboard: a.dashboard, table: a.table })
+          const dashboard = a.dashboard
+            ? {
+                ...a.dashboard,
+                lastActivityAt: typeof a.dashboard.lastActivityAt === 'number'
+                  && Number.isSafeInteger(a.dashboard.lastActivityAt)
+                  && a.dashboard.lastActivityAt >= 0
+                  ? a.dashboard.lastActivityAt
+                  : null,
+              }
+            : null
+          usage.set(a.id, { dashboard, table: a.table })
           if (a.dashboard) {
             summaryState.set(a.id, 'ready')
             if (typeof a.summaryUpdatedAt === 'number') summaryUpdatedAt.set(a.id, a.summaryUpdatedAt)
@@ -388,6 +398,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     broadcastConfig(config) {
       if (stopped) return
       currentConfig = config
+      rebuild()
       for (const onConfig of configSubscribers) {
         try { onConfig(config) } catch {}
       }

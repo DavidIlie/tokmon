@@ -3,7 +3,7 @@ import type { CalendarDay, Derived } from '../../lib/derive'
 import { fmtCost, fmtDayLabel, fmtNum, fmtTokens } from '../../lib/format'
 import { modelColor, shortModel } from '../../lib/colors'
 import { Panel } from '../ui/panel'
-import { StatBlock } from '../ui/primitives'
+import { FOCUS_RING, StatBlock } from '../ui/primitives'
 import { dowMonday, parseDay as parseDate } from '../../lib/date'
 import { buildCalendarGrid, buildCalendarStats, heatFill, WEEKDAYS } from '../../lib/calendar.logic'
 
@@ -50,7 +50,7 @@ export function CalendarHeatmap({ derived, maxWeeks = 26, periodLabel }: { deriv
                           type="button"
                           aria-label={`${fmtDayLabel(cell.date)} — click to pin`}
                           aria-pressed={pinned?.date === cell.date}
-                          className={`aspect-square block rounded-[3px] p-0 transition duration-150 hover:scale-[1.18] hover:ring-1 hover:ring-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${pinned?.date === cell.date ? 'ring-1 ring-fg-bright' : ''}`}
+                          className={`aspect-square block rounded-[3px] p-0 transition duration-150 hover:scale-[1.18] hover:ring-1 hover:ring-accent ${FOCUS_RING} ${pinned?.date === cell.date ? 'ring-1 ring-fg-bright' : ''}`}
                           style={{ background: heatFill(cell.level) }}
                           onMouseEnter={() => setHover(detail.get(cell.date) ?? null)}
                           onFocus={() => setHover(detail.get(cell.date) ?? null)}

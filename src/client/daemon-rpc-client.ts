@@ -1,16 +1,20 @@
-import { Cause, Context, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Schedule, Stream } from 'effect'
+import { Cause, Context, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Schedule, Schema, Stream } from 'effect'
 import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
-import type { RpcClientError } from 'effect/unstable/rpc/RpcClientError'
+import { RpcClientError } from 'effect/unstable/rpc/RpcClientError'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import * as Socket from 'effect/unstable/socket/Socket'
+import { normalizeConfig } from '../config-schema'
 import type { WebSnapshot } from '../web/contract'
 import {
+  ConfigStateSchema,
+  ConfigUpdateConflictFailure,
   TOKMON_WS_METHODS,
   TOKMON_WS_PATH,
   TokmonRpcGroup,
-  type FsListing,
+  WebSnapshotSchema,
   type ConfigState,
   type ConfigUpdateRequest,
+  type FsListing,
   type RefreshScope,
 } from '../rpc/contract'
 
@@ -18,10 +22,13 @@ export type RpcConnState = 'connecting' | 'live' | 'reconnecting' | 'error' | 'c
 
 export interface DaemonRpcClientOptions {
   readonly transport?: 'auto' | 'node' | 'browser'
+  /** Maximum supervisor retries after the initial connection attempt. */
   readonly reconnectAttempts?: number
   readonly reconnectBaseDelayMs?: number
+  readonly requestTimeoutMs?: number
   readonly snapshotStaleFloorMs?: number
   readonly onConn?: (state: RpcConnState, error?: unknown) => void
+  readonly onSubscriberError?: (error: unknown) => void
 }
 
 export interface DaemonRpcClient {
@@ -34,9 +41,26 @@ export interface DaemonRpcClient {
   close(): Promise<void>
 }
 
+export class DaemonRpcConnectionError extends Error {
+  constructor(message = 'daemon RPC connection closed') {
+    super(message)
+    this.name = 'DaemonRpcConnectionError'
+  }
+}
+
+export class DaemonRpcRequestTimeoutError extends Error {
+  constructor(readonly method: string, readonly timeoutMs: number) {
+    super(`${method} timed out after ${timeoutMs}ms`)
+    this.name = 'DaemonRpcRequestTimeoutError'
+  }
+}
+
 type NodeSocketModule = typeof import('@effect/platform-node/NodeSocket')
 type TokmonRpcs = RpcGroup.Rpcs<typeof TokmonRpcGroup>
 type TokmonClient = RpcClient.RpcClient<TokmonRpcs, RpcClientError>
+type WireConfigState = typeof ConfigStateSchema.Type
+type WireSnapshot = typeof WebSnapshotSchema.Type
+type WireTable = NonNullable<WireSnapshot['accounts'][number]['table']>
 
 class TokmonRpcClient extends Context.Service<TokmonRpcClient, TokmonClient>()(
   'tokmon/client/DaemonRpcClient/TokmonRpcClient',
@@ -46,9 +70,42 @@ type TokmonRuntime = ManagedRuntime.ManagedRuntime<TokmonRpcClient, never>
 
 interface Session {
   readonly runtime: TokmonRuntime
+  readonly disconnected: Promise<DaemonRpcConnectionError>
+  invalidated: boolean
+}
+
+interface Signal<A> {
+  readonly promise: Promise<A>
+  readonly resolve: (value: A) => void
+}
+
+interface Subscription<A> {
+  readonly streamFor: (client: TokmonClient) => Stream.Stream<A, unknown>
+  readonly onValue: (value: A) => void
+  readonly staleAfterFor?: (value: A) => number
+  active: boolean
+  fiber: Fiber.Fiber<unknown, unknown> | null
+  owner: Session | null
+  watchdogTimer: ReturnType<typeof setInterval> | null
+  lastValueAt: number
+  staleAfterMs: number
 }
 
 const dynamicImport = new Function('specifier', 'return import(specifier)') as <T>(specifier: string) => Promise<T>
+
+function makeSignal<A>(): Signal<A> {
+  let settled = false
+  let resolvePromise!: (value: A) => void
+  const promise = new Promise<A>((resolve) => { resolvePromise = resolve })
+  return {
+    promise,
+    resolve: (value) => {
+      if (settled) return
+      settled = true
+      resolvePromise(value)
+    },
+  }
+}
 
 function toWsUrl(baseUrl: string): string {
   const base = typeof window === 'undefined' ? undefined : window.location.origin
@@ -58,7 +115,6 @@ function toWsUrl(baseUrl: string): string {
   if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
     throw new Error(`unsupported daemon RPC protocol: ${url.protocol}`)
   }
-  // Strip authentication parameters emitted by older dashboard releases.
   url.hash = ''
   url.searchParams.delete('tokmonToken')
   url.searchParams.delete('wsToken')
@@ -75,66 +131,226 @@ function shouldUseNodeTransport(transport: DaemonRpcClientOptions['transport']):
 async function socketLayerFor(
   url: string,
   transport: DaemonRpcClientOptions['transport'],
+  openTimeoutMs: number,
 ): Promise<Layer.Layer<Socket.Socket>> {
+  const socketOptions = { openTimeout: Duration.millis(openTimeoutMs) }
   if (shouldUseNodeTransport(transport)) {
     const NodeSocket = await dynamicImport<NodeSocketModule>('@effect/platform-node/NodeSocket')
-    return NodeSocket.layerWebSocket(url)
+    return NodeSocket.layerWebSocket(url, socketOptions)
   }
-  return Socket.layerWebSocket(url).pipe(
+  return Socket.layerWebSocket(url, socketOptions).pipe(
     Layer.provide(Socket.layerWebSocketConstructorGlobal),
   )
 }
 
-function retryPolicy(options: DaemonRpcClientOptions) {
-  const baseDelay = options.reconnectBaseDelayMs ?? 250
-  const policy = Schedule.exponential(Duration.millis(baseDelay), 1.5).pipe(
-    Schedule.either(Schedule.spaced(Duration.millis(2_500))),
-  )
-  return typeof options.reconnectAttempts === 'number'
-    ? policy.pipe(Schedule.both(Schedule.recurs(options.reconnectAttempts)))
-    : policy
+function normalizeConfigState(state: WireConfigState): ConfigState {
+  return {
+    protocol: {
+      version: state.protocol.version,
+      capabilities: [...state.protocol.capabilities],
+    },
+    config: normalizeConfig(state.config),
+  }
+}
+
+function normalizeSnapshot(snapshot: WireSnapshot): WebSnapshot {
+  const copyHeadroom = (headroom: WireSnapshot['providers'][number]['headroom']) => headroom
+    ? {
+        ...headroom,
+        activeAccountIds: [...headroom.activeAccountIds],
+        factors: headroom.factors.map(factor => ({ ...factor })),
+      }
+    : undefined
+  const copyRows = (rows: WireTable['daily']) => rows.map(row => ({
+      ...row,
+      models: [...row.models],
+      breakdown: row.breakdown.map(detail => ({ ...detail })),
+    }))
+
+  return {
+    ...snapshot,
+    providers: snapshot.providers.map(provider => ({
+      ...provider,
+      headroom: copyHeadroom(provider.headroom),
+    })),
+    accounts: snapshot.accounts.map(account => ({
+      ...account,
+      identity: account.identity ? { ...account.identity } : undefined,
+      quotas: account.quotas?.map(quota => ({ ...quota })),
+      headroom: copyHeadroom(account.headroom),
+      dashboard: account.dashboard
+        ? {
+            ...account.dashboard,
+            today: { ...account.dashboard.today },
+            week: { ...account.dashboard.week },
+            month: { ...account.dashboard.month },
+            series: [...account.dashboard.series],
+          }
+        : null,
+      table: account.table
+        ? {
+            daily: copyRows(account.table.daily),
+            weekly: copyRows(account.table.weekly),
+            monthly: copyRows(account.table.monthly),
+          }
+        : null,
+      billing: account.billing
+        ? {
+            ...account.billing,
+            metrics: account.billing.metrics.map(metric => ({
+              ...metric,
+              format: { ...metric.format },
+            })),
+            activity: account.billing.activity
+              ? { ...account.billing.activity, series: [...account.billing.activity.series] }
+              : account.billing.activity,
+            modelSpend: account.billing.modelSpend == null
+              ? account.billing.modelSpend
+              : account.billing.modelSpend.map(spend => ({ ...spend })),
+          }
+        : null,
+      summaryUpdatedAt: account.summaryUpdatedAt ?? null,
+      billingUpdatedAt: account.billingUpdatedAt ?? null,
+      tableUpdatedAt: account.tableUpdatedAt ?? null,
+    })),
+    peak: snapshot.peak ? { ...snapshot.peak } : null,
+  }
+}
+
+function normalizeRequestFailure(error: unknown): unknown {
+  if (!error || typeof error !== 'object' || (error as { kind?: unknown }).kind !== 'conflict') return error
+  const state = (error as { state?: WireConfigState }).state
+  if (!state) return error
+  const normalized = normalizeConfigState(state)
+  if (error instanceof ConfigUpdateConflictFailure) {
+    return new ConfigUpdateConflictFailure({ kind: 'conflict', state: normalized })
+  }
+  return { ...error, state: normalized }
+}
+
+function isSessionFailure(error: unknown): boolean {
+  return error instanceof RpcClientError || Schema.isSchemaError(error)
+}
+
+async function waitForReady(
+  ready: Signal<void>,
+  disconnected: Signal<DaemonRpcConnectionError>,
+  timeoutMs: number,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  try {
+    await Promise.race([
+      ready.promise,
+      disconnected.promise.then(error => Promise.reject(error)),
+      new Promise<void>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new DaemonRpcConnectionError(`daemon RPC connection timed out after ${timeoutMs}ms`)), timeoutMs)
+        timer.unref?.()
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientOptions = {}): DaemonRpcClient {
   const url = toWsUrl(baseUrl)
-  const fibers = new Set<Fiber.Fiber<unknown, unknown>>()
+  const requestTimeoutMs = Math.max(1, options.requestTimeoutMs ?? 30_000)
+  const reconnectBaseDelayMs = Math.max(1, options.reconnectBaseDelayMs ?? 250)
+  const subscriptions = new Set<Subscription<unknown>>()
   let session: Session | null = null
   let sessionPromise: Promise<Session> | null = null
+  let pendingRuntime: TokmonRuntime | null = null
+  let supervisorPromise: Promise<void> | null = null
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let reconnectAttemptsUsed = 0
+  let hasConnected = false
   let closed = false
 
-  const setConn = (state: RpcConnState, error?: unknown) => {
-    options.onConn?.(state, error)
-  }
-
-  const resetSession = (active?: Session | null) => {
-    if (active !== undefined && active !== null && active !== session) {
-      void active.runtime.dispose().catch(() => {})
+  const reportSubscriberError = (error: unknown) => {
+    if (options.onSubscriberError) {
+      try { options.onSubscriberError(error) } catch (reportError) {
+        console.error('[tokmon] daemon RPC subscriber error reporter failed', reportError)
+      }
       return
     }
-    const dead = active ?? session
-    session = null
-    sessionPromise = null
-    if (dead) void dead.runtime.dispose().catch(() => {})
+    console.error('[tokmon] daemon RPC subscriber failed', error)
   }
 
-  const makeProtocolLayer = async () => {
-    const socketLayer = await socketLayerFor(url, options.transport)
+  const setConn = (state: RpcConnState, error?: unknown) => {
+    try { options.onConn?.(state, error) } catch (callbackError) {
+      reportSubscriberError(callbackError)
+    }
+  }
+
+  const clearReconnectTimer = () => {
+    if (!reconnectTimer) return
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+
+  const stopSubscriptionFiber = (subscription: Subscription<unknown>): Promise<void> => {
+    const fiber = subscription.fiber
+    subscription.fiber = null
+    subscription.owner = null
+    return fiber
+      ? Effect.runPromise(Fiber.interrupt(fiber)).catch(() => {})
+      : Promise.resolve()
+  }
+
+  const disposeSubscription = (subscription: Subscription<unknown>): Promise<void> => {
+    subscription.active = false
+    subscriptions.delete(subscription)
+    if (subscription.watchdogTimer) {
+      clearInterval(subscription.watchdogTimer)
+      subscription.watchdogTimer = null
+    }
+    return stopSubscriptionFiber(subscription)
+  }
+
+  const scheduleReconnect = () => {
+    if (closed || subscriptions.size === 0 || reconnectTimer || session || sessionPromise) return
+    if (typeof options.reconnectAttempts === 'number' && reconnectAttemptsUsed >= options.reconnectAttempts) return
+    const delayMs = Math.min(2_500, reconnectBaseDelayMs * 1.5 ** reconnectAttemptsUsed)
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      reconnectAttemptsUsed++
+      connectSubscriptions()
+    }, delayMs)
+    reconnectTimer.unref?.()
+  }
+
+  const invalidateSession = (
+    active: Session,
+    state: Extract<RpcConnState, 'reconnecting' | 'error'>,
+    error?: unknown,
+  ) => {
+    if (active.invalidated) return
+    active.invalidated = true
+    if (session === active) session = null
+    void active.runtime.dispose().catch(() => {})
+    if (!closed) setConn(state, error)
+    scheduleReconnect()
+  }
+
+  const makeProtocolLayer = async (
+    ready: Signal<void>,
+    disconnected: Signal<DaemonRpcConnectionError>,
+  ) => {
+    const socketLayer = await socketLayerFor(url, options.transport, requestTimeoutMs)
     const connectionHooksLayer = Layer.succeed(
       RpcClient.ConnectionHooks,
       RpcClient.ConnectionHooks.of({
-        onConnect: Effect.sync(() => { setConn('live') }),
+        onConnect: Effect.sync(() => { ready.resolve() }),
         onDisconnect: Effect.sync(() => {
-          if (!closed) {
-            setConn('reconnecting')
-          }
+          disconnected.resolve(new DaemonRpcConnectionError())
         }),
       }),
     )
     return Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
-        retryPolicy: retryPolicy(options),
-        retryTransientErrors: true,
+        retryPolicy: Schedule.recurs(0),
+        retryTransientErrors: false,
       }),
     ).pipe(
       Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson, connectionHooksLayer)),
@@ -146,49 +362,115 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
     if (session) return session
     if (sessionPromise) return sessionPromise
 
-    setConn('connecting')
-    sessionPromise = (async () => {
-      let runtime: TokmonRuntime | undefined
+    setConn(hasConnected ? 'reconnecting' : 'connecting')
+    const pending = (async () => {
+      let runtime: TokmonRuntime | null = null
       try {
-        const protocolLayer = await makeProtocolLayer()
+        const ready = makeSignal<void>()
+        const disconnected = makeSignal<DaemonRpcConnectionError>()
+        const protocolLayer = await makeProtocolLayer(ready, disconnected)
         const clientLayer = Layer.effect(
           TokmonRpcClient,
           RpcClient.make(TokmonRpcGroup),
-        ).pipe(
-          Layer.provide(protocolLayer),
-        )
+        ).pipe(Layer.provide(protocolLayer))
         runtime = ManagedRuntime.make(clientLayer)
+        pendingRuntime = runtime
         await runtime.runPromise(TokmonRpcClient.asEffect())
-        if (closed) {
-          await runtime.dispose()
-          throw new Error('daemon RPC client is closed')
+        await waitForReady(ready, disconnected, requestTimeoutMs)
+        if (closed) throw new Error('daemon RPC client is closed')
+
+        const active: Session = {
+          runtime,
+          disconnected: disconnected.promise,
+          invalidated: false,
         }
-        session = { runtime }
-        return session
+        session = active
+        pendingRuntime = null
+        hasConnected = true
+        reconnectAttemptsUsed = 0
+        setConn('live')
+        void active.disconnected.then(error => {
+          invalidateSession(active, 'reconnecting', error)
+        })
+        startAllSubscriptions(active)
+        return active
       } catch (error) {
-        sessionPromise = null
+        if (pendingRuntime === runtime) pendingRuntime = null
         await runtime?.dispose().catch(() => {})
         if (!closed) setConn('error', error)
         throw error
       }
     })()
-
-    return sessionPromise
+    sessionPromise = pending
+    try {
+      return await pending
+    } finally {
+      if (sessionPromise === pending) sessionPromise = null
+    }
   }
 
-  const run = async <A>(effectFor: (client: TokmonClient) => Effect.Effect<A, unknown>): Promise<A> => {
+  const run = async <A>(
+    method: string,
+    effectFor: (client: TokmonClient) => Effect.Effect<A, unknown>,
+  ): Promise<A> => {
     const active = await ensureSession()
     try {
       return await active.runtime.runPromise(
-        TokmonRpcClient.use((client) => effectFor(client)),
+        TokmonRpcClient.use((client) => effectFor(client)).pipe(
+          Effect.timeoutOrElse({
+            duration: Duration.millis(requestTimeoutMs),
+            orElse: () => Effect.fail(new DaemonRpcRequestTimeoutError(method, requestTimeoutMs)),
+          }),
+        ),
       )
-    } catch (error) {
-      if (!closed) {
-        resetSession(active)
-        setConn('error', error)
-      }
+    } catch (rawError) {
+      const error = normalizeRequestFailure(rawError)
+      if (!closed && isSessionFailure(error)) invalidateSession(active, 'error', error)
       throw error
     }
+  }
+
+  const startSubscription = <A>(subscription: Subscription<A>, active: Session) => {
+    if (closed || !subscription.active || subscription.fiber || active.invalidated) return
+    subscription.lastValueAt = Date.now()
+    subscription.staleAfterMs = options.snapshotStaleFloorMs ?? 90_000
+    subscription.owner = active
+    const fiber = active.runtime.runFork(
+      TokmonRpcClient.use((client) =>
+        subscription.streamFor(client).pipe(
+          Stream.runForEach((value) =>
+            Effect.sync(() => {
+              subscription.lastValueAt = Date.now()
+              if (subscription.staleAfterFor) subscription.staleAfterMs = subscription.staleAfterFor(value)
+              try { subscription.onValue(value) } catch (error) { reportSubscriberError(error) }
+            }),
+          ),
+        ),
+      ),
+    )
+    subscription.fiber = fiber
+    fiber.addObserver((exit) => {
+      if (subscription.fiber === fiber) subscription.fiber = null
+      if (subscription.owner === active) subscription.owner = null
+      if (closed || !subscription.active || active.invalidated) return
+      if (Exit.isSuccess(exit)) {
+        invalidateSession(active, 'reconnecting')
+      } else {
+        invalidateSession(active, 'error', Cause.squash(exit.cause))
+      }
+    })
+  }
+
+  const startAllSubscriptions = (active: Session) => {
+    for (const subscription of subscriptions) startSubscription(subscription, active)
+  }
+
+  function connectSubscriptions(): void {
+    if (closed || subscriptions.size === 0 || supervisorPromise) return
+    supervisorPromise = ensureSession()
+      .then(() => undefined)
+      .catch(() => { scheduleReconnect() })
+      .finally(() => { supervisorPromise = null })
   }
 
   const subscribe = <A>(
@@ -197,139 +479,83 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
     staleAfterFor?: (value: A) => number,
   ): (() => void) => {
     if (closed) return () => {}
-    let fiber: Fiber.Fiber<unknown, unknown> | null = null
-    let unsubscribed = false
-    let retryTimer: ReturnType<typeof setTimeout> | null = null
-    let watchdogTimer: ReturnType<typeof setInterval> | null = null
-    let lastValueAt = 0
-    let staleAfterMs = Number.POSITIVE_INFINITY
-    let watchdogRestart = false
-
-    const stopFiber = () => {
-      if (!fiber) return
-      const current = fiber
-      fiber = null
-      fibers.delete(current)
-      void (session?.runtime.runPromise(Fiber.interrupt(current)) ?? Effect.runPromise(Fiber.interrupt(current))).catch(() => {})
+    const subscription: Subscription<A> = {
+      streamFor,
+      onValue,
+      staleAfterFor,
+      active: true,
+      fiber: null,
+      owner: null,
+      watchdogTimer: null,
+      lastValueAt: 0,
+      staleAfterMs: Number.POSITIVE_INFINITY,
     }
-
-    const scheduleRetry = () => {
-      if (closed || unsubscribed || retryTimer) return
-      retryTimer = setTimeout(() => {
-        retryTimer = null
-        start()
-      }, options.reconnectBaseDelayMs ?? 250)
-      retryTimer.unref?.()
-    }
+    subscriptions.add(subscription as Subscription<unknown>)
 
     if (staleAfterFor) {
       const checkEveryMs = Math.min(5_000, Math.max(10, (options.snapshotStaleFloorMs ?? 90_000) / 2))
-      watchdogTimer = setInterval(() => {
-        if (!fiber || lastValueAt === 0 || Date.now() - lastValueAt <= staleAfterMs) return
-        watchdogRestart = true
-        lastValueAt = Date.now()
-        setConn('reconnecting')
-        stopFiber()
+      subscription.watchdogTimer = setInterval(() => {
+        if (!subscription.fiber || !subscription.owner || subscription.lastValueAt === 0) return
+        if (Date.now() - subscription.lastValueAt <= subscription.staleAfterMs) return
+        subscription.lastValueAt = Date.now()
+        invalidateSession(subscription.owner, 'reconnecting')
       }, checkEveryMs)
-      watchdogTimer.unref?.()
+      subscription.watchdogTimer.unref?.()
     }
 
-    const start = () => { void (async () => {
-      try {
-        const active = await ensureSession()
-        if (closed || unsubscribed) return
-        lastValueAt = Date.now()
-        staleAfterMs = options.snapshotStaleFloorMs ?? 90_000
-        const currentFiber = active.runtime.runFork(
-          TokmonRpcClient.use((client) =>
-            streamFor(client).pipe(
-              Stream.runForEach((value) =>
-                Effect.sync(() => {
-                  lastValueAt = Date.now()
-                  if (staleAfterFor) staleAfterMs = staleAfterFor(value)
-                  try { onValue(value) } catch {}
-                }),
-              ),
-            ),
-          ),
-        )
-        fiber = currentFiber
-        fibers.add(currentFiber)
-        currentFiber.addObserver((exit) => {
-          fibers.delete(currentFiber)
-          if (fiber === currentFiber) fiber = null
-          if (closed || unsubscribed) return
-
-          const stale = watchdogRestart
-          watchdogRestart = false
-          resetSession(active)
-          if (stale || Exit.isSuccess(exit)) setConn('reconnecting')
-          else setConn('error', Cause.squash(exit.cause))
-          scheduleRetry()
-        })
-      } catch (error) {
-        if (!closed && !unsubscribed) {
-          resetSession()
-          setConn('error', error)
-          scheduleRetry()
-        }
-      }
-    })() }
-
-    start()
+    if (session) startSubscription(subscription, session)
+    else connectSubscriptions()
 
     return () => {
-      unsubscribed = true
-      if (retryTimer) {
-        clearTimeout(retryTimer)
-        retryTimer = null
-      }
-      if (watchdogTimer) {
-        clearInterval(watchdogTimer)
-        watchdogTimer = null
-      }
-      stopFiber()
+      void disposeSubscription(subscription as Subscription<unknown>)
+      if (subscriptions.size === 0) clearReconnectTimer()
     }
   }
 
   return {
     getConfig: () =>
-      run((client) => client[TOKMON_WS_METHODS.getConfig]({})).then((state) => state as unknown as ConfigState),
+      run(TOKMON_WS_METHODS.getConfig, client => client[TOKMON_WS_METHODS.getConfig]({}))
+        .then(normalizeConfigState),
 
-    setConfig: (config) =>
-      run((client) => client[TOKMON_WS_METHODS.setConfig](config as never)).then((state) => state as unknown as ConfigState),
+    setConfig: (update) =>
+      run(TOKMON_WS_METHODS.setConfig, client => client[TOKMON_WS_METHODS.setConfig](update))
+        .then(normalizeConfigState),
 
     refresh: (scope = 'all') =>
-      run((client) => client[TOKMON_WS_METHODS.refresh]({ scope })),
+      run(TOKMON_WS_METHODS.refresh, client => client[TOKMON_WS_METHODS.refresh]({ scope })),
 
     browseFs: (path) =>
-      run((client) => client[TOKMON_WS_METHODS.browseFs]({ path })),
+      run(TOKMON_WS_METHODS.browseFs, client => client[TOKMON_WS_METHODS.browseFs]({ path })),
 
     subscribeSnapshot: (onSnapshot) =>
       subscribe(
-        (client) => client[TOKMON_WS_METHODS.snapshot]({}).pipe(Stream.map(value => value as unknown as WebSnapshot)),
+        client => client[TOKMON_WS_METHODS.snapshot]({}).pipe(Stream.map(normalizeSnapshot)),
         onSnapshot,
         snapshot => Math.max(options.snapshotStaleFloorMs ?? 90_000, snapshot.intervalMs * 3),
       ),
 
     subscribeConfig: (onConfig) =>
-      subscribe((client) => client[TOKMON_WS_METHODS.config]({}).pipe(Stream.map(value => value as unknown as ConfigState)), onConfig),
+      subscribe(
+        client => client[TOKMON_WS_METHODS.config]({}).pipe(Stream.map(normalizeConfigState)),
+        onConfig,
+      ),
 
     async close() {
       if (closed) return
       closed = true
       setConn('closed')
-      const active = [...fibers]
-      fibers.clear()
-      const activeSession = session ?? await sessionPromise?.catch(() => null) ?? null
-      await Promise.all(active.map((fiber) =>
-        (activeSession?.runtime.runPromise(Fiber.interrupt(fiber)) ?? Effect.runPromise(Fiber.interrupt(fiber))).catch(() => {}),
-      ))
+      clearReconnectTimer()
+      const cleanup = [...subscriptions].map(disposeSubscription)
+      subscriptions.clear()
+      const activeSession = session
       session = null
+      await pendingRuntime?.dispose().catch(() => {})
+      await Promise.all(cleanup)
+      await activeSession?.runtime.dispose().catch(() => {})
+      await sessionPromise?.catch(() => {})
+      pendingRuntime = null
       sessionPromise = null
-      if (activeSession) {
-        await activeSession.runtime.dispose().catch(() => {})
-      }
+      supervisorPromise = null
     },
   }
 }

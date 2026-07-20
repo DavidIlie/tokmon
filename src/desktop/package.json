@@ -1,0 +1,43 @@
+{
+  "name": "@tokmon/desktop",
+  "version": "0.28.3",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "desktopName": "Tokmon.desktop",
+  "description": "Tokmon menu-bar and system-tray desktop app",
+  "author": "David Ilie <david@davidilie.com> (https://davidilie.com)",
+  "repository": "https://github.com/DavidIlie/tokmon.git",
+  "scripts": {
+    "build": "pnpm run build:main && pnpm run build:renderer",
+    "build:main": "tsup --config tsup.config.ts",
+    "build:renderer": "vite build --config vite.config.ts",
+    "dev": "pnpm run build && electron .",
+    "start": "electron .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test 'main/**/*.test.ts' 'renderer/**/*.test.ts'",
+    "check": "pnpm run typecheck && pnpm run test",
+    "pack": "electron-builder --dir --config electron-builder.yml",
+    "dist": "electron-builder --config electron-builder.yml"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.0.0-beta.59",
+    "effect": "4.0.0-beta.59",
+    "electron-updater": "^6.6.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "41.5.0",
+    "electron-builder": "26.15.6",
+    "playwright-core": "1.60.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "5.9.3",
+    "vite": "^6.0.0"
+  }
+}

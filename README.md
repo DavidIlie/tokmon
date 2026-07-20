@@ -6,6 +6,50 @@ Built with [Ink](https://github.com/vadimdemedes/ink) and TypeScript.
 
 ![tokmon dashboard](screenshot.png)
 
+## Desktop menu bar app
+
+Tokmon Desktop keeps the most useful quota signal visible without opening a terminal. It runs as a menu-bar app on macOS and a notification-area tray app on Windows and Linux.
+
+![Tokmon desktop quota popover](assets/desktop/tray-popover.png)
+
+- Pins up to two choices—such as Claude and Codex—as one adjacent macOS menu-bar strip. Windows and Linux use a status-aware tray icon and tooltip.
+- Shows every detected provider and account in a scrollable provider-grouped popover; provider names and marks are always explicit.
+- Keeps pins stable while independently marking every account that is active. Activity never reorders providers or silently replaces a pin.
+- Uses an explicit provider mark with its usage score plus calm continuous meters, exact reset copy, and visible High / Very high states.
+- Keeps the popover focused on quota status, refresh, and Open Dashboard. Compact Theme and Desktop App pages cover everyday preferences; custom palette editing, analytics, and advanced controls stay in the web dashboard.
+- Shares one daemon-owned appearance across desktop, web, and TUI: Tokmon, Phosphor, the complete ZeroCut editor-theme catalog, OS-following Auto mode, and contrast-checked custom palettes derived from any preset.
+- Reuses the same local daemon as the CLI and web dashboard. Whichever client starts first owns it; compatible clients attach instead of duplicating provider polling.
+
+Download signed macOS and Windows installers, or AppImage / Debian packages for Linux, from [GitHub Releases](https://github.com/DavidIlie/tokmon/releases). Windows exposes Tokmon in the standard notification area; Windows does not provide a supported API for third-party apps to occupy the Copilot or Control Center surface.
+
+The tray interaction was researched against [OpenUsage by Robin Ebers](https://github.com/robinebers/openusage), [CodexBar by Peter Steinberger](https://github.com/steipete/CodexBar), and [ccusage](https://github.com/ryoppippi/ccusage). Provider vector marks and compact reset formatting adapted from OpenUsage are used under its MIT license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Tokmon's daemon, contracts, tray composition, and application implementation remain its own.
+
+For development:
+
+```bash
+pnpm install
+pnpm --prefix web install
+pnpm run build
+pnpm run dev:desktop
+```
+
+Development and release use separate daemon channels. Normal installs and the published CLI share `~/Library/Caches/tokmon/daemon.json` (or the platform equivalent); every `pnpm dev*` command uses the tagged `dev` channel at `~/Library/Caches/tokmon/dev/daemon.json`. This means the local Electron app and `pnpm dev` attach to one development daemon without disturbing an installed Tokmon or a release CLI session.
+
+To exercise the installed bundle with the development daemon—matching the desktop/runtime workflow used by T3Code—install Tokmon first, then run:
+
+```bash
+pnpm run dev:installed
+# in another terminal: pnpm run dev
+```
+
+The installed app owns or attaches to the `dev` daemon and the TUI reuses that exact owner. Set `TOKMON_DESKTOP_APP_PATH` when the app is installed somewhere other than the platform default.
+
+Desktop release artifacts are built by `.github/workflows/desktop-release.yml`. Tagged releases require `MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`, `WIN_CSC_LINK`, and `WIN_CSC_KEY_PASSWORD`; missing signing credentials fail the release instead of silently publishing unsigned desktop binaries.
+
+Installed release builds check GitHub Releases shortly after launch and every hour while Tokmon remains open. A discovered update downloads in the background, appears as a **Restart** action in the popover when ready, and is also installed during the next clean quit. **Check for Updates** is available from the tray context menu. Development builds never contact the release feed.
+
+The release workflow publishes the platform installers together with `latest-mac.yml`, `latest.yml`, `latest-linux.yml`, and differential-update blockmaps. It verifies every metadata size and SHA-512 against the final artifact bytes, checks Developer ID signatures and notarization on macOS, checks Authenticode on Windows, and re-verifies the merged payload before creating the GitHub Release. npm and GitHub Packages publish only after that release succeeds, preventing a tag from publishing packages while desktop signing fails. A manual workflow run accepts an existing tag so an incomplete release can be rebuilt and repaired without bypassing those checks; it deliberately does not republish packages. The tag, root package version, and desktop package version must match exactly.
+
 ## Quick Start
 
 ```bash
@@ -87,7 +131,7 @@ A **Peak / Off-Peak** badge appears in the header (Claude only), fetched from [p
 
 Per-provider history with a provider selector (`p` / `P`), search (`/`), and sorting (`o`).
 
-For **Claude / Codex / Cursor / Grok** — Daily, Weekly, and Monthly breakdowns (6 months of history). Each row shows models used, input/output/cache tokens, and cost. Press `Enter` to expand a per-model breakdown:
+For **Claude / Codex / Cursor / Grok** — Daily, Weekly, and Monthly breakdowns across all available local history. Each row shows models used, input/output/cache tokens, and cost. Press `Enter` to expand a per-model breakdown:
 
 ```
 ▸ Apr  7  haiku-4-5, op~  7.6K 487.0K  10.1M    1.1B  $603.89
@@ -105,7 +149,7 @@ tokmon serve --port 8080
 tokmon serve --no-open  # don't auto-open the browser
 ```
 
-It binds to `127.0.0.1` by default and reads the same local daemon state — nothing leaves your machine. The browser connects directly over a same-origin WebSocket; dashboard URLs have no token or login step. Optional LAN access can be enabled in settings, with an explicit unsafe-access warning, and takes effect after the daemon restarts. When publishing the dashboard through an ingress or reverse proxy, add each exact DNS name to **Allowed hosts** in settings (for example, `tokmon.example.com`); IP hosts remain allowed in LAN mode. The dashboard renders instantly from a cached snapshot, then streams live updates and goes idle when no tab is open. Press `R` or use the visible **Refresh** control to update it. Filter by provider, model, account, and period, flip between dark and light, and export any panel — or a summary card — as a PNG with the **Share** button.
+It binds to `127.0.0.1` by default and reads the same local daemon state. The browser connects directly over a same-origin WebSocket; dashboard URLs have no token or login step. Optional LAN access can be enabled in settings, with an explicit unsafe-access warning, and takes effect after the daemon restarts. When publishing the dashboard through an ingress or reverse proxy, add each exact DNS name to **Allowed hosts** in settings (for example, `tokmon.example.com`); IP hosts remain allowed in LAN mode. The dashboard renders instantly from a cached snapshot, then streams live updates and goes idle when no tab is open. Press `R` or use the visible **Refresh** control to update it. Filter by provider, model, account, and period (`7d`, `30d`, `90d`, `MTD`, `6M`, or `All`), choose Auto / light / dark appearance, and export any panel — or a summary card — as a PNG with the **Share** button. Exports resolve the same selected palette as the visible dashboard.
 
 ### Overview
 
@@ -195,6 +239,22 @@ Press `s` to open.
 - **Network access** — loopback-only by default; optional LAN access is explicitly marked unsafe
 - **Reset times** — show time remaining or the exact reset date/time in the configured timezone
 
+**Theme**
+
+- **Tokmon** — the original Tokmon dark palette plus its accessible light counterpart; this remains the default
+- **Phosphor** — an intentionally dark-only black terminal palette with green data ink and a gold cost signal
+- **Editor catalog** — paired light/dark VS Code, Monokai, Dracula, GitHub, Nord, One Dark Pro, Solarized, Tokyo Night, Catppuccin, Midnight, Forest, Sunset, Cyberpunk, Synthwave, Luxury, and Minimal palettes imported from ZeroCut's common theme format
+- **Custom** — derive from any built-in preset, then edit its paired light and dark colors in the web dashboard with strict `#RRGGBB` input and contrast validation
+- **Appearance** — Auto follows the operating system in the web and desktop apps; explicit Light and Dark override it
+- **Terminal colors** — preserve the classic ANSI TUI, opt into palette-derived dark/light ink, or disable decorative color; Tokmon never paints the terminal background and honors `NO_COLOR`
+
+Appearance is stored atomically by the daemon, so a change made in any client propagates to the others. Browser storage is only a validated first-paint cache; it is never the settings authority.
+
+**Desktop App**
+
+- Choose the menu-bar summary, pin up to two provider values, control provider disclosure, and configure launch at login
+- The compact desktop Theme page previews and selects the entire catalog; **Customize in Dashboard** opens the full paired-palette editor using the selected preset as its starting point
+
 **Providers** — toggle each provider on or off.
 
 **Accounts** — add, edit, reorder, and delete accounts. Each account has a provider, a name, a home directory (so you can track multiple logins across different `HOME`s), and an accent color. Multiple accounts per provider are supported.
@@ -236,11 +296,11 @@ Config writes are atomic (temp + rename) so a crash mid-save can't corrupt the f
 
 ## Privacy
 
-tokmon runs entirely on your machine and reads everything **read-only**:
+By default, tokmon runs locally and reads provider data **read-only**:
 
 - It never writes to any provider's data — SQLite databases (Cursor, opencode) are opened strictly read-only.
 - Credentials are read only to call each provider's **own official API** (Anthropic, ChatGPT backend, Cursor, GitHub, Google Cloud Code) for *your own* usage. Tokens are never logged, displayed, or sent anywhere else.
-- The only outbound requests are to those provider APIs and the optional peak-pricing clock.
+- In local mode, outbound requests go to those provider APIs and the optional peak-pricing clock.
 
 ## How It Works
 
@@ -261,13 +321,29 @@ tokmon runs a small local **daemon** that does all the data collection. The term
 - Dashboard summaries and table history load independently and refresh on separate intervals, so the UI stays responsive even on large histories.
 - The TUI shows the usage and limits cadences separately and reconnects automatically if a suspended terminal leaves its live stream stale.
 
-Cross-platform: macOS, Linux, Windows. Everything is local and read-only — see [Privacy](#privacy).
+Cross-platform: macOS, Linux, Windows. By default, collection is local and provider data stays read-only — see [Privacy](#privacy).
 
 ## Requirements
 
 - Node.js 20+ (**24+ recommended**)
 - The CLIs/apps you want to track
 - **SQLite** for the Cursor / opencode readers: on Node 24+ this uses the built-in `node:sqlite` — **nothing to install**. On Node 20–23 it falls back to the system `sqlite3` CLI (preinstalled on macOS; `apt install sqlite3` / `winget install sqlite` elsewhere).
+
+## Marketing site
+
+The public website is a standalone Astro project in `site/`. It is kept outside
+the CLI and desktop workspaces so publishing the npm package or bundling the
+Electron app never includes website dependencies.
+
+```bash
+pnpm --prefix site install
+pnpm run dev:site
+pnpm run check:site
+pnpm run build:site
+```
+
+The generated site is deployment-agnostic; `site/vercel.json` supports a
+separate Vercel project rooted at `site/` when a deployment is configured.
 
 ## CI/CD
 

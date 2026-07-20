@@ -1,9 +1,11 @@
 name: Publish
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # Package publishing is normally called only after the signed desktop
+  # release has been uploaded and verified. Manual dispatch remains available
+  # for repairing package registries from an existing tag ref.
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
   publish-npm:

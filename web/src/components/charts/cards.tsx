@@ -1,23 +1,38 @@
-import type { Metric, WebAccount } from '@shared'
+import { severity, usageFromHeadroom, type AppearanceConfig, type QuotaView, type Severity, type WebAccount } from '@shared'
 import type { Derived } from '../../lib/derive'
 import { fmtCost, fmtNum, fmtResetAt, fmtTokens } from '../../lib/format'
 import { providerHex, shortModel } from '../../lib/colors'
 import { Panel } from '../ui/panel'
 import { Sparkline } from '../ui/primitives'
 import { PrivacyLabel, privacyText } from '../privacy-label'
+import { accountIdentityText } from '../../lib/account-identity'
+import { dataInkColor, usesAccentInk } from '../../lib/theme-visualization'
+import { useTheme } from '../theme-provider'
+
+// Severity → visual tokens. The ≤10/≤25 thresholds live once in `severity()`;
+// these maps only bind the shared band to this surface's classes/vars.
+const SEV_TEXT: Record<Severity, string> = { unknown: 'text-fg', ok: 'text-ok', warn: 'text-warning', crit: 'text-critical' }
+const SEV_BAR: Record<Severity, string> = {
+  unknown: 'var(--color-accent)',
+  ok: 'var(--color-ok)',
+  warn: 'var(--color-warning)',
+  crit: 'var(--color-critical)',
+}
 
 export function KpiStrip({ derived, periodLabel }: { derived: Derived; periodLabel: string }) {
+  const theme = useTheme()
+  const themedSpark = usesAccentInk(theme.appearance.preset) ? 'var(--color-accent)' : undefined
   const t = derived.totals
   const spend = derived.timeline.map(p => p.total).slice(-30)
   const tokens = derived.timeline.map(p => p.tokens).slice(-30)
   const saved = derived.cacheSavingsSeries.map(p => p.value).slice(-30)
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
-      <Kpi label={`spend · ${periodLabel}`} value={fmtCost(t.cost)} accent="text-cost" spark={spend} sparkColor="var(--color-cost)" />
-      <Kpi label="tokens" value={fmtTokens(t.tokens)} spark={tokens} sparkColor="var(--color-fg-dim)" />
-      <Kpi label="cache saved" value={fmtCost(t.cacheSavings)} accent="text-positive" spark={saved} sparkColor="var(--color-positive)" />
+      <Kpi label={`spend · ${periodLabel}`} value={fmtCost(t.cost)} accent="text-cost" spark={spend} sparkColor={themedSpark ?? 'var(--color-cost)'} />
+      <Kpi label="tokens" value={fmtTokens(t.tokens)} spark={tokens} sparkColor={themedSpark ?? 'var(--color-fg-dim)'} />
+      <Kpi label="cache saved" value={fmtCost(t.cacheSavings)} accent="text-positive" spark={saved} sparkColor={themedSpark ?? 'var(--color-positive)'} />
       <Kpi label="calls" value={fmtNum(t.calls)} />
-      <Kpi label="burn · today" value={`${fmtCost(derived.burnRate)}/hr`} accent="text-warning" />
+      <Kpi label="burn · today" value={`${fmtCost(derived.burnRate)}/hr`} accent="text-critical" />
     </div>
   )
 }
@@ -49,6 +64,8 @@ export function ProviderCards({ accounts, nameOf, privacyMode, resetDisplay, tz 
   resetDisplay: 'relative' | 'absolute'
   tz: string
 }) {
+  const theme = useTheme()
+  const preset = theme.appearance.preset
   if (accounts.length === 0) {
     return (
       <Panel title="accounts">
@@ -58,25 +75,27 @@ export function ProviderCards({ accounts, nameOf, privacyMode, resetDisplay, tz 
   }
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fit,minmax(min(340px,100%),1fr))]">
-      {accounts.map((a, i) => <ProviderCard key={a.id} account={a} index={i} providerName={nameOf(a.providerId)} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={tz} />)}
+      {accounts.map((a, i) => <ProviderCard key={a.id} account={a} index={i} preset={preset} providerName={nameOf(a.providerId)} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={tz} />)}
     </div>
   )
 }
 
-function ProviderCard({ account, index, providerName, privacyMode, resetDisplay, tz }: {
+function ProviderCard({ account, index, preset, providerName, privacyMode, resetDisplay, tz }: {
   account: WebAccount
   index: number
+  preset: AppearanceConfig['preset']
   providerName: string
   privacyMode: boolean
   resetDisplay: 'relative' | 'absolute'
   tz: string
 }) {
   const d = account.dashboard
-  const metrics = account.billing?.metrics ?? []
+  const metrics = account.quotas ?? []
   const modelSpend = account.billing?.modelSpend ?? []
   const activity = account.billing?.activity
-  const providerColor = providerHex(account.providerId)
-  const showSub = account.name && account.name !== providerName
+  const providerColor = dataInkColor(preset, index, providerHex(account.providerId))
+  const identity = accountIdentityText(account, providerName)
+  const showSub = identity !== providerName
   return (
     <div
       className="rise group relative overflow-hidden rounded-md border bg-bg-1/50 p-4 transition-colors"
@@ -89,7 +108,9 @@ function ProviderCard({ account, index, providerName, privacyMode, resetDisplay,
           {showSub && (
             <span className="flex min-w-0 items-center gap-1 text-xs text-fg-faint">
               <span aria-hidden>·</span>
-              <PrivacyLabel value={account.name} privacyMode={privacyMode} className="truncate text-fg-faint" />
+              {account.identity
+                ? <span className="truncate text-fg-faint" title={account.identity.accessibleLabel}>{identity}</span>
+                : <PrivacyLabel value={identity} privacyMode={privacyMode} className="truncate text-fg-faint" />}
             </span>
           )}
         </div>
@@ -97,6 +118,17 @@ function ProviderCard({ account, index, providerName, privacyMode, resetDisplay,
           <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-dim">{account.billing.plan}</span>
         )}
       </div>
+
+      {account.headroom?.value != null && (() => {
+        const usage = usageFromHeadroom(account.headroom.value)!
+        const level = SEV_TEXT[severity(account.headroom.value)]
+        return (
+        <div className="mt-3 flex items-baseline justify-between rounded border border-line-faint bg-bg-0/35 px-2.5 py-2">
+          <span className="text-[10px] uppercase tracking-wide text-fg-faint">usage</span>
+          <span className={`tnum text-sm font-semibold ${level}`}>{Math.round(usage)}% used</span>
+        </div>
+        )
+      })()}
 
       {d && (
         <>
@@ -106,7 +138,7 @@ function ProviderCard({ account, index, providerName, privacyMode, resetDisplay,
             <Mini label="month" cost={d.month.cost} tokens={d.month.tokens} />
           </div>
           <div className="mt-3 flex items-center justify-between border-t border-line-faint pt-3 text-xs">
-            <span className="text-fg-dim">burn <span className="tnum text-warning">{fmtCost(d.burnRate)}/hr</span></span>
+            <span className="text-fg-dim">burn <span className="tnum text-critical">{fmtCost(d.burnRate)}/hr</span></span>
             <span className="text-fg-dim">saved <span className="tnum text-positive">{fmtCost(d.month.cacheSavings)}</span></span>
           </div>
         </>
@@ -114,7 +146,7 @@ function ProviderCard({ account, index, providerName, privacyMode, resetDisplay,
 
       {metrics.length > 0 && (
         <div className={`flex flex-col gap-2 ${d ? 'mt-3 border-t border-line-faint pt-3' : 'mt-4'}`}>
-          {metrics.slice(0, 8).map((m, i) => <QuotaBar key={`${m.label}${i}`} metric={m} resetDisplay={resetDisplay} tz={tz} />)}
+          {metrics.slice(0, 8).map((quota) => <QuotaBar key={quota.key} quota={quota} resetDisplay={resetDisplay} tz={tz} />)}
         </div>
       )}
 
@@ -145,7 +177,7 @@ function ProviderCard({ account, index, providerName, privacyMode, resetDisplay,
       )}
 
       {metrics.length === 0 && account.billing?.error && (
-        <div className={`flex items-start gap-1.5 text-xs text-warning ${d ? 'mt-3 border-t border-line-faint pt-3' : 'mt-4'}`}>
+        <div className={`flex items-start gap-1.5 text-xs text-critical ${d ? 'mt-3 border-t border-line-faint pt-3' : 'mt-4'}`}>
           <span aria-hidden>⚠</span><span>{privacyText(account.billing.error, privacyMode)}</span>
         </div>
       )}
@@ -168,42 +200,24 @@ function Mini({ label, cost, tokens }: { label: string; cost: number; tokens: nu
   )
 }
 
-function fmtMetricValue(m: Metric): string {
-  if (m.format.kind === 'dollars') return fmtCost(m.used)
-  if (m.format.kind === 'count') return `${fmtNum(m.used)}${m.format.suffix ? ' ' + m.format.suffix : ''}`
-  return `${Math.round(m.used)}%`
-}
-
-function QuotaBar({ metric, resetDisplay, tz }: { metric: Metric; resetDisplay: 'relative' | 'absolute'; tz: string }) {
-  const ratio = metric.format.kind === 'percent'
-    ? Math.min(1, Math.max(0, metric.used / 100))
-    : metric.limit != null && metric.limit > 0
-      ? Math.min(1, Math.max(0, metric.used / metric.limit))
-      : null
-  const color = ratio == null
-    ? 'var(--color-accent)'
-    : ratio >= 0.9 ? 'var(--color-warning)'
-    : ratio >= 0.7 ? 'var(--color-cost)'
-    : 'var(--color-positive)'
+function QuotaBar({ quota, resetDisplay, tz }: { quota: QuotaView; resetDisplay: 'relative' | 'absolute'; tz: string }) {
+  const ratio = quota.usedPct == null ? null : Math.min(1, Math.max(0, quota.usedPct / 100))
+  // severity(null) → 'unknown' → accent, matching the prior explicit null case.
+  const color = SEV_BAR[severity(quota.remainingPct)]
   return (
     <div>
       <div className="flex items-center justify-between text-[11px]">
-        <span className="truncate text-fg-dim">{metric.label}</span>
+        <span className="truncate text-fg-dim">{quota.label}</span>
         <span className="tnum text-fg">
-          {fmtMetricValue(metric)}
-          {metric.format.kind !== 'percent' && metric.limit != null && (
-            <span className="text-fg-faint">
-              {' / '}{metric.format.kind === 'dollars' ? fmtCost(metric.limit) : fmtNum(metric.limit)}
-            </span>
-          )}
-          {metric.resetsAt && <span className="ml-1.5 text-fg-faint">· {fmtResetAt(metric.resetsAt, resetDisplay, Date.now(), tz)}</span>}
+          {quota.valueText}
+          {quota.resetsAt && <span className="ml-1.5 text-fg-faint">· {fmtResetAt(new Date(quota.resetsAt).toISOString(), resetDisplay, Date.now(), tz)}</span>}
         </span>
       </div>
       {ratio != null && (
         <div
           className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-bg-3"
           role="progressbar"
-          aria-label={metric.label}
+          aria-label={`${quota.label} used`}
           aria-valuenow={Math.round(ratio * 100)}
           aria-valuemin={0}
           aria-valuemax={100}

@@ -285,7 +285,21 @@ export function limitMetric(entry: unknown, primary?: boolean): Metric | null {
   if (used === undefined) return null
   const label = limitLabel(o)
   if (!label) return null
-  return percentMetric(label, used, resetFrom(o.resets_at), primary)
+  const scope = recordValue(o.scope)
+  const model = recordValue(scope?.model)
+  const modelId = nonEmptyString(model?.id)
+  const kind = nonEmptyString(o.kind)?.toLowerCase() ?? ''
+  const scopedModel = kind === 'weekly_scoped' || kind.startsWith('weekly_model')
+  const role: Metric['role'] = kind === 'session' || nonEmptyString(o.group)?.toLowerCase() === 'session'
+    ? 'session'
+    : kind === 'weekly_all' ? 'weekly' : modelId || scopedModel ? 'model' : 'other'
+  return {
+    ...percentMetric(label, used, resetFrom(o.resets_at), primary),
+    key: modelId ? `model:${modelId}` : kind || label.toLowerCase(),
+    role,
+    modelId: modelId ?? (scopedModel ? label.toLowerCase().replace(/\s+/g, '-') : null),
+    active: boolValue(o.is_active),
+  }
 }
 
 function limitMetrics(limits: unknown): Metric[] {
@@ -315,7 +329,12 @@ function topLevelUsageMetrics(data: OAuthResponse): Metric[] {
     const window = recordValue(value)
     if (!window || numberValue(window.utilization) === undefined) continue
     const metric = usageMetric(usageLabelFromKey(key), window, key === 'five_hour' ? true : undefined)
-    if (metric) metrics.push(metric)
+    if (metric) metrics.push({
+      ...metric,
+      key,
+      role: key === 'five_hour' ? 'session' : key === 'seven_day' ? 'weekly' : key.startsWith('seven_day_') ? 'model' : 'other',
+      modelId: key.startsWith('seven_day_') ? key.slice('seven_day_'.length) : null,
+    })
   }
   return metrics
 }
@@ -367,6 +386,8 @@ export async function claudeBilling(account: Account): Promise<BillingResult> {
       if (usedCredits !== undefined && (usedCredits > 0 || (monthlyLimit !== undefined && monthlyLimit > 0))) {
         const scale = decimalScale(data.extra_usage?.decimal_places)
         metrics.push({
+          key: 'extra_usage',
+          role: 'unbounded',
           label: 'Extra',
           used: finite(usedCredits) / scale,
           limit: monthlyLimit !== undefined && monthlyLimit > 0 ? monthlyLimit / scale : null,

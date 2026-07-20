@@ -1,0 +1,91 @@
+---
+// A terminal-styled command line with a click-to-copy button. Progressive
+// enhancement: without JS it is still a readable, selectable command.
+interface Props {
+  command: string;
+  label?: string;
+}
+const { command, label } = Astro.props;
+---
+
+<div class="cmd" role="group" aria-label={label ?? `Command: ${command}`}>
+  <span class="cmd-prompt" aria-hidden="true">$</span>
+  <code class="cmd-text">{command}</code>
+  <button class="cmd-copy" type="button" data-copy={command} aria-label={`Copy: ${command}`}>
+    <span class="cmd-copy-label">Copy</span>
+  </button>
+</div>
+
+<style>
+  .cmd {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid var(--line-2);
+    border-radius: 10px;
+    background: var(--bg-2);
+    font-size: 14px;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .cmd-prompt {
+    color: var(--accent);
+    user-select: none;
+  }
+  .cmd-text {
+    color: var(--fg-bright);
+    white-space: nowrap;
+  }
+  .cmd-copy {
+    margin-left: auto;
+    flex: none;
+    padding: 5px 12px;
+    border: 1px solid var(--line-2);
+    border-radius: 7px;
+    background: var(--bg-3);
+    color: var(--fg-dim);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color 160ms ease, color 160ms ease;
+  }
+  .cmd-copy:hover {
+    border-color: var(--accent);
+    color: var(--fg-bright);
+  }
+  .cmd-copy[data-copied="true"] {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+</style>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>(".cmd-copy").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const text = btn.dataset.copy ?? "";
+      const label = btn.querySelector<HTMLElement>(".cmd-copy-label");
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // Fallback for clipboard-restricted contexts.
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+          document.execCommand("copy");
+        } catch {}
+        ta.remove();
+      }
+      btn.dataset.copied = "true";
+      if (label) label.textContent = "Copied";
+      window.setTimeout(() => {
+        btn.dataset.copied = "false";
+        if (label) label.textContent = "Copy";
+      }, 1600);
+    });
+  });
+</script>

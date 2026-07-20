@@ -2,6 +2,7 @@ import type { WebSnapshot, TableRow } from '@shared'
 import { weekStartStr } from './date'
 import { sumTokens } from './format'
 import { selectAccounts, latestDayOf, granRangeStart, rangeStartOf, type Filters, type Granularity } from './derive.filters'
+import { accountIdentityText } from './account-identity'
 
 export interface ModelSpotlightAccount {
   name: string
@@ -134,7 +135,7 @@ export function deriveModelSpotlight(snap: WebSnapshot | null, f: Filters, model
     const accountTokens = sumTokens(accountTotals)
     if (accountTokens > 0 || accountTotals.cost > 0 || accountTotals.count > 0) {
       accountRows.push({
-        name: account.name,
+        name: accountIdentityText(account, providerName.get(account.providerId) ?? account.providerId),
         color: account.color,
         provider: providerName.get(account.providerId) ?? account.providerId,
         providerId: account.providerId,

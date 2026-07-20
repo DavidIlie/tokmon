@@ -2,15 +2,31 @@ import { memo } from 'react'
 import { Box, Text } from 'ink'
 import * as fmt from '../format'
 import { PROVIDERS } from '../providers'
-import type { Account, BillingResult, Metric, ProviderId } from '../providers/types'
+import type { Account, BillingResult, ProviderId } from '../providers/types'
 import type { UsageSummary, DashboardData } from '../types'
 import type { AccountStats } from '../stats'
-import { Bar, sparkline, metricValueText, truncateName } from './shared'
+import { Bar, sparkline, truncateName } from './shared'
 import { glyphs } from '../glyphs'
 import { redactEmail } from '../config'
 import { planDisplay, normalizePlan, billingStaleLabel } from './provider-card.logic'
+import { accountIdentityText, resolveQuotaViews, severity, usageFromHeadroom, type QuotaView } from '../usage-semantics'
+import { aggregateDashboardData, cachedTokenPercentage } from '../dashboard-data'
+import { useTuiTheme } from './theme'
 
 type Item = { account: Account; s: AccountStats | undefined }
+
+/** Map the shared availability band to a terminal colour, keeping the ≤10/≤25
+ * thresholds single-sourced in `severity()`. `base` is the non-urgent colour
+ * (provider hue / bar colour) shown for ok/unknown. */
+function severityColor(
+  remaining: number | null,
+  crit: string | undefined,
+  warn: string | undefined,
+  base: string | undefined,
+): string | undefined {
+  const level = severity(remaining)
+  return level === 'crit' ? crit : level === 'warn' ? warn : base
+}
 
 const GAP = 2
 const MIN_CARD = 56
@@ -44,9 +60,9 @@ export function estimateCardHeights(
       const multi = g.accounts.length > 1
       g.accounts.forEach((a, i) => {
         const s = stats.get(a.id)
-        const staleRow = s?.billing && !s.billing.error && s.billing.metrics.length > 0
+        const staleRow = s?.billing && !s.billing.error && quotaViews(s).length > 0
           && billingStaleLabel(s.billing.asOfMs ?? s.billingUpdatedAt, Date.now()) ? 1 : 0
-        const metricRows = (s?.billing?.metrics.length || 1) + staleRow
+        const metricRows = (quotaViews(s).length || 1) + staleRow
         h += metricRows + (multi ? 1 : 0) + (multi && i > 0 ? 1 : 0) // name row + gap between accounts
       })
     }
@@ -118,13 +134,14 @@ export function computeDashLayout(
   return chooseLayout(content, budget, groups.length, single, cols, heights)
 }
 
-export const DashboardView = memo(function DashboardView({ groups, stats, cols, budget, focusId, layout, page = 0, privacyMode = false, resetDisplay = 'relative', tz }: {
+export const DashboardView = memo(function DashboardView({ groups, stats, cols, budget, computed, page = 0, privacyMode = false, resetDisplay = 'relative', tz }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
   stats: Map<string, AccountStats>
   cols: number
   budget: number
-  focusId: string | null
-  layout: 'grid' | 'single'
+  /** Layout computed once by the app root (single source of truth for the view
+   * and the key-handling layer); the view no longer recomputes it. */
+  computed: GridLayout
   page?: number
   privacyMode?: boolean
   resetDisplay?: 'relative' | 'absolute'
@@ -135,7 +152,7 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
   }
 
   const content = Math.max(30, cols - 4)
-  const { ncols, variant, cardsPerPage, pageCount } = computeDashLayout(groups, stats, cols, budget, focusId, layout)
+  const { ncols, variant, cardsPerPage, pageCount } = computed
 
   let cardW = ncols <= 1 ? content : Math.floor((content - GAP * (ncols - 1)) / ncols)
   if (ncols === 1 && cardW > MAX_SINGLE_CARD) cardW = MAX_SINGLE_CARD
@@ -171,16 +188,17 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
   resetDisplay: 'relative' | 'absolute'
   tz?: string
 }) {
+  const theme = useTuiTheme()
   const meta = PROVIDERS[provider]
   const items: Item[] = accounts.map(a => ({ account: a, s: stats.get(a.id) }))
-  const dashboards = items.map(i => i.s?.dashboard).filter((d): d is DashboardData => !!d)
-  const agg = meta.hasUsage && dashboards.length > 0 ? aggregate(dashboards) : null
+  const agg = meta.hasUsage ? aggregateDashboardData(items.map(i => i.s?.dashboard)) : null
   const planView = planDisplay(items.map(i => i.s?.billing?.plan))
   const activity = items.map(i => i.s?.billing?.activity).find(Boolean) ?? null
   const inner = width - 4
   const hasSpark = !!agg && agg.series.some(v => v > 0)
   const showBars = variant !== 'mini'
   const showSpark = variant === 'full'
+  const headroom = items.find(item => item.s?.providerHeadroom)?.s?.providerHeadroom
 
   return (
     <Box flexDirection="column" width={width} borderStyle={glyphs().border} borderColor={meta.color} paddingX={1}>
@@ -191,6 +209,11 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
         {planView.mode === 'header' && <Text dimColor>{planView.plan}</Text>}
         {planView.mode === 'perRow' && <Text dimColor>{planView.count} accounts</Text>}
       </Box>
+      {headroom?.value != null && (
+        <Box>
+          <Text dimColor>Usage </Text><Text bold color={severityColor(headroom.value, theme.crit, theme.warn, meta.color)}>{Math.round(usageFromHeadroom(headroom.value)!)}%</Text>
+        </Box>
+      )}
 
       {meta.hasUsage && (
         agg ? (
@@ -209,7 +232,7 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
       {meta.hasBilling && showBars && (
         <>
           {meta.hasUsage && <Rule inner={inner} />}
-          <LimitsBlock items={items} inner={inner} showRowPlans={planView.mode === 'perRow'} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={tz} />
+          <LimitsBlock items={items} inner={inner} showRowPlans={planView.mode === 'perRow'} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={tz} providerName={meta.name} />
         </>
       )}
       {meta.hasBilling && !showBars && !meta.hasUsage && (
@@ -238,12 +261,15 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
 }
 
 function CompactBilling({ items, privacyMode }: { items: Item[]; privacyMode?: boolean }) {
-  const billing = items.map(i => i.s?.billing).find(Boolean)
+  const theme = useTuiTheme()
+  const stats = items.map(item => item.s).find(value => value?.billing)
+  const billing = stats?.billing
   if (!billing) return <Text dimColor>Fetching{glyphs().ellipsis}</Text>
-  if (billing.error) return <Text color="red">{privacyMode ? redactEmail(billing.error) : billing.error}</Text>
-  const m = billing.metrics.find(x => x.primary) ?? billing.metrics[0]
-  if (!m) return <Text dimColor>No data</Text>
-  return <Text bold color="yellow">{metricValueText(m)}</Text>
+  if (billing.error) return <Text color={theme.crit}>{privacyMode ? redactEmail(billing.error) : billing.error}</Text>
+  const quotas = quotaViews(stats)
+  const quota = quotas.find(value => value.primary) ?? quotas[0]
+  if (!quota) return <Text dimColor>No data</Text>
+  return <Text bold color={theme.cost}>{quota.valueText}</Text>
 }
 
 function Rule({ inner }: { inner: number }) {
@@ -251,11 +277,12 @@ function Rule({ inner }: { inner: number }) {
 }
 
 function SummaryRow({ label, s }: { label: string; s: UsageSummary }) {
-  const cachedPct = s.tokens > 0 ? Math.round((s.cacheRead / s.tokens) * 100) : 0
+  const theme = useTuiTheme()
+  const cachedPct = cachedTokenPercentage(s)
   return (
     <Box>
       <Box width={11} flexShrink={0}><Text dimColor wrap="truncate">{label}</Text></Box>
-      <Box width={11} flexShrink={0} justifyContent="flex-end"><Text bold color="yellow" wrap="truncate">{fmt.currency(s.cost)}</Text></Box>
+      <Box width={11} flexShrink={0} justifyContent="flex-end"><Text bold color={theme.cost} wrap="truncate">{fmt.currency(s.cost)}</Text></Box>
       <Box width={13} flexShrink={0} justifyContent="flex-end"><Text dimColor wrap="truncate">{fmt.tokens(s.tokens)} tok</Text></Box>
       <Box flexGrow={1} justifyContent="flex-end">
         {cachedPct > 0 ? <Text dimColor wrap="truncate">{cachedPct}% cached</Text> : <Text> </Text>}
@@ -265,35 +292,41 @@ function SummaryRow({ label, s }: { label: string; s: UsageSummary }) {
 }
 
 function KpiLine({ agg }: { agg: DashboardData }) {
+  const theme = useTuiTheme()
   const hasBurn = agg.burnRate > 0
   const hasSaved = agg.month.cacheSavings > 0
   if (!hasBurn && !hasSaved) return null
   return (
     <Box>
-      {hasBurn && <><Text dimColor>Burn </Text><Text color="red">{fmt.currency(agg.burnRate)}/hr</Text></>}
+      {hasBurn && <><Text dimColor>Burn </Text><Text color={theme.crit}>{fmt.currency(agg.burnRate)}/hr</Text></>}
       <Box flexGrow={1} />
-      {hasSaved && <><Text dimColor>Cache saved </Text><Text color="green">{fmt.currency(agg.month.cacheSavings)}/mo</Text></>}
+      {hasSaved && <><Text dimColor>Cache saved </Text><Text color={theme.positive}>{fmt.currency(agg.month.cacheSavings)}/mo</Text></>}
     </Box>
   )
 }
 
-function accountTitle(account: Account, billing: BillingResult | null | undefined, privacyMode = false): string {
+function accountTitle(account: Account, billing: BillingResult | null | undefined, privacyMode = false, identity?: AccountStats['identity'], providerName = ''): string {
+  // Daemon identity is already privacy-aware; resolve the visible label through
+  // the shared title-first resolver so the TUI matches the web dashboard.
+  if (identity) return accountIdentityText({ identity, name: account.name }, providerName)
   const email = billing?.email
   const title = email && !account.name.includes('@') ? `${account.name} ${email}` : account.name
   return privacyMode ? redactEmail(title) : title
 }
 
-function LimitsBlock({ items, inner, showRowPlans, privacyMode, resetDisplay, tz }: {
+function LimitsBlock({ items, inner, showRowPlans, privacyMode, resetDisplay, tz, providerName }: {
   items: Item[]
   inner: number
   showRowPlans: boolean
   privacyMode?: boolean
   resetDisplay: 'relative' | 'absolute'
   tz?: string
+  providerName: string
 }) {
+  const theme = useTuiTheme()
   const showName = items.length > 1
   // Shared label gutter so values/bars align across every metric row in the card.
-  const labels = items.flatMap(i => i.s?.billing?.metrics ?? []).map(m => m.label.length)
+  const labels = items.flatMap(i => quotaViews(i.s)).map(quota => quota.label.length)
   const labelW = Math.min(Math.max(7, ...labels) + 1, 14)
   const resetW = resetDisplay === 'absolute' ? 17 : 8
   const barW = Math.max(10, Math.min(46, inner - labelW - resetW - 5))
@@ -301,7 +334,8 @@ function LimitsBlock({ items, inner, showRowPlans, privacyMode, resetDisplay, tz
     <Box flexDirection="column">
       {items.map(({ account, s }, idx) => {
         const billing = s?.billing
-        const staleLabel = billing && !billing.error && billing.metrics.length > 0
+        const quotas = quotaViews(s)
+        const staleLabel = billing && !billing.error && quotas.length > 0
           ? billingStaleLabel(billing.asOfMs ?? s?.billingUpdatedAt, Date.now())
           : null
         return (
@@ -319,7 +353,7 @@ function LimitsBlock({ items, inner, showRowPlans, privacyMode, resetDisplay, tz
               return (
                 <Box>
                   <Text color={account.color}>{glyphs().dot} </Text>
-                  <Text bold>{truncateName(accountTitle(account, billing, privacyMode), nameBudget)}</Text>
+                  <Text bold>{truncateName(accountTitle(account, billing, privacyMode, s?.identity, providerName), nameBudget)}</Text>
                   {shownPlan && <><Box flexGrow={1} /><Text dimColor>{shownPlan}</Text></>}
                 </Box>
               )
@@ -327,13 +361,13 @@ function LimitsBlock({ items, inner, showRowPlans, privacyMode, resetDisplay, tz
             {!billing ? (
               <Text dimColor>Fetching{glyphs().ellipsis}</Text>
             ) : billing.error ? (
-              <Text color="red" wrap="truncate-end">{privacyMode ? redactEmail(billing.error) : billing.error}</Text>
-            ) : billing.metrics.length === 0 ? (
+              <Text color={theme.crit} wrap="truncate-end">{privacyMode ? redactEmail(billing.error) : billing.error}</Text>
+            ) : quotas.length === 0 ? (
               <Text dimColor>No data</Text>
             ) : (
-              billing.metrics.map((m, i) => <MetricRow key={`${m.label}${i}`} m={m} color={account.color} barW={barW} labelW={labelW} resetW={resetW} resetDisplay={resetDisplay} tz={tz} />)
+              quotas.map(quota => <QuotaRow key={quota.key} quota={quota} color={account.color} barW={barW} labelW={labelW} resetW={resetW} resetDisplay={resetDisplay} tz={tz} />)
             )}
-            {staleLabel && <Text color="yellow" dimColor>{glyphs().warn} {staleLabel} {glyphs().middot} refreshing{glyphs().ellipsis}</Text>}
+            {staleLabel && <Text color={theme.warn} dimColor>{glyphs().warn} {staleLabel} {glyphs().middot} refreshing{glyphs().ellipsis}</Text>}
           </Box>
         )
       })}
@@ -341,8 +375,13 @@ function LimitsBlock({ items, inner, showRowPlans, privacyMode, resetDisplay, tz
   )
 }
 
-function MetricRow({ m, color, barW, labelW, resetW, resetDisplay, tz }: {
-  m: Metric
+/** Current snapshots carry canonical quotas; derive only at the old-snapshot boundary. */
+function quotaViews(stats: AccountStats | undefined): QuotaView[] {
+  return resolveQuotaViews({ quotas: stats?.quotas, metrics: stats?.billing?.metrics })
+}
+
+function QuotaRow({ quota, color, barW, labelW, resetW, resetDisplay, tz }: {
+  quota: QuotaView
   color: string
   barW: number
   labelW: number
@@ -350,23 +389,26 @@ function MetricRow({ m, color, barW, labelW, resetW, resetDisplay, tz }: {
   resetDisplay: 'relative' | 'absolute'
   tz?: string
 }) {
-  if (m.format.kind === 'percent') {
-    const barColor = m.used >= 90 ? 'red' : m.used >= 75 ? 'yellow' : color
+  const theme = useTuiTheme()
+  if (quota.bounded && quota.usedPct !== null) {
+    const used = quota.usedPct
+    const remaining = quota.remainingPct ?? 0
+    const barColor = severityColor(remaining, theme.crit, theme.warn, color)
     return (
       <Box>
-        <Box width={labelW} flexShrink={0}><Text dimColor wrap="truncate">{m.label}</Text></Box>
-        <Bar pct={m.used} color={barColor} width={barW} />
-        <Box width={5} justifyContent="flex-end"><Text bold>{Math.round(m.used)}%</Text></Box>
+        <Box width={labelW} flexShrink={0}><Text dimColor wrap="truncate">{quota.label}</Text></Box>
+        <Bar pct={used} color={barColor} width={barW} />
+        <Box width={5} justifyContent="flex-end"><Text bold>{Math.round(used)}%</Text></Box>
         <Box width={resetW} justifyContent="flex-end">
-          {m.resetsAt ? <Text dimColor>{fmt.resetAt(m.resetsAt, resetDisplay, Date.now(), tz)}</Text> : <Text> </Text>}
+          {quota.resetsAt ? <Text dimColor>{fmt.resetAt(new Date(quota.resetsAt).toISOString(), resetDisplay, Date.now(), tz)}</Text> : <Text> </Text>}
         </Box>
       </Box>
     )
   }
   return (
     <Box>
-      <Box width={labelW} flexShrink={0}><Text dimColor wrap="truncate">{m.label}</Text></Box>
-      <Text bold color="yellow">{metricValueText(m)}</Text>
+      <Box width={labelW} flexShrink={0}><Text dimColor wrap="truncate">{quota.label}</Text></Box>
+      <Text bold color={theme.cost}>{quota.valueText}</Text>
     </Box>
   )
 }
@@ -381,37 +423,19 @@ function SparkFooter({ series, month, color }: { series: number[]; month: number
   )
 }
 
-function aggregate(list: DashboardData[]): DashboardData {
-  const zero = () => ({ cost: 0, tokens: 0, input: 0, cacheRead: 0, cacheSavings: 0 })
-  const z: DashboardData = { today: zero(), week: zero(), month: zero(), burnRate: 0, series: [] }
-  for (const d of list) {
-    for (const k of ['today', 'week', 'month'] as const) {
-      z[k].cost += d[k].cost; z[k].tokens += d[k].tokens
-      z[k].input += d[k].input ?? 0; z[k].cacheRead += d[k].cacheRead; z[k].cacheSavings += d[k].cacheSavings
-    }
-    z.burnRate += d.burnRate
-    d.series.forEach((v, i) => { z.series[i] = (z.series[i] ?? 0) + v })
-  }
-  return z
-}
-
 export const TotalsRow = memo(function TotalsRow({ groups, stats, cols }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
   stats: Map<string, AccountStats>
   cols: number
 }) {
-  const zero = (): UsageSummary => ({ cost: 0, tokens: 0, input: 0, cacheRead: 0, cacheSavings: 0 })
-  const t = zero(), w = zero(), m = zero()
-  for (const g of groups) {
-    if (!PROVIDERS[g.provider].hasUsage) continue
-    for (const a of g.accounts) {
-      const d = stats.get(a.id)?.dashboard
-      if (!d) continue
-      t.cost += d.today.cost; t.tokens += d.today.tokens; t.input += d.today.input ?? 0
-      w.cost += d.week.cost;  w.tokens += d.week.tokens;  w.input += d.week.input ?? 0
-      m.cost += d.month.cost; m.tokens += d.month.tokens; m.input += d.month.input ?? 0
-    }
-  }
+  const aggregate = aggregateDashboardData(groups.flatMap(group => (
+    PROVIDERS[group.provider].hasUsage
+      ? group.accounts.map(account => stats.get(account.id)?.dashboard)
+      : []
+  )))
+  const t = aggregate?.today ?? { cost: 0, tokens: 0, input: 0, cacheRead: 0, cacheSavings: 0 }
+  const w = aggregate?.week ?? { cost: 0, tokens: 0, input: 0, cacheRead: 0, cacheSavings: 0 }
+  const m = aggregate?.month ?? { cost: 0, tokens: 0, input: 0, cacheRead: 0, cacheSavings: 0 }
 
   const inner = cols - 4
   const dot = glyphs().middot

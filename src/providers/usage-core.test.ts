@@ -10,6 +10,7 @@ import {
   lastDayKeys,
   loadCachedEntries,
   summarize,
+  tableSince,
   tabulate,
   type Entry,
 } from './usage-core'
@@ -30,6 +31,10 @@ function mk(over: Partial<Entry> & Pick<Entry, 'ts'>): Entry {
     ...over,
   }
 }
+
+test('table ingestion retains every available source row for all-time views', () => {
+  assert.equal(tableSince('UTC'), 0)
+})
 
 test('calendar-day series remain unique and consecutive across DST changes', () => {
   assert.deepEqual(
@@ -79,7 +84,7 @@ test('summarize buckets a local-midnight entry into today/week/month with full t
   // An entry at the exact NY local midnight of the current day is inside all
   // three windows, because week/month starts are never after the day start.
   const e = mk({ ts: startOfDay(now, NY), cost: 12, input: 1, output: 2, cacheCreate: 3, cacheRead: 4, cacheSavings: 5 })
-  const { today, week, month, series } = summarize([e], NY)
+  const { today, week, month, series, lastActivityAt } = summarize([e], NY)
 
   // tokens must be input + output + cacheCreate + cacheRead (not cacheSavings).
   assert.equal(today.tokens, 1 + 2 + 3 + 4)
@@ -95,6 +100,14 @@ test('summarize buckets a local-midnight entry into today/week/month with full t
   // The spark series is SPARK_DAYS long and today's cost lands in its last slot.
   assert.equal(series.length, SPARK_DAYS)
   assert.equal(series[SPARK_DAYS - 1], 12)
+  assert.equal(lastActivityAt, e.ts)
+})
+
+test('summarize reports the newest real entry timestamp and null for no entries', () => {
+  const older = mk({ ts: Date.parse('2026-07-09T10:00:00Z') })
+  const newest = mk({ ts: Date.parse('2026-07-10T10:00:00Z') })
+  assert.equal(summarize([newest, older], 'UTC').lastActivityAt, newest.ts)
+  assert.equal(summarize([], 'UTC').lastActivityAt, null)
 })
 
 test('summarize excludes the instant before local midnight from today (non-UTC tz)', () => {

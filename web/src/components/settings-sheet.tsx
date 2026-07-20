@@ -6,25 +6,34 @@ import {
   type WebSnapshot,
 } from '@shared'
 import { getConfig, putConfig, subscribeConfig } from '../lib/config-client'
-import { Check, X } from './icons'
-import { FOCUS, useDialogTrap } from './settings/use-dialog-trap'
+import { Check } from './icons'
+import { Dialog } from './ui/dialog'
+import { Button } from './ui/button'
+import { FOCUS_RING } from './ui/primitives'
 import { type AccountDraft, newDraft, toDraft } from './settings/account-editor.logic'
 import { GeneralSection } from './settings/general-section'
 import { ProvidersSection } from './settings/providers-section'
 import { AccountsSection } from './settings/accounts-section'
 import { AccountEditor } from './settings/account-editor'
-import { Segmented } from './ui/controls'
+import { AppSection } from './settings/app-section'
+import { ThemeSection } from './settings/theme-section'
+import { useTheme } from './theme-provider'
+import { validateAppearanceDraft } from '../lib/theme-runtime'
 
-type SettingsTab = 'general' | 'providers' | 'accounts'
+type SettingsTab = 'general' | 'theme' | 'app' | 'providers' | 'accounts'
 
 const SETTINGS_TABS: { value: SettingsTab; label: string }[] = [
   { value: 'general', label: 'General' },
+  { value: 'theme', label: 'Theme' },
+  { value: 'app', label: 'Desktop App' },
   { value: 'providers', label: 'Providers' },
   { value: 'accounts', label: 'Accounts' },
 ]
 
 export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snapshot: WebSnapshot | null }) {
+  const theme = useTheme()
   const panelRef = useRef<HTMLDivElement>(null)
+  const titleRef = useRef<HTMLHeadingElement>(null)
   const [draft, setDraft] = useState<Config | null>(null)
   const [revision, setRevision] = useState<number | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -89,6 +98,7 @@ export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snap
 
   const requestClose = () => {
     if (!dirtyRef.current || confirmDiscardRef.current) {
+      theme.setPreview(null)
       onClose()
       return
     }
@@ -96,8 +106,6 @@ export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snap
     setConfirmDiscard(true)
     setSaveError('unsaved changes; choose discard to close settings')
   }
-
-  useDialogTrap(panelRef, { active: !acctEditor, onEscape: requestClose })
 
   useEffect(() => {
     const panel = panelRef.current
@@ -110,6 +118,7 @@ export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snap
     const current = draftRef.current
     if (!current) return
     const next = { ...fn(current), revision: current.revision }
+    theme.setPreview(next.appearance)
     dirtyRef.current = true
     draftRef.current = next
     setDirty(true)
@@ -131,8 +140,10 @@ export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snap
       setDraft(state.config)
       setRevision(state.config.revision)
       setDirty(false)
+      theme.commit(state)
       onClose()
     } catch (e) {
+      theme.setPreview(null)
       const failure = describeConfigUpdateFailure(e)
       setSaveError(failure.conflictState
         ? `${failure.message}; close and reopen settings before saving`
@@ -143,70 +154,74 @@ export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snap
   }
 
   return (
-    <div
-      className="dialog-fade fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto overscroll-contain bg-bg-0/70 p-4 backdrop-blur-sm"
-      onMouseDown={e => { if (e.target === e.currentTarget && !acctEditor) requestClose() }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="settings-title"
-    >
-      <div ref={panelRef} tabIndex={-1} className="dialog-pop relative my-6 flex w-full max-w-[720px] flex-col overflow-hidden rounded-md border border-line-2 bg-bg-1 focus:outline-none">
-        <h2 id="settings-title" className="pointer-events-none absolute left-3 top-2 font-display text-[11px] uppercase tracking-wider text-fg-dim">settings</h2>
-        <button type="button" onClick={requestClose} aria-label="Close" className={`absolute right-2 top-2 z-10 rounded p-1 text-fg-faint transition hover:text-fg ${FOCUS}`}>
-          <X className="size-4" />
-        </button>
+    <>
+      <Dialog
+        onClose={requestClose}
+        labelledBy="settings-title"
+        initialFocusRef={titleRef}
+        panelRef={panelRef}
+        className="my-6 flex w-full max-w-[900px] flex-col"
+      >
+        <h2 ref={titleRef} tabIndex={-1} id="settings-title" className="pointer-events-none absolute left-3 top-2 font-display text-[11px] uppercase tracking-wider text-fg-dim focus:outline-none">settings</h2>
 
-        <div className="max-h-[78vh] overflow-y-auto px-5 pb-4 pt-9">
+        <div className="max-h-[78vh] overflow-y-auto px-4 pb-4 pt-9 sm:px-5">
           {loadError && !draft ? (
-            <div className="rounded border border-warning/50 bg-bg-2 p-4 text-sm text-warning" role="alert">Could not load settings: {loadError}. Close settings and try again.</div>
+            <div className="rounded border border-critical/50 bg-bg-2 p-4 text-sm text-critical" role="alert">Could not load settings: {loadError}. Close settings and try again.</div>
           ) : !draft ? (
             <div className="py-10 text-center text-sm text-fg-dim">loading config…</div>
           ) : (
             <>
-              <div className="mb-4 flex items-center justify-between gap-3 border-b border-line pb-3">
-                <Segmented<SettingsTab>
-                  size="xs"
-                  ariaLabel="settings section"
-                  options={SETTINGS_TABS}
-                  value={tab}
-                  onChange={setTab}
-                  containerClassName="flex items-center overflow-hidden rounded border border-line bg-bg-1"
-                  btnClassName="px-3 py-1.5 text-[11px] transition"
-                />
+              <div className="flex min-w-0 flex-col gap-5 sm:flex-row sm:items-start">
+                <nav className="-mx-1 flex shrink-0 gap-1 overflow-x-auto px-1 pb-2 sm:mx-0 sm:w-32 sm:flex-col sm:overflow-visible sm:px-0 sm:pb-0" aria-label="Settings sections">
+                  {SETTINGS_TABS.map(item => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      aria-current={tab === item.value ? 'page' : undefined}
+                      onClick={() => setTab(item.value)}
+                      className={`shrink-0 rounded px-2.5 py-2 text-left text-[11px] transition ${FOCUS_RING} ${tab === item.value ? 'bg-bg-3 text-accent' : 'text-fg-dim hover:bg-bg-2 hover:text-fg'}`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </nav>
+                <div className="min-w-0 flex-1 border-t border-line pt-4 sm:border-l sm:border-t-0 sm:pl-5 sm:pt-0">
+                  {tab === 'general' && <GeneralSection draft={draft} patch={patch} />}
+                  {tab === 'theme' && <ThemeSection draft={draft} patch={patch} />}
+                  {tab === 'app' && <AppSection draft={draft} patch={patch} snapshot={snapshot} />}
+                  {tab === 'providers' && <ProvidersSection draft={draft} patch={patch} />}
+                  {tab === 'accounts' && (
+                    <AccountsSection
+                      draft={draft} patch={patch} snapshot={snapshot}
+                      onEdit={a => setAcctEditor(toDraft(a))}
+                      onConfigure={row => setAcctEditor(newDraft(draft, {
+                        providerId: row.providerId,
+                        name: row.name,
+                        homeDir: row.homeDir,
+                        color: row.color,
+                      }))}
+                      onAdd={() => setAcctEditor(newDraft(draft))}
+                    />
+                  )}
+                </div>
               </div>
-              {tab === 'general' && <GeneralSection draft={draft} patch={patch} />}
-              {tab === 'providers' && <ProvidersSection draft={draft} patch={patch} />}
-              {tab === 'accounts' && (
-                <AccountsSection
-                  draft={draft} patch={patch} snapshot={snapshot}
-                  onEdit={a => setAcctEditor(toDraft(a))}
-                  onConfigure={row => setAcctEditor(newDraft(draft, {
-                    providerId: row.providerId,
-                    name: row.name,
-                    homeDir: row.homeDir,
-                    color: row.color,
-                  }))}
-                  onAdd={() => setAcctEditor(newDraft(draft))}
-                />
-              )}
             </>
           )}
         </div>
 
         <div className="flex items-center justify-end gap-3 border-t border-line px-5 py-3">
-          {saveError && <span className="mr-auto text-xs text-warning" role="alert">{saveError}</span>}
+          {saveError && <span className="mr-auto text-xs text-critical" role="alert">{saveError}</span>}
           {dirty && !saveError && <span className="mr-auto text-xs text-fg-faint" role="status" aria-live="polite">unsaved changes</span>}
-          <button type="button" onClick={requestClose} className={`rounded border border-line bg-bg-1 px-3 py-1.5 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg ${FOCUS}`}>{confirmDiscard ? 'discard' : 'cancel'}</button>
-          <button
-            type="button"
+          <Button variant="secondary" onClick={requestClose}>{confirmDiscard ? 'discard' : 'cancel'}</Button>
+          <Button
+            variant="primary"
             onClick={onSave}
-            disabled={!draft || saving || !dirty}
-            className={`flex items-center gap-1.5 rounded border border-accent/60 bg-bg-1 px-3 py-1.5 text-xs text-accent transition hover:bg-bg-2 active:scale-[0.97] disabled:opacity-50 ${FOCUS}`}
+            disabled={!draft || saving || !dirty || validateAppearanceDraft(draft.appearance).length > 0}
           >
             <Check className="size-3.5" /> {saving ? 'saving…' : 'save'}
-          </button>
+          </Button>
         </div>
-      </div>
+      </Dialog>
 
       {acctEditor && draft && (
         <AccountEditor
@@ -222,6 +237,6 @@ export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snap
           }}
         />
       )}
-    </div>
+    </>
   )
 }

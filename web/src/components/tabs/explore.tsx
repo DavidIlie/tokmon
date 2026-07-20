@@ -6,6 +6,7 @@ import { useShare } from '../share-provider'
 import { ExploreTable } from '../explore'
 import { Search, Share, X } from '../icons'
 import { Segmented } from '../ui/controls'
+import { FOCUS_RING } from '../ui/primitives'
 
 const GRANULARITIES: ReadonlyArray<{ value: Granularity; label: string }> = [
   { value: 'daily', label: 'daily' },
@@ -66,7 +67,7 @@ export function ExploreTab({ snapshot, filters, periodLabel, privacyMode }: {
               ...modelShare,
               accounts: modelShare.accounts.map(account => ({ ...account, name: privacyText(account.name, privacyMode) })),
             })}
-            className="flex items-center gap-1.5 rounded border border-line bg-bg-1 px-2.5 py-1 text-xs text-fg-dim transition hover:border-accent/60 hover:text-accent active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent max-sm:py-2"
+            className={`flex items-center gap-1.5 rounded border border-line bg-bg-1 px-2.5 py-1 text-xs text-fg-dim transition hover:border-accent/60 hover:text-accent active:scale-[0.97] max-sm:py-2 ${FOCUS_RING}`}
             title="Create a shareable model image"
           >
             <Share className="size-3.5" /><span>share model</span>
@@ -87,7 +88,7 @@ export function ExploreTab({ snapshot, filters, periodLabel, privacyMode }: {
             className="w-32 bg-transparent text-fg outline-none placeholder:text-fg-faint [&::-webkit-search-cancel-button]:appearance-none"
           />
           {query ? (
-            <button type="button" onClick={() => setQuery('')} aria-label="Clear row filter" className="rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent">
+            <button type="button" onClick={() => setQuery('')} aria-label="Clear row filter" className={`rounded ${FOCUS_RING}`}>
               <X className="size-3 text-fg-faint hover:text-fg" />
             </button>
           ) : null}

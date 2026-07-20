@@ -48,6 +48,7 @@ const snapshot: WebSnapshot = {
     email: 'work@example.com',
     displayName: 'Work',
     plan: 'Pro',
+    lastActivityAt: null,
     dashboard: null,
     table: {
       daily: [

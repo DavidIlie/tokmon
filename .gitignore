@@ -5,3 +5,7 @@ dist/
 .DS_Store
 .playwright-mcp/
 .agent-swarm/
+src/desktop/release/
+site/node_modules/
+site/dist/
+site/.astro/

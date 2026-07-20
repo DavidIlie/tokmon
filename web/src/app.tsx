@@ -3,19 +3,31 @@ import {
   createHashHistory, createRootRoute, createRoute, createRouter,
   Link, Outlet, RouterProvider, useRouterState,
 } from '@tanstack/react-router'
-import { DEFAULTS, type WebSnapshot } from '@shared'
+import { DEFAULTS, isDarkOnlyThemePreset, type ConfigState, type WebSnapshot } from '@shared'
 
 import { FilterBar } from './components/filter-bar'
 import { ShareControl } from './components/share-card'
-import { Moon, Refresh, Settings, Sun } from './components/icons'
 import { TABS, type TabKey } from './components/tab-definitions'
+import {
+  Connecting,
+  connectionMessage,
+  ConnDot,
+  focusDashboard,
+  PeakStatusBadge,
+  RefreshButton,
+  SettingsButton,
+  ThemeToggle,
+  type RefreshPhase,
+} from './components/app-chrome'
 import { deriveAll, hasBillingSignal, PERIODS, type Derived, type Filters } from './lib/derive'
-import { fmtAgo, fmtResetAt } from './lib/format'
 import { cleanUnavailableFilters } from './lib/filter-cleanup'
 import { useFilters } from './lib/useFilters'
-import { useSnapshot, type ConnState } from './lib/useSnapshot'
-import { refreshAllData, subscribeConfig } from './lib/config-client'
+import { useSnapshot } from './lib/useSnapshot'
+import { configStateFromUpdateFailure, refreshAllData, subscribeConfig, togglePrivacyMode } from './lib/config-client'
 import { isRefreshShortcut } from './lib/refresh-shortcut'
+import { isPrivacyShortcut } from './lib/privacy-shortcut'
+import { useTheme } from './components/theme-provider'
+import { themeVisualization } from './lib/theme-visualization'
 
 const loadOverview = () => Promise.all([
     import('./components/tabs/overview'),
@@ -65,159 +77,34 @@ const useDashboard = (): DashCtx => {
   return c
 }
 
-function useNow(intervalMs = 1000): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), intervalMs)
-    return () => clearInterval(id)
-  }, [intervalMs])
-  return now
-}
-
-function useTheme(): ['dark' | 'light', () => void] {
-  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
-    document.documentElement.classList.contains('light') ? 'light' : 'dark')
-  useEffect(() => {
-    document.documentElement.classList.toggle('light', theme === 'light')
-    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
-      ?.setAttribute('content', theme === 'light' ? '#f4f5f5' : '#0a0a0a')
-  }, [theme])
-  const toggle = () => {
-    const next = theme === 'dark' ? 'light' : 'dark'
-    try { localStorage.setItem('tokmon-theme', next) } catch { }
-    setTheme(next)
-  }
-  return [theme, toggle]
-}
-
-function ThemeToggle({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
-      aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-      className="rounded border border-line bg-bg-1 p-1.5 text-fg-dim transition hover:border-line-2 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent max-sm:p-2.5"
-    >
-      {theme === 'dark' ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
-    </button>
-  )
-}
-
-function ConnDot({ conn, freshAt }: { conn: ConnState; freshAt: number | null }) {
-  const now = useNow()
-  const color = conn === 'live' ? 'var(--color-positive)' : conn === 'error' ? 'var(--color-warning)' : 'var(--color-cost)'
-  const age = freshAt ? fmtAgo(freshAt, now) : null
-  const label = conn === 'live' ? (age ?? 'live')
-    : conn === 'connecting' ? 'connecting…'
-    : conn === 'reconnecting' ? (age ? `reconnecting · ${age}` : 'reconnecting…')
-    : (age ? `offline · ${age}` : 'offline')
-  return (
-    <span className="flex items-center gap-1.5 text-xs" role="status" aria-live="polite">
-      <span className="relative flex size-2" aria-hidden>
-        {conn === 'live' && <span className="absolute inline-flex size-full animate-ping rounded-full opacity-60" style={{ background: color }} />}
-        <span className="relative inline-flex size-2 rounded-full" style={{ background: color }} />
-      </span>
-      <span className="inline-block truncate text-fg-dim max-sm:max-w-[7rem]">{label}</span>
-    </span>
-  )
-}
-
-function Connecting({ label }: { label: string }) {
-  return (
-    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-2 text-sm text-fg-dim" role="status" aria-live="polite">
-      <span className="font-display text-lg text-fg-dim" aria-hidden>tokmon<span className="cursor-blink text-accent">▋</span></span>
-      <span className="text-fg-faint">{label}</span>
-    </div>
-  )
-}
-
-function connectionMessage(conn: ConnState, fallback: string): string {
-  if (conn === 'error' || conn === 'reconnecting') return 'Connection lost — waiting for the local tokmon daemon…'
-  return fallback
-}
-
-function focusDashboard(): void {
-  const target = document.getElementById('dashboard-content')
-  if (!target) return
-  target.scrollIntoView({ block: 'start' })
-  requestAnimationFrame(() => target.focus({ preventScroll: true }))
-}
-
-function SettingsButton({ onOpen }: { onOpen: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      title="Settings"
-      aria-label="Open settings"
-      className="rounded border border-line bg-bg-1 p-1.5 text-fg-dim transition hover:border-line-2 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent max-sm:p-2.5"
-    >
-      <Settings className="size-3.5" />
-    </button>
-  )
-}
-
-type RefreshPhase = 'idle' | 'refreshing' | 'success' | 'error'
-
-function RefreshButton({ phase, onRefresh }: { phase: RefreshPhase; onRefresh: () => void }) {
-  const label = phase === 'refreshing' ? 'refreshing…'
-    : phase === 'success' ? 'updated'
-    : phase === 'error' ? 'refresh failed'
-    : 'refresh'
-  return (
-    <button
-      type="button"
-      onClick={onRefresh}
-      disabled={phase === 'refreshing'}
-      title="Refresh all data (R)"
-      aria-label="Refresh all data"
-      className="flex items-center gap-1.5 rounded border border-line bg-bg-1 px-2 py-1.5 text-xs text-fg-dim transition hover:border-line-2 hover:text-fg disabled:cursor-wait focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-    >
-      <Refresh className={`size-3.5 ${phase === 'refreshing' ? 'animate-spin motion-reduce:animate-none' : ''}`} />
-      <span className={phase === 'error' ? 'text-warning' : ''}>{label}</span>
-    </button>
-  )
-}
-
-function PeakStatusBadge({ peak, resetDisplay, tz }: {
-  peak: NonNullable<WebSnapshot['peak']>
-  resetDisplay: 'relative' | 'absolute'
-  tz: string
-}) {
-  const color = peak.state === 'peak' ? 'var(--color-warning)' : 'var(--color-positive)'
-  const changesAt = peak.changesAt ?? (peak.minutesUntilChange != null
-    ? new Date(Date.now() + peak.minutesUntilChange * 60_000).toISOString()
-    : null)
-  return (
-    <span className="hidden items-center gap-1 text-xs text-fg-dim lg:flex">
-      <span aria-hidden style={{ color }}>●</span>
-      <span style={{ color }}>{peak.label}</span>
-      {changesAt && <span className="tnum text-fg-faint">({fmtResetAt(changesAt, resetDisplay, Date.now(), tz)})</span>}
-    </span>
-  )
-}
-
 function RootLayout() {
   const { snapshot, conn } = useSnapshot()
   const [filters, setFilters] = useFilters()
-  const [theme, toggleTheme] = useTheme()
+  const theme = useTheme()
   const [showSettings, setShowSettings] = useState(false)
   const [privacyMode, setPrivacyMode] = useState(DEFAULTS.privacyMode)
+  const [privacyToggleKey, setPrivacyToggleKey] = useState(DEFAULTS.privacyToggleKey)
   const [allowNetworkAccess, setAllowNetworkAccess] = useState(DEFAULTS.allowNetworkAccess)
   const [resetDisplay, setResetDisplay] = useState(DEFAULTS.resetDisplay)
   const [refreshPhase, setRefreshPhase] = useState<RefreshPhase>('idle')
   const refreshInFlight = useRef<Promise<void> | null>(null)
+  const privacyInFlight = useRef<Promise<void> | null>(null)
+  const configStateRef = useRef<ConfigState | null>(null)
+  const pendingPrivacyRef = useRef<boolean | null>(null)
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const acceptConfigState = useCallback((state: ConfigState): void => {
+    configStateRef.current = state
+    setPrivacyMode(pendingPrivacyRef.current ?? state.config.privacyMode)
+    setPrivacyToggleKey(state.config.privacyToggleKey)
+    setAllowNetworkAccess(state.config.allowNetworkAccess)
+    setResetDisplay(state.config.resetDisplay)
+  }, [])
 
   useEffect(() => {
     if (conn !== 'live') return
-    return subscribeConfig(state => {
-      setPrivacyMode(state.config.privacyMode)
-      setAllowNetworkAccess(state.config.allowNetworkAccess)
-      setResetDisplay(state.config.resetDisplay)
-    })
-  }, [conn])
+    return subscribeConfig(acceptConfigState)
+  }, [acceptConfigState, conn])
 
   const requestRefresh = useCallback((): void => {
     if (refreshInFlight.current) return
@@ -233,22 +120,50 @@ function RootLayout() {
     refreshInFlight.current = refresh
   }, [])
 
+  const requestPrivacyToggle = useCallback((): void => {
+    if (privacyInFlight.current) return
+    const current = configStateRef.current
+    if (!current) return
+    const desired = !current.config.privacyMode
+    pendingPrivacyRef.current = desired
+    setPrivacyMode(desired)
+    const toggle = togglePrivacyMode(current)
+      .then(state => {
+        pendingPrivacyRef.current = null
+        acceptConfigState(state)
+      })
+      .catch(error => {
+        pendingPrivacyRef.current = null
+        const conflict = configStateFromUpdateFailure(error)
+        acceptConfigState(conflict ?? configStateRef.current ?? current)
+      })
+      .finally(() => { privacyInFlight.current = null })
+    privacyInFlight.current = toggle.then(() => undefined)
+  }, [acceptConfigState])
+
   useEffect(() => {
     if (conn !== 'live' || showSettings) return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!isRefreshShortcut(event)) return
-      event.preventDefault()
-      requestRefresh()
+      if (isPrivacyShortcut(event, privacyToggleKey)) {
+        event.preventDefault()
+        requestPrivacyToggle()
+        return
+      }
+      if (isRefreshShortcut(event)) {
+        event.preventDefault()
+        requestRefresh()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [conn, requestRefresh, showSettings])
+  }, [conn, privacyToggleKey, requestPrivacyToggle, requestRefresh, showSettings])
 
   useEffect(() => () => {
     if (refreshTimer.current) clearTimeout(refreshTimer.current)
   }, [])
 
-  const derived = useMemo(() => deriveAll(snapshot, filters), [snapshot, filters])
+  const baseDerived = useMemo(() => deriveAll(snapshot, filters), [snapshot, filters])
+  const derived = useMemo(() => themeVisualization(baseDerived, theme.appearance), [baseDerived, theme.appearance])
   const periodLabel = PERIODS.find(p => p.key === filters.period)?.label ?? filters.period
   const scopeLabel = filters.period === 'all' ? undefined : periodLabel
 
@@ -305,7 +220,12 @@ function RootLayout() {
               <ConnDot conn={conn} freshAt={snapshot?.generatedAt ?? null} />
               {conn === 'live' && <RefreshButton phase={refreshPhase} onRefresh={requestRefresh} />}
               {conn === 'live' && <SettingsButton onOpen={() => setShowSettings(true)} />}
-              <ThemeToggle theme={theme} onToggle={toggleTheme} />
+              <ThemeToggle
+                mode={theme.appearance.mode}
+                resolvedMode={theme.resolved.mode}
+                disabled={!theme.ready || isDarkOnlyThemePreset(theme.appearance.preset)}
+                onToggle={() => { void theme.toggleMode() }}
+              />
               {ready && (hasUsage || hasBilling) && (
                 <ShareControl derived={derived} periodLabel={periodLabel} tz={snapshot?.tz ?? ''} version={snapshot?.version ?? ''} />
               )}
@@ -334,7 +254,7 @@ function RootLayout() {
 
       <main id="dashboard-content" tabIndex={-1} className="mx-auto max-w-[1600px] px-5 2xl:max-w-[1920px] py-5 focus:outline-none">
         {allowNetworkAccess && (
-          <div className="mb-4 rounded border border-warning/60 bg-warning/10 px-3 py-2 text-xs text-warning" role="alert">
+          <div className="mb-4 rounded border border-critical/60 bg-critical/10 px-3 py-2 text-xs text-critical" role="alert">
             Unsafe network access is enabled. This dashboard may be reachable from your LAN after the daemon restarts.
           </div>
         )}

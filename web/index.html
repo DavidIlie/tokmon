@@ -9,8 +9,34 @@
     <meta name="description" content="Live LLM usage & cost dashboard" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230f1416'/%3E%3Ctext x='3' y='12' font-family='monospace' font-size='10' fill='%2300d787'%3E%24_%3C/text%3E%3C/svg%3E" />
     <script>
-      // Apply saved theme before first paint to avoid a flash. Default: dark.
-      try { if (localStorage.getItem('tokmon-theme') === 'light') document.documentElement.classList.add('light') } catch (e) {}
+      // A validated resolved-palette cache bridges first paint only. The daemon
+      // config remains authoritative and reconciles this as soon as RPC connects.
+      (function () {
+        var root = document.documentElement
+        var vars = ['--color-bg-0','--color-bg-1','--color-bg-2','--color-bg-3','--color-line','--color-line-2','--color-line-faint','--color-fg','--color-fg-dim','--color-fg-faint','--color-fg-bright','--color-accent','--color-cost','--color-positive','--color-ok','--color-warning','--color-critical','--color-unknown','--color-card','--color-card-hover','--color-divider','--color-track','--color-accent-tint','--color-accent-on','--color-focus-ring']
+        var presets = ['tokmon','phosphor','vscode','monokai','dracula','github','nord','one-dark-pro','solarized','tokyo-night','catppuccin','midnight','forest','sunset','cyberpunk','synthwave','luxury','minimal','custom']
+        var cache = null
+        try {
+          var parsed = JSON.parse(localStorage.getItem('tokmon-theme-cache-v1') || 'null')
+          var entries = parsed && parsed.vars && Object.entries(parsed.vars)
+          var valid = parsed && parsed.version === 1 && (parsed.mode === 'light' || parsed.mode === 'dark') &&
+            presets.indexOf(parsed.preset) !== -1 &&
+            entries && entries.length === vars.length && entries.every(function (entry) {
+              return vars.indexOf(entry[0]) !== -1 && /^#[0-9a-f]{6}$/i.test(entry[1])
+            })
+          if (valid) cache = parsed
+        } catch (_) {}
+        var mode = cache ? cache.mode : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        root.classList.add(mode)
+        root.style.colorScheme = mode
+        root.dataset.themeMode = mode
+        if (cache) {
+          root.dataset.themePreset = cache.preset
+          Object.entries(cache.vars).forEach(function (entry) { root.style.setProperty(entry[0], entry[1]) })
+        }
+        document.querySelector('meta[name="color-scheme"]').setAttribute('content', mode)
+        document.querySelector('meta[name="theme-color"]').setAttribute('content', cache ? cache.vars['--color-bg-0'] : (mode === 'light' ? '#f4f5f5' : '#0a0a0a'))
+      })()
     </script>
   </head>
   <body>

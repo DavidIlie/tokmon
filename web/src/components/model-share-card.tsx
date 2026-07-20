@@ -5,6 +5,8 @@ import { fmtCost, fmtCostAxis, fmtCount, fmtDayLabel, fmtTokens, sumTokens } fro
 import { modelColor, shortModel, TOKEN_BUCKET } from '../lib/colors'
 import { GRID } from './chart'
 import { Watermark } from './watermark'
+import { useTheme } from './theme-provider'
+import { dataInkColor } from '../lib/theme-visualization'
 
 export interface ModelShareOpts {
   glow: boolean
@@ -20,7 +22,9 @@ export const ModelShareCard = forwardRef<HTMLDivElement, {
   source: ModelSource
   opts: ModelShareOpts
 }>(function ModelShareCard({ source, opts }, ref) {
-  const color = modelColor(source.model)
+  const theme = useTheme()
+  const preset = theme.appearance.preset
+  const color = dataInkColor(preset, 0, modelColor(source.model))
   const totalTokens = sumTokens(source.totals)
   const accountRows = compactAccounts(source.accounts)
   const maxCost = Math.max(...source.daily.map(d => d.cost), 0)
@@ -68,10 +72,10 @@ export const ModelShareCard = forwardRef<HTMLDivElement, {
 
         <section className="flex min-w-0 flex-col gap-4 border-l border-line pl-7">
           <div className="grid grid-cols-4 gap-2">
-            <TokenStat label="input" value={source.totals.input} color={TOKEN_BUCKET.input} />
-            <TokenStat label="output" value={source.totals.output} color={TOKEN_BUCKET.output} />
-            <TokenStat label="cache create" value={source.totals.cacheCreate} color={TOKEN_BUCKET.cacheCreate} />
-            <TokenStat label="cache read" value={source.totals.cacheRead} color={TOKEN_BUCKET.cacheRead} />
+            <TokenStat label="input" value={source.totals.input} color={dataInkColor(preset, 1, TOKEN_BUCKET.input)} />
+            <TokenStat label="output" value={source.totals.output} color={dataInkColor(preset, 2, TOKEN_BUCKET.output)} />
+            <TokenStat label="cache create" value={source.totals.cacheCreate} color={dataInkColor(preset, 3, TOKEN_BUCKET.cacheCreate)} />
+            <TokenStat label="cache read" value={source.totals.cacheRead} color={dataInkColor(preset, 4, TOKEN_BUCKET.cacheRead)} />
           </div>
 
           <div>
@@ -82,18 +86,19 @@ export const ModelShareCard = forwardRef<HTMLDivElement, {
             <div className="flex flex-col gap-1.5">
               {accountRows.length === 0 ? (
                 <div className="rounded border border-line bg-bg-1 px-3 py-5 text-center text-xs text-fg-faint">no usage in range</div>
-              ) : accountRows.map(row => {
+              ) : accountRows.map((row, index) => {
                 const share = source.totals.cost > 0 ? (row.cost / source.totals.cost) * 100 : 0
+                const rowColor = dataInkColor(preset, index + 1, row.color)
                 return (
                   <div key={`${row.providerId}:${row.name}`} className="grid grid-cols-[minmax(0,1fr)_76px_78px] items-center gap-3 text-xs">
                     <span className="flex min-w-0 items-center gap-2">
-                      <span className="size-2 shrink-0 rounded-[2px]" style={{ background: row.color }} />
+                      <span className="size-2 shrink-0 rounded-[2px]" style={{ background: rowColor }} />
                       <span className="truncate text-fg-dim" title={row.providerId === 'other' ? row.name : accountLabel(row)}>{row.providerId === 'other' ? row.name : accountLabel(row)}</span>
                     </span>
                     <span className="tnum text-right text-cost">{fmtCost(row.cost)}</span>
                     <span className="tnum text-right text-fg-faint">{fmtTokens(row.tokens)}</span>
                     <span className="col-span-3 h-1 overflow-hidden rounded-full bg-bg-3">
-                      <span className="block h-full rounded-full" style={{ width: `${Math.min(100, share)}%`, minWidth: row.cost > 0 ? 2 : 0, background: row.color }} />
+                      <span className="block h-full rounded-full" style={{ width: `${Math.min(100, share)}%`, minWidth: row.cost > 0 ? 2 : 0, background: rowColor }} />
                     </span>
                   </div>
                 )

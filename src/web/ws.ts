@@ -6,11 +6,18 @@ import { Effect, Exit, Layer, Queue, Scope, Stream } from 'effect'
 import { RpcSerialization, RpcServer } from 'effect/unstable/rpc'
 import type { Config } from '../config'
 import { loadConfig } from '../config'
-import { TOKMON_WS_METHODS, TOKMON_WS_PATH, TokmonRpcGroup } from '../rpc/contract'
+import {
+  ConfigPersistenceFailure as ConfigPersistenceRpcFailure,
+  ConfigUpdateConflictFailure,
+  RefreshFailure,
+  TOKMON_WS_METHODS,
+  TOKMON_WS_PATH,
+  TokmonRpcGroup,
+} from '../rpc/contract'
 import {
   applyConfigUpdate,
   ConfigConflictError,
-  ConfigPersistenceError,
+  ConfigPersistenceError as ConfigPersistenceWriteError,
   toConfigState,
 } from './config-control'
 import type { DataEngine } from './data-engine'
@@ -61,14 +68,49 @@ function configStream(engine: DataEngine) {
     }), { bufferSize: 16, strategy: 'sliding' })
 }
 
-function toConfigUpdateFailure(error: unknown) {
+type ConfigRpcFailure = ConfigUpdateConflictFailure | ConfigPersistenceRpcFailure
+
+function configUpdateFailureEffect(error: unknown): Effect.Effect<never, ConfigRpcFailure> {
   if (error instanceof ConfigConflictError) {
-    return { kind: 'conflict' as const, state: error.state }
+    return Effect.fail(new ConfigUpdateConflictFailure({ kind: 'conflict', state: error.state }))
   }
-  if (error instanceof ConfigPersistenceError) {
-    return { kind: 'persistence' as const, message: error.message }
+  if (error instanceof ConfigPersistenceWriteError) {
+    return Effect.fail(new ConfigPersistenceRpcFailure({ kind: 'persistence', message: error.message }))
   }
-  return { kind: 'persistence' as const, message: error instanceof Error ? error.message : 'config update failed' }
+  return Effect.die(error)
+}
+
+function configUpdateEffect(
+  engine: DataEngine,
+  state: { config: Config },
+  input: Parameters<typeof applyConfigUpdate>[2],
+): Effect.Effect<Awaited<ReturnType<typeof applyConfigUpdate>>, ConfigRpcFailure> {
+  return Effect.tryPromise({
+    try: () => applyConfigUpdate(engine, state, input),
+    catch: error => error,
+  }).pipe(Effect.matchEffect({
+    onFailure: configUpdateFailureEffect,
+    onSuccess: Effect.succeed,
+  }))
+}
+
+function refreshFailureEffect(error: unknown): Effect.Effect<never, RefreshFailure> {
+  return error instanceof AggregateError
+    ? Effect.fail(new RefreshFailure({ kind: 'refresh', message: error.message }))
+    : Effect.die(error)
+}
+
+function refreshEffect(
+  engine: DataEngine,
+  scope: Parameters<DataEngine['refresh']>[0],
+): Effect.Effect<void, RefreshFailure> {
+  return Effect.tryPromise({
+    try: () => engine.refresh(scope),
+    catch: error => error,
+  }).pipe(Effect.matchEffect({
+    onFailure: refreshFailureEffect,
+    onSuccess: Effect.succeed,
+  }))
 }
 
 export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<() => Promise<void>> {
@@ -78,16 +120,13 @@ export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<
   const handlersLayer = TokmonRpcGroup.toLayer(
     TokmonRpcGroup.of({
       [TOKMON_WS_METHODS.getConfig]: () =>
-        Effect.tryPromise(() => Promise.resolve(deps.state.config ?? loadConfig()).then(toConfigState)),
+        Effect.promise(() => Promise.resolve(deps.state.config ?? loadConfig()).then(toConfigState)),
       [TOKMON_WS_METHODS.setConfig]: (config) =>
-        Effect.tryPromise({
-          try: () => applyConfigUpdate(deps.engine, deps.state, config as never),
-          catch: toConfigUpdateFailure,
-        }),
+        configUpdateEffect(deps.engine, deps.state, config as never),
       [TOKMON_WS_METHODS.refresh]: ({ scope }) =>
-        Effect.promise(() => deps.engine.refresh(scope)),
+        refreshEffect(deps.engine, scope),
       [TOKMON_WS_METHODS.browseFs]: ({ path }) =>
-        Effect.tryPromise(() => listHomeDirectory(path)),
+        Effect.promise(() => listHomeDirectory(path)),
       [TOKMON_WS_METHODS.snapshot]: () => snapshotStream(deps.engine),
       [TOKMON_WS_METHODS.config]: () => configStream(deps.engine).pipe(Stream.map(toConfigState)),
     }),

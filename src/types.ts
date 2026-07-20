@@ -37,6 +37,8 @@ export interface DashboardData {
   month: UsageSummary
   burnRate: number
   series: number[]
+  /** Newest real usage event represented by this summary, as Unix milliseconds. */
+  lastActivityAt: number | null
 }
 
 export interface TableData {

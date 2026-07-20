@@ -1,8 +1,9 @@
-import { configLocation } from './config'
+import { configLocation, type Config } from './config'
 import { PROVIDER_IDS, type ProviderId } from './providers/types'
 import { attachOrSpawn } from './client/daemon-handle'
-import { createDaemonRpcClient } from './client/daemon-rpc-client'
+import { createDaemonRpcClient, type DaemonRpcClient } from './client/daemon-rpc-client'
 import { withTimeout } from './async'
+import type { ConfigState, ConfigUpdateRequest } from './rpc/contract'
 import {
   buildProvidersReport,
   buildUsageReport,
@@ -19,7 +20,10 @@ export type QueryCommand = 'usage' | 'models' | 'query' | 'providers' | 'snapsho
 export interface QueryCommandDependencies {
   fetchSnapshot?: typeof fetchDaemonSnapshot
   configPath?: () => string
+  connectConfig?: typeof connectDaemonConfig
 }
+
+type ConfigClient = Pick<DaemonRpcClient, 'getConfig' | 'setConfig' | 'close'>
 
 interface ParsedQueryArgs {
   help: boolean
@@ -90,15 +94,35 @@ Options:
   -h, --help                    Show this help
 `
 
-const CONFIG_HELP = `tokmon config - Print tokmon's configuration file location
+const CONFIG_HELP = `tokmon config - Read and update tokmon settings
 
 Usage:
   tokmon config [path]
   tokmon config --json
+  tokmon config get [--json]
+  tokmon config set <setting> <value> [--json]
+
+Settings:
+  privacy <on|off>
+  privacy-key <char>
+  menu-bar-pins <ids|none>       Comma-separated provider ids; at most 2
+  menu-bar-text <on|off>
+  summary-mode <smart|tightest>
+  expanded-providers <ids|none>  Comma-separated provider ids
+  active-window <minutes>        1..1440
+  launch-at-login <on|off>
 
 Options:
-      --json                    Emit { "path": "..." }
+      --json                    Emit machine-readable JSON
+      --compact                 Emit compact JSON
+      --timeout <seconds>       Daemon connection timeout (default: 45)
   -h, --help                    Show this help
+
+Examples:
+  tokmon config get
+  tokmon config set privacy off
+  tokmon config set menu-bar-pins claude,codex
+  tokmon config set summary-mode smart --json
 `
 
 function valueAfter(args: string[], index: number, name: string): [string, number] {
@@ -185,6 +209,16 @@ function isSnapshot(value: unknown): value is WebSnapshot {
 
 const delay = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms) })
 
+export async function connectDaemonConfig(timeoutMs: number): Promise<ConfigClient> {
+  const handle = await attachOrSpawn({ timeoutMs })
+  if (handle.kind !== 'spawned' || !handle.baseUrl) throw new Error('tokmon daemon is unavailable')
+  return createDaemonRpcClient(handle.baseUrl, {
+    transport: 'node',
+    reconnectAttempts: 2,
+    reconnectBaseDelayMs: 100,
+  })
+}
+
 export async function fetchDaemonSnapshot(timeoutMs: number, refresh: 'table' | 'all' | null): Promise<WebSnapshot> {
   const handle = await attachOrSpawn({ timeoutMs })
   if (handle.kind !== 'spawned' || !handle.baseUrl) throw new Error('tokmon daemon is unavailable')
@@ -234,6 +268,210 @@ function rejectsOption(args: string[], names: string[]): string | null {
   return null
 }
 
+type ConfigSetting =
+  | 'privacy'
+  | 'privacy-key'
+  | 'menu-bar-pins'
+  | 'menu-bar-text'
+  | 'summary-mode'
+  | 'expanded-providers'
+  | 'active-window'
+  | 'launch-at-login'
+
+const CONFIG_SETTINGS: readonly ConfigSetting[] = [
+  'privacy',
+  'privacy-key',
+  'menu-bar-pins',
+  'menu-bar-text',
+  'summary-mode',
+  'expanded-providers',
+  'active-window',
+  'launch-at-login',
+]
+
+interface ConfigReport {
+  revision: number
+  privacy: 'on' | 'off'
+  privacyKey: string
+  menuBarPins: string[]
+  menuBarText: 'on' | 'off'
+  summaryMode: 'smart' | 'tightest'
+  expandedProviders: string[]
+  activeWindowMinutes: number
+  launchAtLogin: 'on' | 'off'
+}
+
+function configReport(config: Config): ConfigReport {
+  return {
+    revision: config.revision,
+    privacy: config.privacyMode ? 'on' : 'off',
+    privacyKey: config.privacyToggleKey,
+    menuBarPins: [...config.tray.pinnedProviders],
+    menuBarText: config.tray.showMenuBarText ? 'on' : 'off',
+    summaryMode: config.tray.displayMetric === 'smartHeadroom' ? 'smart' : 'tightest',
+    expandedProviders: [...config.desktop.expandedProviders],
+    activeWindowMinutes: config.tray.activeTimeoutMin,
+    launchAtLogin: config.tray.launchAtLogin ? 'on' : 'off',
+  }
+}
+
+function formatConfigReport(report: ConfigReport): string {
+  const list = (values: readonly string[]) => values.length > 0 ? values.join(',') : 'none'
+  return [
+    `privacy             ${report.privacy}`,
+    `privacy-key         ${report.privacyKey}`,
+    `menu-bar-pins       ${list(report.menuBarPins)}`,
+    `menu-bar-text       ${report.menuBarText}`,
+    `summary-mode        ${report.summaryMode}`,
+    `expanded-providers  ${list(report.expandedProviders)}`,
+    `active-window       ${report.activeWindowMinutes}m`,
+    `launch-at-login     ${report.launchAtLogin}`,
+  ].join('\n') + '\n'
+}
+
+function onOff(value: string, setting: ConfigSetting): boolean {
+  if (value === 'on') return true
+  if (value === 'off') return false
+  throw new Error(`${setting} must be on or off`)
+}
+
+function providerList(value: string, setting: ConfigSetting, max: number = PROVIDER_IDS.length): ProviderId[] {
+  if (value === 'none') return []
+  const raw = value.split(',').map(item => item.trim())
+  if (raw.length === 0 || raw.some(item => item.length === 0)) {
+    throw new Error(`${setting} must be a comma-separated provider list or none`)
+  }
+  const unique = [...new Set(raw)]
+  for (const provider of unique) {
+    if (!PROVIDER_IDS.includes(provider as ProviderId)) throw new Error(`unknown provider: ${provider}`)
+  }
+  if (unique.length > max) throw new Error(`${setting} accepts at most ${max} providers`)
+  return unique as ProviderId[]
+}
+
+function settingMutation(setting: ConfigSetting, value: string): { mutate(config: Config): Config; display: string | number | string[] } {
+  if (setting === 'privacy') {
+    const enabled = onOff(value, setting)
+    return { mutate: config => ({ ...config, privacyMode: enabled }), display: value }
+  }
+  if (setting === 'privacy-key') {
+    if (value.length !== 1 || /\s|\p{Cc}/u.test(value)) throw new Error('privacy-key must be one printable non-whitespace character')
+    return { mutate: config => ({ ...config, privacyToggleKey: value }), display: value }
+  }
+  if (setting === 'menu-bar-pins') {
+    const providers = providerList(value, setting, 2)
+    return {
+      mutate: config => ({
+        ...config,
+        tray: { ...config.tray, pinnedProviders: providers, pins: [], pinnedAccount: null },
+      }),
+      display: providers,
+    }
+  }
+  if (setting === 'menu-bar-text') {
+    const enabled = onOff(value, setting)
+    return { mutate: config => ({ ...config, tray: { ...config.tray, showMenuBarText: enabled } }), display: value }
+  }
+  if (setting === 'summary-mode') {
+    if (value !== 'smart' && value !== 'tightest') throw new Error('summary-mode must be smart or tightest')
+    const displayMetric = value === 'smart' ? 'smartHeadroom' : 'tightestRemaining'
+    return { mutate: config => ({ ...config, tray: { ...config.tray, displayMetric } }), display: value }
+  }
+  if (setting === 'expanded-providers') {
+    const providers = providerList(value, setting)
+    return {
+      mutate: config => ({ ...config, desktop: { ...config.desktop, expandedProviders: providers } }),
+      display: providers,
+    }
+  }
+  if (setting === 'active-window') {
+    const minutes = Number(value)
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1_440) throw new Error('active-window must be an integer from 1 to 1440 minutes')
+    return { mutate: config => ({ ...config, tray: { ...config.tray, activeTimeoutMin: minutes } }), display: minutes }
+  }
+  const enabled = onOff(value, setting)
+  return { mutate: config => ({ ...config, tray: { ...config.tray, launchAtLogin: enabled } }), display: value }
+}
+
+function isConfigConflict(cause: unknown): boolean {
+  return !!cause && typeof cause === 'object' && (cause as { kind?: unknown }).kind === 'conflict'
+}
+
+async function readDaemonConfig(
+  timeoutMs: number,
+  connect: typeof connectDaemonConfig,
+): Promise<{
+  state: ConfigState
+  close(): Promise<void>
+  get(): Promise<ConfigState>
+  set(update: ConfigUpdateRequest): Promise<ConfigState>
+}> {
+  const client = await connect(timeoutMs)
+  try {
+    const state = await withTimeout(client.getConfig(), timeoutMs)
+    return {
+      state,
+      close: () => client.close(),
+      get: () => withTimeout(client.getConfig(), timeoutMs),
+      set: update => withTimeout(client.setConfig(update), timeoutMs),
+    }
+  } catch (cause) {
+    await client.close().catch(() => {})
+    throw cause
+  }
+}
+
+async function runConfigCommand(
+  args: ParsedQueryArgs,
+  configPath: () => string,
+  connect: typeof connectDaemonConfig,
+): Promise<string> {
+  const [action, settingName, value, ...extra] = args.positionals
+  if (!action || action === 'path') {
+    if (settingName || value || extra.length > 0) throw new Error('usage: tokmon config [path] [--json]')
+    return args.json ? json({ path: configPath() }, args.compact) : `${configPath()}\n`
+  }
+  if (action !== 'get' && action !== 'set') throw new Error('usage: tokmon config [path|get|set]')
+  if (action === 'get') {
+    if (settingName || value || extra.length > 0) throw new Error('usage: tokmon config get [--json]')
+    const daemon = await readDaemonConfig(args.timeoutMs, connect)
+    try {
+      const report = configReport(daemon.state.config)
+      return args.json ? json(report, args.compact) : formatConfigReport(report)
+    } finally {
+      await daemon.close().catch(() => {})
+    }
+  }
+  if (!settingName || !CONFIG_SETTINGS.includes(settingName as ConfigSetting) || value === undefined || extra.length > 0) {
+    throw new Error('usage: tokmon config set <setting> <value>')
+  }
+  const setting = settingName as ConfigSetting
+  const update = settingMutation(setting, value)
+  const daemon = await readDaemonConfig(args.timeoutMs, connect)
+  try {
+    let base = daemon.state
+    let saved: ConfigState | null = null
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        saved = await daemon.set({
+          expectedRevision: base.config.revision,
+          config: update.mutate(base.config),
+        })
+        break
+      } catch (cause) {
+        if (attempt > 0 || !isConfigConflict(cause)) throw cause
+        // A field-scoped command can safely reapply itself to one fresh daemon state.
+        base = await daemon.get()
+      }
+    }
+    if (!saved) throw new Error('config update failed')
+    const result = { setting, value: update.display, revision: saved.config.revision }
+    return args.json ? json(result, args.compact) : `${setting} ${Array.isArray(update.display) ? update.display.join(',') || 'none' : update.display}\n`
+  } finally {
+    await daemon.close().catch(() => {})
+  }
+}
+
 export function queryHelp(command: QueryCommand): string {
   if (command === 'providers') return PROVIDERS_HELP
   if (command === 'snapshot') return SNAPSHOT_HELP
@@ -251,12 +489,9 @@ export async function runQueryCommand(
   const getConfigPath = dependencies.configPath ?? configLocation
 
   if (command === 'config') {
-    const invalid = rejectsOption(args, ['--period', '--provider', '--account', '--model', '--refresh', '--cached', '--no-refresh', '--timeout'])
+    const invalid = rejectsOption(args, ['--period', '--provider', '--account', '--model', '--refresh', '--cached', '--no-refresh'])
     if (invalid) throw new Error(`${invalid} is not valid for tokmon config`)
-    if (parsed.positionals.length > 1 || (parsed.positionals[0] && parsed.positionals[0] !== 'path')) {
-      throw new Error('usage: tokmon config [path] [--json]')
-    }
-    return parsed.json ? json({ path: getConfigPath() }, parsed.compact) : `${getConfigPath()}\n`
+    return runConfigCommand(parsed, getConfigPath, dependencies.connectConfig ?? connectDaemonConfig)
   }
   if (command === 'providers' || command === 'snapshot') {
     const invalid = rejectsOption(args, ['--period', '--provider', '--account', '--model', '--cached', '--no-refresh'])

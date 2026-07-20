@@ -1,0 +1,323 @@
+---
+import Layout from "../layouts/Layout.astro";
+import CopyCommand from "../components/CopyCommand.astro";
+import { PLATFORM_TARGETS } from "../lib/releases.ts";
+import { RELEASES_URL, FALLBACK_VERSION } from "../lib/site.ts";
+
+const title = "Download Tokmon — desktop app for macOS, Windows & Linux";
+const description =
+  "Download the Tokmon desktop menu-bar app for macOS (Apple Silicon & Intel), Windows, and Linux (AppImage & .deb), or install the CLI with npx.";
+
+// Group platform targets by OS for the card layout.
+const groups = [
+  { os: "macOS", keys: ["mac-arm64", "mac-x64"] },
+  { os: "Windows", keys: ["win-x64"] },
+  { os: "Linux", keys: ["linux-appimage", "linux-deb"] },
+] as const;
+
+const targetByKey = Object.fromEntries(PLATFORM_TARGETS.map((t) => [t.key, t]));
+---
+
+<Layout title={title} description={description} active="download">
+  <section class="dl-hero">
+    <div class="wrap">
+      <p class="eyebrow">Desktop app</p>
+      <h1 class="dl-title">Download Tokmon</h1>
+      <p class="dl-sub muted">
+        Signed installers for macOS and Windows, plus AppImage and Debian
+        packages for Linux. The menu-bar / tray app keeps your most important
+        quota visible without opening a terminal.
+      </p>
+      <p class="dl-version">
+        Latest release
+        <a href={RELEASES_URL} rel="noopener" data-version-link>
+          <span class="tnum" data-version>{FALLBACK_VERSION}</span>
+        </a>
+        <span class="dl-pending" data-pending-note>
+          · desktop installers are not yet published for this release
+        </span>
+      </p>
+    </div>
+  </section>
+
+  <section class="wrap">
+    {
+      groups.map((group) => (
+        <div class="dl-group">
+          <h2 class="dl-group-h">{group.os}</h2>
+          <div class="dl-cards">
+            {group.keys.map((key) => {
+              const t = targetByKey[key]!;
+              return (
+                <div class="panel dl-card" data-platform={key}>
+                  <div class="dl-card-main">
+                    <h3 class="dl-card-label">{t.label}</h3>
+                    <p class="dl-card-sub muted">{t.sublabel}</p>
+                    <p class="dl-card-size muted" data-size hidden />
+                  </div>
+                  <a
+                    class="btn dl-card-btn"
+                    href={RELEASES_URL}
+                    rel="noopener"
+                    data-dl-btn
+                  >
+                    <span data-dl-btn-label>Not yet published</span>
+                  </a>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))
+    }
+    <p class="dl-note muted">
+      Until installers are attached to the latest release, these buttons link to
+      the <a href={RELEASES_URL} rel="noopener">GitHub Releases</a> page. They
+      switch to direct, signed downloads automatically once artifacts publish.
+    </p>
+  </section>
+
+  <section class="wrap dl-cli">
+    <div class="panel dl-cli-panel">
+      <div>
+        <h2 class="dl-group-h">Prefer the CLI?</h2>
+        <p class="muted">
+          Run it without installing, or add it globally. Same daemon, same
+          numbers as the desktop app.
+        </p>
+      </div>
+      <div class="dl-cli-cmds">
+        <CopyCommand command="npx tokmon" label="Run without installing" />
+        <CopyCommand command="npm install -g tokmon" label="Global install" />
+        <CopyCommand command="pnpm dlx tokmon" label="Run with pnpm" />
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap dl-changelog">
+    <h2 class="dl-group-h">What's new</h2>
+    <div class="panel dl-changelog-body">
+      <div class="dl-changelog-head">
+        <span class="tnum" data-changelog-version>{FALLBACK_VERSION}</span>
+        <a href={RELEASES_URL} rel="noopener" class="dl-changelog-link">All releases →</a>
+      </div>
+      <pre class="dl-changelog-text" data-changelog>Release notes load from GitHub. View the full changelog on the <a href={RELEASES_URL} rel="noopener">Releases</a> page.</pre>
+    </div>
+  </section>
+
+  <script>
+    import {
+      fetchLatestRelease,
+      pickAsset,
+      type PlatformKey,
+    } from "../lib/releases.ts";
+
+    function fmtSize(bytes?: number): string {
+      if (!bytes || bytes <= 0) return "";
+      const mb = bytes / (1024 * 1024);
+      return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
+    }
+
+    fetchLatestRelease()
+      .then((release) => {
+        if (!release) return;
+
+        // Version labels.
+        document
+          .querySelectorAll<HTMLElement>("[data-version], [data-changelog-version]")
+          .forEach((el) => (el.textContent = release.tag_name));
+
+        const versionLink = document.querySelector<HTMLAnchorElement>("[data-version-link]");
+        if (versionLink) versionLink.href = release.html_url;
+
+        // Changelog body.
+        const changelog = document.querySelector<HTMLElement>("[data-changelog]");
+        if (changelog && release.body && release.body.trim()) {
+          changelog.textContent = release.body.trim();
+        }
+
+        // Enable platform cards that have a matching artifact.
+        let anyPublished = false;
+        document.querySelectorAll<HTMLElement>("[data-platform]").forEach((card) => {
+          const key = card.dataset.platform as PlatformKey;
+          const asset = pickAsset(release.assets, key);
+          const btn = card.querySelector<HTMLAnchorElement>("[data-dl-btn]");
+          const btnLabel = card.querySelector<HTMLElement>("[data-dl-btn-label]");
+          const sizeEl = card.querySelector<HTMLElement>("[data-size]");
+          if (asset && btn && btnLabel) {
+            anyPublished = true;
+            btn.href = asset.browser_download_url;
+            btn.classList.add("btn-primary");
+            btnLabel.textContent = "Download";
+            const size = fmtSize(asset.size);
+            if (size && sizeEl) {
+              sizeEl.textContent = size;
+              sizeEl.hidden = false;
+            }
+          }
+        });
+
+        if (anyPublished) {
+          document
+            .querySelectorAll<HTMLElement>("[data-pending-note]")
+            .forEach((el) => (el.hidden = true));
+        }
+      })
+      .catch(() => {
+        /* keep the safe server-rendered fallback */
+      });
+  </script>
+
+  <style>
+    .dl-hero {
+      padding-top: 48px;
+      padding-bottom: 8px;
+    }
+    .dl-title {
+      font-family: var(--font-display);
+      font-weight: 400;
+      font-size: clamp(30px, 4.6vw, 46px);
+      color: var(--fg-bright);
+      margin-top: 10px;
+      letter-spacing: 0.01em;
+    }
+    .dl-sub {
+      margin-top: 16px;
+      max-width: 60ch;
+      font-size: 16px;
+    }
+    .dl-version {
+      margin-top: 18px;
+      font-size: 13px;
+      color: var(--fg-dim);
+    }
+    .dl-version a {
+      color: var(--accent);
+    }
+    .dl-pending {
+      color: var(--fg-dim);
+    }
+
+    .dl-group {
+      margin-top: 40px;
+    }
+    .dl-group-h {
+      font-family: var(--font-display);
+      font-size: 15px;
+      color: var(--accent);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+    .dl-cards {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+    }
+    .dl-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 20px;
+    }
+    .dl-card-label {
+      font-size: 15px;
+      color: var(--fg-bright);
+      font-weight: 500;
+    }
+    .dl-card-sub {
+      margin-top: 4px;
+      font-size: 12px;
+    }
+    .dl-card-size {
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--fg-faint);
+    }
+    .dl-card-btn {
+      flex: none;
+    }
+
+    .dl-note {
+      margin-top: 24px;
+      font-size: 13px;
+      max-width: 72ch;
+    }
+    .dl-note a {
+      color: var(--accent);
+      text-decoration: underline;
+      text-underline-offset: 0.18em;
+    }
+
+    .dl-cli {
+      margin-top: 56px;
+    }
+    .dl-cli-panel {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      align-items: center;
+      padding: 28px;
+    }
+    .dl-cli-cmds {
+      display: grid;
+      gap: 12px;
+    }
+
+    .dl-changelog {
+      margin-top: 56px;
+    }
+    .dl-changelog-body {
+      padding: 20px 22px;
+    }
+    .dl-changelog-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+      font-family: var(--font-display);
+      color: var(--fg-bright);
+    }
+    .dl-changelog-link {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--accent);
+    }
+    .dl-changelog-text {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--fg-dim);
+      max-height: 340px;
+      overflow-y: auto;
+    }
+    .dl-changelog-text a {
+      color: var(--accent);
+    }
+
+    @media (max-width: 820px) {
+      .dl-cli-panel {
+        grid-template-columns: 1fr;
+      }
+    }
+    @media (max-width: 560px) {
+      .dl-cards {
+        grid-template-columns: 1fr;
+      }
+      .dl-card {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+      }
+      .dl-card-btn {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+  </style>
+</Layout>
