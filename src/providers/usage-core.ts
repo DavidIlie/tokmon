@@ -12,7 +12,9 @@ import { UsageShardStore, type UsageCacheFingerprint } from './storage/usage-sha
 
 export { finitePositive, safeNum } from './_shared/metric'
 
-export const SPARK_DAYS = 14
+// Keep enough daily points for every UI range. Renderers select their desired
+// trailing window without forcing the daemon to refetch provider history.
+export const SPARK_DAYS = 30
 const DAY_MS = 86_400_000
 
 export interface Entry {

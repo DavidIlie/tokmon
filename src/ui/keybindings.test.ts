@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { DEFAULTS } from '../config'
+import { DEFAULTS, type Config } from '../config'
 import {
   handleKey,
   handleTerminalFocusInput,
@@ -9,6 +9,7 @@ import {
   type InputKey,
   type KeyContext,
 } from './keybindings'
+import { DESKTOP_FIXED_ROWS } from './settings'
 
 test('terminal focus reports are recognized without becoming text input', () => {
   assert.equal(terminalFocusEvent('[I'), 'in')
@@ -163,11 +164,68 @@ test('desktop settings persist tray behavior and enforce the two-provider pin ca
   handleKey('', { ...key, rightArrow: true }, ctx)
   assert.equal(config.tray.displayMetric, 'tightestRemaining')
 
+  ctx.settings.cursor = 5
+  handleKey('', { ...key, rightArrow: true }, ctx)
+  assert.equal(config.desktop.graphRangeDays, 30)
+
   for (const providerIndex of [0, 1, 2]) {
-    ctx.settings.cursor = 6 + providerIndex
+    ctx.settings.cursor = DESKTOP_FIXED_ROWS + providerIndex
     handleKey(' ', key, ctx)
   }
   assert.deepEqual(config.tray.pinnedProviders, ['claude', 'codex'])
+})
+
+test('provider settings separate tracking from global and per-provider discovery', () => {
+  const ctx = context()
+  let config = DEFAULTS
+  ctx.settings.show = true
+  ctx.settings.tab = 'providers'
+  ctx.global.config = config
+  ctx.global.updateConfig = updater => { config = updater(config); ctx.global.config = config }
+  ctx.settings.toggleProvider = provider => ctx.global.updateConfig(current => ({
+    ...current,
+    disabledProviders: current.disabledProviders.includes(provider)
+      ? current.disabledProviders.filter(id => id !== provider)
+      : [...current.disabledProviders, provider],
+  }))
+
+  ctx.settings.cursor = 0
+  handleKey(' ', key, ctx)
+  assert.equal(config.accountDetection.enabled, false)
+  handleKey(' ', key, ctx)
+  assert.equal(config.accountDetection.enabled, true)
+
+  ctx.settings.cursor = 1
+  handleKey('a', key, ctx)
+  assert.deepEqual(config.accountDetection.disabledProviders, ['claude'])
+  assert.deepEqual(config.disabledProviders, [])
+  handleKey(' ', key, ctx)
+  assert.deepEqual(config.disabledProviders, ['claude'])
+})
+
+test('account settings can ignore and restore an automatically detected account', () => {
+  const ctx = context()
+  let config: Config = { ...DEFAULTS, activeAccountId: 'claude-alt' }
+  ctx.settings.show = true
+  ctx.settings.tab = 'accounts'
+  ctx.settings.cursor = 0
+  ctx.settings.trackedAccounts = [{
+    id: 'claude-alt', providerId: 'claude', name: 'alt@example.com', homeDir: '/tmp/claude-alt',
+    color: 'green', source: 'auto',
+  }]
+  ctx.global.config = config
+  ctx.global.updateConfig = updater => { config = updater(config); ctx.global.config = config }
+
+  handleKey('x', key, ctx)
+  assert.equal(config.activeAccountId, null)
+  assert.deepEqual(config.accountDetection.excludedAccounts, [{ providerId: 'claude', homeDir: '/tmp/claude-alt' }])
+
+  ctx.settings.trackedAccounts = [{
+    id: 'ignored:claude:/tmp/claude-alt', providerId: 'claude', name: 'Claude account', homeDir: '/tmp/claude-alt',
+    color: 'green', source: 'ignored', excludedRef: { providerId: 'claude', homeDir: '/tmp/claude-alt' },
+  }]
+  handleKey('x', key, ctx)
+  assert.deepEqual(config.accountDetection.excludedAccounts, [])
 })
 
 test('general settings dispatch is index-aligned with the declarative schema', () => {

@@ -97,9 +97,26 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
   const billingMs = cfg.billingInterval * 60_000
   const tz = resolveTimezone(cfg.timezone)
   const configReady = config !== null
+  const snapshot = daemon.snapshot
+  const daemonDetected = useMemo(
+    () => [...new Set((snapshot?.accounts ?? []).map(account => account.providerId))],
+    [snapshot],
+  )
+  const detectedProviders = connected ? daemonDetected : detected
 
-  const accounts = useMemo(() => buildAccounts(cfg, detected), [cfg, detected])
-  const trackedAccountRows = useMemo(() => getTrackedAccountRows(cfg, detected, accounts), [cfg, detected, accounts])
+  const accounts = useMemo(() => connected
+    ? (snapshot?.accounts ?? []).map(account => ({
+        id: account.id,
+        providerId: account.providerId,
+        name: account.name,
+        color: account.color,
+        homeDir: account.homeDir ?? undefined,
+      }))
+    : buildAccounts(cfg, detectedProviders), [cfg, connected, detectedProviders, snapshot])
+  const trackedAccountRows = useMemo(
+    () => getTrackedAccountRows(cfg, detectedProviders, accounts),
+    [cfg, detectedProviders, accounts],
+  )
   const settingsRowCount = settingsTab === 'general'
     ? GENERAL_ROWS
     : settingsTab === 'theme'
@@ -107,7 +124,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
       : settingsTab === 'desktop'
         ? DESKTOP_FIXED_ROWS + PROVIDER_ORDER.length
       : settingsTab === 'providers'
-          ? PROVIDER_ORDER.length
+          ? PROVIDER_ORDER.length + 1
           : trackedAccountRows.length + 1
   const accountsRef = useRef<Account[]>([])
   accountsRef.current = accounts
@@ -136,7 +153,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
 
   const needsOnboarding = configReady && !cfg.onboarded
   const newProviders = configReady && cfg.onboarded
-    ? PROVIDER_ORDER.filter(p => !cfg.knownProviders.includes(p) && detected.includes(p))
+    ? PROVIDER_ORDER.filter(p => !cfg.knownProviders.includes(p) && detectedProviders.includes(p))
     : []
   const showPicker = needsOnboarding || newProviders.length > 0
 
@@ -160,7 +177,6 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     tableVisible: tab === 1,
   })
 
-  const snapshot = daemon.snapshot
   const daemonRefreshRef = useRef(daemon.refresh)
   const degradedRefreshRef = useRef(refreshAllDegraded)
   daemonRefreshRef.current = daemon.refresh
@@ -283,15 +299,16 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     tooSmall: TOO_SMALL, showSettings, accountsCount: accounts.length,
   })
   const pickerProviders = needsOnboarding ? PROVIDER_ORDER : newProviders
-  const onboardEnabled = onboardSel ?? detected
+  const onboardEnabled = onboardSel ?? detectedProviders
   const onboardItems: OnboardItem[] = pickerProviders.map(pid => ({
     id: pid, name: PROVIDERS[pid].name, color: PROVIDERS[pid].color,
-    detected: detected.includes(pid), enabled: onboardEnabled.includes(pid),
+    detected: detectedProviders.includes(pid), enabled: onboardEnabled.includes(pid),
   }))
 
   useEffect(() => {
+    if (connected) return
     void detectProviders().then(setDetected)
-  }, [])
+  }, [connected])
 
   const tableKey = useMemo(
     () => `${effTableProvider}|${tableAccounts.map(acctKey).join(',')}|${tz}`,
@@ -340,7 +357,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     if (i < 0 || i >= pickerProviders.length) return
     const pid = pickerProviders[i]
     setOnboardSel(prev => {
-      const base = prev ?? detected
+      const base = prev ?? detectedProviders
       return base.includes(pid) ? base.filter(p => p !== pid) : [...base, pid]
     })
   }
@@ -395,7 +412,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     accountForm, setAccountForm,
     openAddAccount, openConfigureAccount, openEditAccount, commitAccountForm,
     cycleFormField, cycleProvider, cycleColor, deleteAccount, moveAccount,
-  } = useAccountForm({ cfg, detected, updateConfig, trackedAccountRows, setSettingsCursor })
+  } = useAccountForm({ cfg, detected: detectedProviders, updateConfig, trackedAccountRows, setSettingsCursor })
 
   async function toggleWeb(): Promise<void> {
     if (connected) {

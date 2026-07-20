@@ -62,6 +62,7 @@ export function configAffectsEngine(previous: Config, next: Config): boolean {
     || previous.timezone !== next.timezone
     || JSON.stringify(previous.accounts) !== JSON.stringify(next.accounts)
     || JSON.stringify(previous.disabledProviders) !== JSON.stringify(next.disabledProviders)
+    || JSON.stringify(previous.accountDetection) !== JSON.stringify(next.accountDetection)
 }
 
 // RPC handlers may run concurrently. The revision check and durable write must
@@ -82,6 +83,9 @@ function mergeCapabilityFields(incomingConfig: Config, current: Config): Record<
   return {
     ...incoming,
     appearance: hasOwn(incoming, 'appearance') ? incoming.appearance : current.appearance,
+    accountDetection: hasOwn(incoming, 'accountDetection')
+      ? incoming.accountDetection
+      : current.accountDetection,
     tray: hasOwn(incoming, 'tray') && incomingTray
       ? {
           ...current.tray,
@@ -98,6 +102,9 @@ function mergeCapabilityFields(incomingConfig: Config, current: Config): Record<
           expandedProviders: hasOwn(incomingDesktop, 'expandedProviders')
             ? incomingDesktop.expandedProviders
             : current.desktop.expandedProviders,
+          graphRangeDays: hasOwn(incomingDesktop, 'graphRangeDays')
+            ? incomingDesktop.graphRangeDays
+            : current.desktop.graphRangeDays,
         }
       : current.desktop,
   }

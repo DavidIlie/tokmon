@@ -20,7 +20,10 @@ export { usageFromHeadroom } from '../usage-semantics'
 export type { Severity } from '../usage-semantics'
 export { severity, severityTag, accountIdentityText } from '../usage-semantics'
 
-export type { Config, Account, TrayConfig, TrackedAccountRow, TrackedAccountSource } from '../config-schema'
+export type {
+  Config, Account, TrayConfig, AccountDetectionConfig, DetectedAccountRef, DesktopGraphRange,
+  TrackedAccountRow, TrackedAccountSource,
+} from '../config-schema'
 export type { TrackedAccountCandidate } from '../config-schema'
 export {
   normalizeConfig,
@@ -29,6 +32,8 @@ export {
   repairConfig,
   DEFAULTS,
   DEFAULT_TRAY_CONFIG,
+  DEFAULT_ACCOUNT_DETECTION_CONFIG,
+  DESKTOP_GRAPH_RANGES,
   generateAccountId,
   pickAccentColor,
   isValidTimezone,
@@ -36,6 +41,9 @@ export {
   PROVIDER_META,
   PROVIDER_ORDER,
   getTrackedAccountRows,
+  providerDetectionEnabled,
+  setProviderDetectionEnabled,
+  setDetectedAccountExcluded,
   sanitizeTyped,
   containsEmail,
   redactEmail,

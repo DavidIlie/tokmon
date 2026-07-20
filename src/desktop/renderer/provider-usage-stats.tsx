@@ -2,12 +2,13 @@ import React, { memo, useMemo } from 'react'
 import { aggregateDashboardData, cachedTokenPercentage } from '../../dashboard-data'
 import { formatCurrency, formatTokens } from '../../shared/format'
 import type { UsageSummary } from '../../types'
-import type { WebAccount } from '../../web/contract'
+import type { DesktopGraphRange, WebAccount } from '../../web/contract'
 
 interface ProviderUsageStatsProps {
   accounts: readonly WebAccount[]
   providerName: string
   intervalMs: number
+  rangeDays: DesktopGraphRange
   now: number
 }
 
@@ -46,18 +47,21 @@ function dataStatus(accounts: readonly WebAccount[], intervalMs: number, now: nu
   return null
 }
 
-export const ProviderUsageStats = memo(function ProviderUsageStats({ accounts, providerName, intervalMs, now }: ProviderUsageStatsProps) {
+export const ProviderUsageStats = memo(function ProviderUsageStats({ accounts, providerName, intervalMs, rangeDays, now }: ProviderUsageStatsProps) {
   const dashboard = useMemo(
     () => aggregateDashboardData(accounts.map(account => account.dashboard)),
     [accounts],
   )
-  if (!dashboard || !PERIODS.some(([key]) => hasUsage(dashboard[key]))) return null
+  if (!dashboard) return null
+  const graphSeries = dashboard.series.slice(-rangeDays)
+  if (!PERIODS.some(([key]) => hasUsage(dashboard[key])) && !graphSeries.some(value => value > 0)) return null
 
   const status = dataStatus(accounts, intervalMs, now)
   const showBurn = dashboard.burnRate > 0
   const showSavings = dashboard.month.cacheSavings > 0
-  const points = sparkPoints(dashboard.series, 180, 20)
-  const sparkLabel = `${providerName} 14-day spend activity`
+  const coverageDays = Math.min(rangeDays, dashboard.series.length)
+  const points = sparkPoints(graphSeries, 180, 20)
+  const sparkLabel = `${providerName} ${coverageDays}-day spend activity`
 
   return (
     <section className="provider-usage-stats" aria-label={`${providerName} token usage and spend`}>
@@ -86,7 +90,7 @@ export const ProviderUsageStats = memo(function ProviderUsageStats({ accounts, p
 
       {points && (
         <div className="usage-spark">
-          <span>14d</span>
+          <span>{coverageDays}d</span>
           <svg
             viewBox="0 0 180 20" preserveAspectRatio="none" role="img"
             aria-label={sparkLabel}

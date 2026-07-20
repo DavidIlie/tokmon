@@ -1,4 +1,4 @@
-import { configLocation, type Config } from './config'
+import { configLocation, DESKTOP_GRAPH_RANGES, type Config } from './config'
 import { PROVIDER_IDS, type ProviderId } from './providers/types'
 import { attachOrSpawn } from './client/daemon-handle'
 import { createDaemonRpcClient, type DaemonRpcClient } from './client/daemon-rpc-client'
@@ -110,6 +110,9 @@ Settings:
   summary-mode <smart|tightest>
   expanded-providers <ids|none>  Comma-separated provider ids
   active-window <minutes>        1..1440
+  graph-range <7|14|30>          Desktop spend graph days
+  auto-detect <on|off>           Automatic account discovery
+  auto-detect-providers <ids|none>
   launch-at-login <on|off>
 
 Options:
@@ -276,6 +279,9 @@ type ConfigSetting =
   | 'summary-mode'
   | 'expanded-providers'
   | 'active-window'
+  | 'graph-range'
+  | 'auto-detect'
+  | 'auto-detect-providers'
   | 'launch-at-login'
 
 const CONFIG_SETTINGS: readonly ConfigSetting[] = [
@@ -286,6 +292,9 @@ const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   'summary-mode',
   'expanded-providers',
   'active-window',
+  'graph-range',
+  'auto-detect',
+  'auto-detect-providers',
   'launch-at-login',
 ]
 
@@ -298,6 +307,9 @@ interface ConfigReport {
   summaryMode: 'smart' | 'tightest'
   expandedProviders: string[]
   activeWindowMinutes: number
+  graphRangeDays: 7 | 14 | 30
+  autoDetect: 'on' | 'off'
+  autoDetectProviders: ProviderId[]
   launchAtLogin: 'on' | 'off'
 }
 
@@ -311,6 +323,9 @@ function configReport(config: Config): ConfigReport {
     summaryMode: config.tray.displayMetric === 'smartHeadroom' ? 'smart' : 'tightest',
     expandedProviders: [...config.desktop.expandedProviders],
     activeWindowMinutes: config.tray.activeTimeoutMin,
+    graphRangeDays: config.desktop.graphRangeDays,
+    autoDetect: config.accountDetection.enabled ? 'on' : 'off',
+    autoDetectProviders: PROVIDER_IDS.filter(id => !config.accountDetection.disabledProviders.includes(id)),
     launchAtLogin: config.tray.launchAtLogin ? 'on' : 'off',
   }
 }
@@ -325,6 +340,9 @@ function formatConfigReport(report: ConfigReport): string {
     `summary-mode        ${report.summaryMode}`,
     `expanded-providers  ${list(report.expandedProviders)}`,
     `active-window       ${report.activeWindowMinutes}m`,
+    `graph-range         ${report.graphRangeDays}d`,
+    `auto-detect         ${report.autoDetect}`,
+    `auto-detect-providers ${list(report.autoDetectProviders)}`,
     `launch-at-login     ${report.launchAtLogin}`,
   ].join('\n') + '\n'
 }
@@ -389,6 +407,35 @@ function settingMutation(setting: ConfigSetting, value: string): { mutate(config
     if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1_440) throw new Error('active-window must be an integer from 1 to 1440 minutes')
     return { mutate: config => ({ ...config, tray: { ...config.tray, activeTimeoutMin: minutes } }), display: minutes }
   }
+  if (setting === 'graph-range') {
+    const days = Number(value)
+    if (!DESKTOP_GRAPH_RANGES.includes(days as Config['desktop']['graphRangeDays'])) throw new Error('graph-range must be 7, 14, or 30 days')
+    return {
+      mutate: config => ({ ...config, desktop: { ...config.desktop, graphRangeDays: days as Config['desktop']['graphRangeDays'] } }),
+      display: days,
+    }
+  }
+  if (setting === 'auto-detect') {
+    const enabled = onOff(value, setting)
+    return {
+      mutate: config => ({ ...config, accountDetection: { ...config.accountDetection, enabled } }),
+      display: value,
+    }
+  }
+  if (setting === 'auto-detect-providers') {
+    const enabled = providerList(value, setting)
+    return {
+      mutate: config => ({
+        ...config,
+        accountDetection: {
+          ...config.accountDetection,
+          disabledProviders: PROVIDER_IDS.filter(provider => !enabled.includes(provider)),
+        },
+      }),
+      display: enabled,
+    }
+  }
+  if (setting !== 'launch-at-login') throw new Error(`unsupported config setting: ${setting}`)
   const enabled = onOff(value, setting)
   return { mutate: config => ({ ...config, tray: { ...config.tray, launchAtLogin: enabled } }), display: value }
 }

@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { Config, DashboardData, Metric, UsageSummary, WebAccount, WebSnapshot } from '../../web/contract'
-import { DesktopSettings, Footer, SettingsHub, ThemeSettings, UpdateReady } from './desktop-chrome'
+import { DEFAULTS, type Config, type DashboardData, type Metric, type UsageSummary, type WebAccount, type WebSnapshot } from '../../web/contract'
+import { DesktopSettings, DetectionSettings, Footer, SettingsHub, ThemeSettings, UpdateReady } from './desktop-chrome'
 import { ProviderCard } from './provider-card'
 import { groupByProvider } from './presentation'
 import { providerMark } from './provider-icons'
@@ -40,7 +40,7 @@ const snapshot = (accounts: WebAccount[]): WebSnapshot => ({
   accounts, seeded: true, peak: null,
 })
 
-const config = { privacyMode: true, tray: { activeTimeoutMin: 10 } } as unknown as Config
+const config: Config = { ...DEFAULTS, tray: { ...DEFAULTS.tray, activeTimeoutMin: 10 } }
 
 function renderCard(snap: WebSnapshot, expanded: boolean, pinned = false, cardConfig = config): string {
   const group = groupByProvider(snap)[0]!
@@ -98,7 +98,7 @@ test('canonical provider stats aggregate once above accounts with compact billio
         week: usage({ cost: 1_000, tokens: 1_500_000_000, cacheRead: 1_440_000_000 }),
         month: usage({ cost: 7_000, tokens: 10_000_000_000, cacheRead: 9_600_000_000, cacheSavings: 30_000 }),
         burnRate: 30,
-        series: [0, 1, 2, 4],
+        series: [...Array.from({ length: 10 }, () => 0), 0, 1, 2, 4],
       }),
     }),
     account({
@@ -108,7 +108,7 @@ test('canonical provider stats aggregate once above accounts with compact billio
         week: usage({ cost: 304.74, tokens: 320_000_000, cacheRead: 307_200_000 }),
         month: usage({ cost: 1_930.28, tokens: 2_250_000_000, cacheRead: 2_160_000_000, cacheSavings: 23_000 }),
         burnRate: 4.11,
-        series: [2, 0, 3, 1],
+        series: [...Array.from({ length: 10 }, () => 0), 2, 0, 3, 1],
       }),
     }),
   ]), true)
@@ -126,12 +126,58 @@ test('canonical provider stats aggregate once above accounts with compact billio
   assert.ok(html.indexOf('provider-usage-stats') < html.indexOf('account-block'))
 })
 
+test('desktop graph range slices the daemon history and labels the selected period', () => {
+  const snap = snapshot([account({
+    dashboard: dashboard({
+      today: usage({ cost: 1, tokens: 10 }),
+      series: Array.from({ length: 30 }, (_, index) => index + 1),
+    }),
+  })])
+  for (const rangeDays of [7, 30] as const) {
+    const html = renderCard(snap, true, false, {
+      ...config,
+      desktop: { ...config.desktop, graphRangeDays: rangeDays },
+    })
+    assert.match(html, new RegExp(`aria-label="Claude ${rangeDays}-day spend activity"`))
+    const points = html.match(/<polyline points="([^"]+)"/)?.[1]?.split(' ') ?? []
+    assert.equal(points.length, rangeDays)
+  }
+})
+
+test('desktop graph range stays truthful for cached history and can reveal prior-month spend', () => {
+  const cached = snapshot([account({
+    dashboard: dashboard({
+      today: usage({ cost: 1 }),
+      series: Array.from({ length: 14 }, (_, index) => index + 1),
+    }),
+  })])
+  const cachedHtml = renderCard(cached, true, false, {
+    ...config,
+    desktop: { ...config.desktop, graphRangeDays: 30 },
+  })
+  assert.match(cachedHtml, /aria-label="Claude 14-day spend activity"/)
+
+  const priorMonth = snapshot([account({
+    dashboard: dashboard({ series: [1, ...Array.from({ length: 29 }, () => 0)] }),
+  })])
+  const fourteen = renderCard(priorMonth, true, false, {
+    ...config,
+    desktop: { ...config.desktop, graphRangeDays: 14 },
+  })
+  const thirty = renderCard(priorMonth, true, false, {
+    ...config,
+    desktop: { ...config.desktop, graphRangeDays: 30 },
+  })
+  assert.doesNotMatch(fourteen, /provider-usage-stats/)
+  assert.match(thirty, /aria-label="Claude 30-day spend activity"/)
+})
+
 test('provider stats stay out of collapsed, missing, and real-zero states', () => {
   const nonzero = account({ dashboard: dashboard({ today: usage({ cost: 1, tokens: 10 }) }) })
   assert.doesNotMatch(renderCard(snapshot([nonzero]), false), /provider-usage-stats|data-period="today"/)
   assert.doesNotMatch(renderCard(snapshot([account({ dashboard: null })]), true), /provider-usage-stats/)
   assert.doesNotMatch(renderCard(snapshot([account({
-    dashboard: dashboard({ burnRate: 5, series: [1, 2], month: usage({ cacheSavings: 9 }) }),
+    dashboard: dashboard({ burnRate: 5, series: [0, 0], month: usage({ cacheSavings: 9 }) }),
   })]), true), /provider-usage-stats/)
 })
 
@@ -285,7 +331,7 @@ test('desktop settings exposes daemon-backed privacy, summary and provider pin c
       displayMetric: 'smartHeadroom', pinnedProviders: ['claude'], showMenuBarText: true,
       launchAtLogin: false, activeTimeoutMin: 10,
     },
-    desktop: { expandedProviders: ['claude'] },
+    desktop: { ...config.desktop, expandedProviders: ['claude'] },
   } as Config
   const html = renderToStaticMarkup(createElement(DesktopSettings, {
     config: fullConfig, groups, onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
@@ -293,6 +339,10 @@ test('desktop settings exposes daemon-backed privacy, summary and provider pin c
   assert.match(html, /Privacy mode/)
   assert.match(html, /Provider summary/)
   assert.match(html, /Pinned providers/)
+  assert.match(html, /Graph range/)
+  assert.match(html, />7d<\/button>/)
+  assert.match(html, /data-active="true">14d<\/button>/)
+  assert.match(html, />30d<\/button>/)
   assert.match(html, /Launch at login/)
   assert.match(html, /Manage all settings/)
 })
@@ -303,7 +353,7 @@ test('settings hub separates theme from desktop behavior and summarizes the shar
     appearance: { version: 1, mode: 'auto', preset: 'tokmon', terminal: 'ansi' },
   } as Config
   const html = renderToStaticMarkup(createElement(SettingsHub, {
-    config: fullConfig, onBack: () => {}, onTheme: () => {}, onDesktop: () => {},
+    config: fullConfig, onBack: () => {}, onTheme: () => {}, onDesktop: () => {}, onDetection: () => {},
   }))
 
   assert.match(html, /aria-label="Settings sections"/)
@@ -311,6 +361,30 @@ test('settings hub separates theme from desktop behavior and summarizes the shar
   assert.match(html, /Tokmon · Auto/)
   assert.match(html, />Desktop App</)
   assert.match(html, /Menu bar, privacy, startup/)
+  assert.match(html, /Accounts &amp; Detection/)
+})
+
+test('account detection settings expose global, provider, and per-account controls', () => {
+  const fullConfig: Config = {
+    ...config,
+    privacyMode: false,
+    accountDetection: {
+      enabled: true,
+      disabledProviders: ['codex'],
+      excludedAccounts: [{ providerId: 'claude', homeDir: '/tmp/old-claude' }],
+    },
+  }
+  const html = renderToStaticMarkup(createElement(DetectionSettings, {
+    config: fullConfig,
+    snapshot: snapshot([account({ id: 'claude-alt', homeDir: '/tmp/claude-alt' })]),
+    onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
+  }))
+  assert.match(html, /Discover accounts/)
+  assert.match(html, /Provider detectors/)
+  assert.ok(html.includes('/tmp/claude-alt'))
+  assert.ok(html.includes('/tmp/old-claude'))
+  assert.match(html, />Turn off</)
+  assert.match(html, />Turn on</)
 })
 
 test('compact theme page exposes the shared catalog while keeping Phosphor dark-only', () => {

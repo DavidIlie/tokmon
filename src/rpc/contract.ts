@@ -2,14 +2,14 @@ import { Schema } from 'effect'
 import * as Rpc from 'effect/unstable/rpc/Rpc'
 import * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
 import { PROVIDER_IDS } from '../providers/types'
-import type { Config } from '../config-schema'
+import { DESKTOP_GRAPH_RANGES, type Config } from '../config-schema'
 import { BUILT_IN_THEME_PRESET_IDS, THEME_PRESET_IDS } from '../theme'
 
 export const TOKMON_WS_PATH = '/ws'
 
 /** Bump only for an incompatible wire change. Capabilities gate additive features. */
 export const TOKMON_PROTOCOL_VERSION = 3
-export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine'] as const
+export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1'] as const
 export type TokmonCapability = typeof TOKMON_CAPABILITIES[number]
 
 export const TOKMON_WS_METHODS = {
@@ -65,6 +65,16 @@ export const TrayConfigSchema = Schema.Struct({
 /** Desktop-only preferences; additive and optional so pre-disclosure daemons validate. */
 export const DesktopConfigSchema = Schema.Struct({
   expandedProviders: Schema.Array(Schema.String),
+  graphRangeDays: Schema.optionalKey(Schema.Literals(DESKTOP_GRAPH_RANGES)),
+})
+
+export const AccountDetectionConfigSchema = Schema.Struct({
+  enabled: Schema.Boolean,
+  disabledProviders: Schema.Array(ProviderIdSchema),
+  excludedAccounts: Schema.Array(Schema.Struct({
+    providerId: ProviderIdSchema,
+    homeDir: Schema.String,
+  })),
 })
 
 const HexColorSchema = Schema.String.check(Schema.isPattern(/^#[0-9a-f]{6}$/i))
@@ -121,6 +131,9 @@ export const ConfigSchema = Schema.Struct({
   // Additive under `appearance-v1`; omission is accepted for old clients and
   // preserved by the daemon's CAS boundary rather than resetting the theme.
   appearance: Schema.optionalKey(AppearanceConfigSchema),
+  // Additive: older clients omit detector policy, so the daemon preserves its
+  // current value and repairConfig supplies legacy current-behaviour defaults.
+  accountDetection: Schema.optionalKey(AccountDetectionConfigSchema),
   // The complete tray block was added within protocol v3. Accept omission from
   // older peers and normalize it at the client / preserve it at the CAS boundary.
   tray: Schema.optionalKey(TrayConfigSchema),

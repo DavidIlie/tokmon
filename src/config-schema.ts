@@ -36,9 +36,27 @@ export interface TrayConfig {
 }
 
 /** Desktop-only preferences the tray/popover persists via the daemon config (CAS). */
+export const DESKTOP_GRAPH_RANGES = [7, 14, 30] as const
+export type DesktopGraphRange = typeof DESKTOP_GRAPH_RANGES[number]
+
 export interface DesktopConfig {
   /** Provider ids whose popover card is expanded; multi-open, order-insensitive. */
   expandedProviders: string[]
+  /** Number of trailing calendar days shown in desktop usage sparklines. */
+  graphRangeDays: DesktopGraphRange
+}
+
+export interface DetectedAccountRef {
+  providerId: ProviderId
+  /** Provider home used by the detector. `~` represents the provider's default home. */
+  homeDir: string
+}
+
+/** Controls automatic account discovery without affecting explicitly configured accounts. */
+export interface AccountDetectionConfig {
+  enabled: boolean
+  disabledProviders: ProviderId[]
+  excludedAccounts: DetectedAccountRef[]
 }
 
 /** Clamp/dedupe/trim persisted pins to the invariant (≤2 non-empty, unique) shape. */
@@ -123,6 +141,7 @@ export interface Config {
   knownProviders: ProviderId[]
   /** Shared graphical and terminal appearance, persisted atomically by the daemon. */
   appearance: AppearanceConfig
+  accountDetection: AccountDetectionConfig
   tray: TrayConfig
   desktop: DesktopConfig
 }
@@ -133,7 +152,7 @@ export interface ConfigRepair {
   reasons: string[]
 }
 
-export type TrackedAccountSource = 'auto' | 'configured'
+export type TrackedAccountSource = 'auto' | 'configured' | 'ignored'
 
 export interface TrackedAccountRow {
   id: string
@@ -144,6 +163,7 @@ export interface TrackedAccountRow {
   source: TrackedAccountSource
   explicitId?: string
   explicitIndex?: number
+  excludedRef?: DetectedAccountRef
 }
 
 export interface TrackedAccountCandidate {
@@ -176,6 +196,13 @@ const MAX_EXPANDED_PROVIDERS = 32
 
 export const DEFAULT_DESKTOP_CONFIG: DesktopConfig = {
   expandedProviders: [],
+  graphRangeDays: 14,
+}
+
+export const DEFAULT_ACCOUNT_DETECTION_CONFIG: AccountDetectionConfig = {
+  enabled: true,
+  disabledProviders: [],
+  excludedAccounts: [],
 }
 
 export const DEFAULTS: Config = {
@@ -198,6 +225,7 @@ export const DEFAULTS: Config = {
   resetDisplay: 'relative',
   knownProviders: [],
   appearance: { ...DEFAULT_APPEARANCE },
+  accountDetection: { ...DEFAULT_ACCOUNT_DETECTION_CONFIG },
   tray: { ...DEFAULT_TRAY_CONFIG },
   desktop: { ...DEFAULT_DESKTOP_CONFIG },
 }
@@ -247,9 +275,14 @@ export function getTrackedAccountRows(
   const rowIds = new Set<string>()
   const rowKeys = new Set<string>()
   const rows: TrackedAccountRow[] = []
+  const detectionEnabled = config.accountDetection.enabled
+  const detectorDisabled = new Set(config.accountDetection.disabledProviders)
 
   const keyFor = (providerId: ProviderId, homeDir?: string | null) =>
     `${providerId}:${homeDir && homeDir !== '~' ? homeDir : '~'}`
+  const excludedKeys = new Set(
+    config.accountDetection.excludedAccounts.map(ref => keyFor(ref.providerId, ref.homeDir)),
+  )
 
   const rememberRow = (row: TrackedAccountRow): void => {
     rowIds.add(row.id)
@@ -275,8 +308,10 @@ export function getTrackedAccountRows(
 
   if (autoAccounts) {
     for (const account of autoAccounts) {
+      if (!detectionEnabled || detectorDisabled.has(account.providerId)) continue
       if (config.disabledProviders.includes(account.providerId)) continue
       const key = keyFor(account.providerId, account.homeDir)
+      if (excludedKeys.has(key)) continue
       if (configuredIds.has(account.id) || configuredKeys.has(key) || rowIds.has(account.id) || rowKeys.has(key)) continue
       const meta = PROVIDER_META[account.providerId]
       rememberRow({
@@ -291,9 +326,11 @@ export function getTrackedAccountRows(
   }
 
   for (const providerId of PROVIDER_ORDER) {
+    if (!detectionEnabled || detectorDisabled.has(providerId)) continue
     if (config.disabledProviders.includes(providerId)) continue
     if (!tracked.has(providerId)) continue
     const key = keyFor(providerId, '~')
+    if (excludedKeys.has(key)) continue
     if (configuredIds.has(providerId) || configuredKeys.has(key) || rowIds.has(providerId) || rowKeys.has(key)) continue
     const meta = PROVIDER_META[providerId]
     rememberRow({
@@ -305,8 +342,52 @@ export function getTrackedAccountRows(
       source: 'auto',
     })
   }
+  for (const ref of config.accountDetection.excludedAccounts) {
+    if (configuredKeys.has(keyFor(ref.providerId, ref.homeDir))) continue
+    const meta = PROVIDER_META[ref.providerId]
+    rememberRow({
+      id: `ignored:${ref.providerId}:${ref.homeDir}`,
+      providerId: ref.providerId,
+      name: `${meta.name} account`,
+      homeDir: ref.homeDir,
+      color: meta.color,
+      source: 'ignored',
+      excludedRef: ref,
+    })
+  }
 
   return rows
+}
+
+export function providerDetectionEnabled(config: AccountDetectionConfig, providerId: ProviderId): boolean {
+  return config.enabled && !config.disabledProviders.includes(providerId)
+}
+
+export function setProviderDetectionEnabled(
+  config: AccountDetectionConfig,
+  providerId: ProviderId,
+  enabled: boolean,
+): AccountDetectionConfig {
+  const without = config.disabledProviders.filter(id => id !== providerId)
+  return {
+    ...config,
+    disabledProviders: enabled ? without : [...without, providerId],
+  }
+}
+
+export function setDetectedAccountExcluded(
+  config: AccountDetectionConfig,
+  ref: DetectedAccountRef,
+  excluded: boolean,
+): AccountDetectionConfig {
+  const homeDir = ref.homeDir.trim() || '~'
+  const matches = (candidate: DetectedAccountRef) =>
+    candidate.providerId === ref.providerId && candidate.homeDir === homeDir
+  const without = config.excludedAccounts.filter(candidate => !matches(candidate))
+  return {
+    ...config,
+    excludedAccounts: excluded ? [...without, { providerId: ref.providerId, homeDir }] : without,
+  }
 }
 
 export function clampNum(v: unknown, fallback: number, min: number): number {
@@ -427,6 +508,40 @@ export function repairConfig(input: unknown): ConfigRepair {
   if (parsed.appearance !== undefined && appearanceRepair.repaired) {
     reasons.push(...appearanceRepair.reasons)
   }
+  const rawAccountDetection = isRecord(parsed.accountDetection) ? parsed.accountDetection : {}
+  if (parsed.accountDetection !== undefined && !isRecord(parsed.accountDetection)) {
+    reasons.push('accountDetection was not an object')
+  }
+  const detectionDisabledProviders = Array.isArray(rawAccountDetection.disabledProviders)
+    ? [...new Set(rawAccountDetection.disabledProviders.filter(validProvider))]
+    : []
+  const excludedAccounts: DetectedAccountRef[] = []
+  const excludedKeys = new Set<string>()
+  if (Array.isArray(rawAccountDetection.excludedAccounts)) {
+    rawAccountDetection.excludedAccounts.forEach((raw, index) => {
+      if (!isRecord(raw) || !validProvider(raw.providerId) || typeof raw.homeDir !== 'string' || !raw.homeDir.trim()) {
+        reasons.push(`accountDetection.excludedAccounts[${index}] was invalid`)
+        return
+      }
+      const homeDir = raw.homeDir.trim()
+      const key = `${raw.providerId}:${homeDir}`
+      if (excludedKeys.has(key)) return
+      excludedKeys.add(key)
+      excludedAccounts.push({ providerId: raw.providerId, homeDir })
+    })
+  } else if (rawAccountDetection.excludedAccounts !== undefined) {
+    reasons.push('accountDetection.excludedAccounts was not an array')
+  }
+  const accountDetection: AccountDetectionConfig = {
+    enabled: typeof rawAccountDetection.enabled === 'boolean'
+      ? rawAccountDetection.enabled
+      : DEFAULT_ACCOUNT_DETECTION_CONFIG.enabled,
+    disabledProviders: detectionDisabledProviders,
+    excludedAccounts,
+  }
+  if (parsed.accountDetection !== undefined && !sameJson(parsed.accountDetection, accountDetection)) {
+    reasons.push('accountDetection contained invalid settings')
+  }
 
   const rawTray = isRecord(parsed.tray) ? parsed.tray : {}
   if (parsed.tray !== undefined && !isRecord(parsed.tray)) reasons.push('tray was not an object')
@@ -469,6 +584,9 @@ export function repairConfig(input: unknown): ConfigRepair {
   if (parsed.desktop !== undefined && !isRecord(parsed.desktop)) reasons.push('desktop was not an object')
   const desktop: DesktopConfig = {
     expandedProviders: normalizeStringIdList(rawDesktop.expandedProviders, MAX_EXPANDED_PROVIDERS),
+    graphRangeDays: DESKTOP_GRAPH_RANGES.includes(rawDesktop.graphRangeDays as DesktopGraphRange)
+      ? rawDesktop.graphRangeDays as DesktopGraphRange
+      : DEFAULT_DESKTOP_CONFIG.graphRangeDays,
   }
   if (parsed.desktop !== undefined && !sameJson(parsed.desktop, desktop)) reasons.push('desktop contained invalid settings')
 
@@ -511,6 +629,7 @@ export function repairConfig(input: unknown): ConfigRepair {
     resetDisplay: parsed.resetDisplay === 'absolute' ? 'absolute' : 'relative',
     knownProviders,
     appearance: appearanceRepair.appearance,
+    accountDetection,
     tray,
     desktop,
   }
@@ -526,7 +645,13 @@ export function normalizeConfig(parsed: unknown): Config {
   try {
     return repairConfig(parsed).config
   } catch {
-    return { ...DEFAULTS, appearance: { ...DEFAULT_APPEARANCE }, tray: { ...DEFAULT_TRAY_CONFIG } }
+    return {
+      ...DEFAULTS,
+      appearance: { ...DEFAULT_APPEARANCE },
+      accountDetection: { ...DEFAULT_ACCOUNT_DETECTION_CONFIG },
+      tray: { ...DEFAULT_TRAY_CONFIG },
+      desktop: { ...DEFAULT_DESKTOP_CONFIG },
+    }
   }
 }
 

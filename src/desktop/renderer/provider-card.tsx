@@ -243,7 +243,7 @@ export function ProviderCard({
             {expanded && (
               <ProviderUsageStats
                 accounts={group.accounts} providerName={group.name}
-                intervalMs={snapshot.intervalMs} now={now}
+                intervalMs={snapshot.intervalMs} rangeDays={config.desktop.graphRangeDays} now={now}
               />
             )}
             {expanded && secondary && <p className="provider-secondary" title="Measured provider windows.">{secondary}</p>}

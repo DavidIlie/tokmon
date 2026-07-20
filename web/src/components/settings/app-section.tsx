@@ -1,4 +1,4 @@
-import type { Config, WebSnapshot } from '@shared'
+import { DESKTOP_GRAPH_RANGES, type Config, type WebSnapshot } from '@shared'
 import { Check, ChevronDown, ChevronUp } from '../icons'
 import { Segmented } from '../ui/controls'
 import { FOCUS_RING } from '../ui/primitives'
@@ -73,6 +73,17 @@ export function AppSection({ draft, patch, snapshot }: AppSectionProps) {
             onChange={activeTimeoutMin => patch(config => ({
               ...config,
               tray: { ...config.tray, activeTimeoutMin: Math.min(1_440, activeTimeoutMin) },
+            }))}
+          />
+        </FieldRow>
+        <FieldRow label="Graph range" hint="trailing spend activity in the desktop popover">
+          <Segmented<'7' | '14' | '30'>
+            size="xs" ariaLabel="desktop graph range"
+            options={DESKTOP_GRAPH_RANGES.map(value => ({ value: String(value) as '7' | '14' | '30', label: `${value}d` }))}
+            value={String(draft.desktop.graphRangeDays) as '7' | '14' | '30'}
+            onChange={value => patch(config => ({
+              ...config,
+              desktop: { ...config.desktop, graphRangeDays: Number(value) as 7 | 14 | 30 },
             }))}
           />
         </FieldRow>

@@ -164,14 +164,14 @@ function ProviderCard({ account, index, preset, providerName, privacyMode, reset
 
       {d && d.series.length > 0 && (
         <div className="mt-3 flex items-center gap-2 border-t border-line-faint pt-3">
-          <Sparkline data={d.series} color={providerColor} className="text-sm" />
-          <span className="ml-auto text-[10px] text-fg-faint">{d.series.length}d</span>
+          <Sparkline data={d.series.slice(-14)} color={providerColor} className="text-sm" />
+          <span className="ml-auto text-[10px] text-fg-faint">{Math.min(14, d.series.length)}d</span>
         </div>
       )}
 
       {!d && activity && activity.series.length > 0 && (
         <div className="mt-3 flex items-center gap-2 border-t border-line-faint pt-3">
-          <Sparkline data={activity.series} color={providerColor} className="text-sm" />
+          <Sparkline data={activity.series.slice(-14)} color={providerColor} className="text-sm" />
           <span className="ml-auto text-[10px] text-fg-faint">{activity.summary}</span>
         </div>
       )}

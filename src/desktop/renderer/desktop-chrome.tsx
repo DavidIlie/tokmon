@@ -1,6 +1,12 @@
 import React from 'react'
 import {
+  PROVIDER_META,
+  PROVIDER_ORDER,
+  DESKTOP_GRAPH_RANGES,
   MAX_PINNED_PROVIDERS,
+  providerDetectionEnabled,
+  setDetectedAccountExcluded,
+  setProviderDetectionEnabled,
   toggleProviderSelection,
   type Config,
   type WebSnapshot,
@@ -104,11 +110,12 @@ function SettingsHeader({ title, backLabel, onBack }: { title: string; backLabel
   )
 }
 
-export function SettingsHub({ config, onBack, onTheme, onDesktop }: {
+export function SettingsHub({ config, onBack, onTheme, onDesktop, onDetection }: {
   config: Config
   onBack(): void
   onTheme(): void
   onDesktop(): void
+  onDetection(): void
 }) {
   const preset = themePresetOption(config.appearance.preset).name
   const mode = isDarkOnlyThemePreset(config.appearance.preset)
@@ -126,6 +133,11 @@ export function SettingsHub({ config, onBack, onTheme, onDesktop }: {
         <button type="button" className="settings-destination" onClick={onDesktop}>
           <span className="desktop-glyph" aria-hidden="true"><i /></span>
           <span><b>Desktop App</b><small>Menu bar, privacy, startup</small></span>
+          <span className="destination-chevron" aria-hidden="true">›</span>
+        </button>
+        <button type="button" className="settings-destination" onClick={onDetection}>
+          <span className="detection-glyph" aria-hidden="true"><i /><i /></span>
+          <span><b>Accounts & Detection</b><small>{config.accountDetection.enabled ? 'Automatic discovery on' : 'Manual accounts only'} · {config.accountDetection.excludedAccounts.length} ignored</small></span>
           <span className="destination-chevron" aria-hidden="true">›</span>
         </button>
       </nav>
@@ -254,6 +266,14 @@ export function DesktopSettings({ config, groups, onPatch, onBack, onDashboard }
         <SettingsRow label="Expanded by default" hint="Synced through the daemon">
           <span className="provider-chips">{groups.map(group => <button key={group.providerId} type="button" data-active={expandedProviders.includes(group.providerId)} onClick={() => onPatch(next => ({ ...next, desktop: { ...next.desktop, expandedProviders: toggleProviderSelection(next.desktop.expandedProviders, group.providerId, knownProviders) } }))}>{group.name}</button>)}</span>
         </SettingsRow>
+        <SettingsRow label="Graph range" hint="Trailing spend activity">
+          <span className="segmented">
+            {DESKTOP_GRAPH_RANGES.map(value => <button
+              key={value} type="button" data-active={config.desktop.graphRangeDays === value}
+              onClick={() => onPatch(next => ({ ...next, desktop: { ...next.desktop, graphRangeDays: value } }))}
+            >{value}d</button>)}
+          </span>
+        </SettingsRow>
         <SettingsRow label="Active window" hint="Recent usage emphasis">
           <span className="segmented">{[5, 10, 20, 30].map(value => <button key={value} type="button" data-active={config.tray.activeTimeoutMin === value} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, activeTimeoutMin: value } }))}>{value}m</button>)}</span>
         </SettingsRow>
@@ -262,6 +282,76 @@ export function DesktopSettings({ config, groups, onPatch, onBack, onDashboard }
         </SettingsRow>
       </div>
       <button type="button" className="manage-settings" onClick={onDashboard}>Manage all settings…</button>
+    </section>
+  )
+}
+
+export function DetectionSettings({ config, snapshot, onPatch, onBack, onDashboard }: {
+  config: Config
+  snapshot: WebSnapshot
+  onPatch(mutate: (config: Config) => Config): void
+  onBack(): void
+  onDashboard(): void
+}) {
+  const manualKeys = new Set(config.accounts.map(account => `${account.providerId}:${account.homeDir || '~'}`))
+  const detected = snapshot.accounts.filter(account => {
+    const homeDir = account.homeDir ?? '~'
+    return !manualKeys.has(`${account.providerId}:${homeDir}`) && !config.accounts.some(manual => manual.id === account.id)
+  })
+  return (
+    <section className="settings-view" aria-label="Account detection settings">
+      <SettingsHeader title="Accounts & Detection" backLabel="Settings" onBack={onBack} />
+      <div className="settings-list">
+        <SettingsRow label="Discover accounts" hint="Manual accounts keep working when this is off">
+          <Toggle
+            value={config.accountDetection.enabled}
+            label="Discover accounts"
+            onChange={enabled => onPatch(next => ({ ...next, accountDetection: { ...next.accountDetection, enabled } }))}
+          />
+        </SettingsRow>
+        <SettingsRow label="Provider detectors" hint="Choose where Tokmon searches automatically">
+          <span className="provider-chips">
+            {PROVIDER_ORDER.map(providerId => {
+              const enabled = providerDetectionEnabled(config.accountDetection, providerId)
+              return <button
+                key={providerId} type="button" data-active={enabled}
+                disabled={!config.accountDetection.enabled}
+                onClick={() => onPatch(next => ({
+                  ...next,
+                  accountDetection: setProviderDetectionEnabled(next.accountDetection, providerId, !enabled),
+                }))}
+              >{PROVIDER_META[providerId].name}</button>
+            })}
+          </span>
+        </SettingsRow>
+        {(detected.length > 0 || config.accountDetection.excludedAccounts.length > 0) && (
+          <div className="detection-accounts">
+            {detected.map(account => (
+              <div key={`${account.providerId}:${account.homeDir ?? '~'}`}>
+                <span><b>{PROVIDER_META[account.providerId].name}</b><small>{config.privacyMode ? 'Path hidden' : account.homeDir ?? '~'}</small></span>
+                <button type="button" onClick={() => onPatch(next => ({
+                  ...next,
+                  activeAccountId: next.activeAccountId === account.id ? null : next.activeAccountId,
+                  accountDetection: setDetectedAccountExcluded(next.accountDetection, {
+                    providerId: account.providerId,
+                    homeDir: account.homeDir ?? '~',
+                  }, true),
+                }))}>Turn off</button>
+              </div>
+            ))}
+            {config.accountDetection.excludedAccounts.map(ref => (
+              <div key={`ignored:${ref.providerId}:${ref.homeDir}`} data-ignored="true">
+                <span><b>{PROVIDER_META[ref.providerId].name}</b><small>{config.privacyMode ? 'Path hidden' : ref.homeDir}</small></span>
+                <button type="button" onClick={() => onPatch(next => ({
+                  ...next,
+                  accountDetection: setDetectedAccountExcluded(next.accountDetection, ref, false),
+                }))}>Turn on</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <button type="button" className="manage-settings" onClick={onDashboard}>Manage manual accounts…</button>
     </section>
   )
 }

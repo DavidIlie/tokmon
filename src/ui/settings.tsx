@@ -1,7 +1,7 @@
 import { Fragment, memo, type ReactNode } from 'react'
 import { Box, Text } from 'ink'
 import { glyphs } from '../glyphs'
-import { configLocation, generateAccountId, COLOR_PALETTE, redactEmail, sanitizeTyped, toggleProviderSelection, type Config, type Account, type TrackedAccountRow } from '../config'
+import { configLocation, DESKTOP_GRAPH_RANGES, generateAccountId, COLOR_PALETTE, providerDetectionEnabled, redactEmail, sanitizeTyped, toggleProviderSelection, type Config, type Account, type TrackedAccountRow } from '../config'
 import { PROVIDER_ORDER, PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
 import { systemTimezone } from '../tz'
@@ -232,6 +232,17 @@ export const DESKTOP_FIXED_SETTINGS: SettingRow[] = [
     onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, activeTimeoutMin: cycleNumber([5, 10, 15, 30], c.tray.activeTimeoutMin, step(key)) } })) },
   },
   {
+    key: 'graphRange', label: 'Graph range',
+    render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.desktop.graphRangeDays} days</Text>),
+    onAdjust: (input, key, ctx) => {
+      if (!isAdjustKey(input, key)) return
+      ctx.global.updateConfig(c => ({
+        ...c,
+        desktop: { ...c.desktop, graphRangeDays: cycleNumber(DESKTOP_GRAPH_RANGES, c.desktop.graphRangeDays, step(key)) as Config['desktop']['graphRangeDays'] },
+      }))
+    },
+  },
+  {
     key: 'launchAtLogin', label: 'Launch at login',
     render: rc => toggleText(rc.config.tray.launchAtLogin, rc.theme, 'on', 'off', rc.theme.unknown),
     onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, launchAtLogin: !c.tray.launchAtLogin } })) },
@@ -376,17 +387,23 @@ export const SettingsView = memo(function SettingsView({
       {activeTab === 'providers' && (
         <>
           <Text bold dimColor>Providers</Text>
+          <Box>
+            <Text color={cursor === 0 ? theme.accent : undefined}>{cursor === 0 ? glyphs().caretR : ' '} </Text>
+            <Box width={20}><Text bold>Discover accounts</Text></Box>
+            {toggleText(config.accountDetection.enabled, theme, 'on', 'off')}
+          </Box>
           {PROVIDER_ORDER.map((pid, i) => {
-            const selected = cursor === i
+            const selected = cursor === i + 1
             const enabled = !config.disabledProviders.includes(pid)
+            const discovery = providerDetectionEnabled(config.accountDetection, pid)
             const p = PROVIDERS[pid]
             return (
               <Box key={pid}>
                 <Text color={selected ? theme.accent : undefined}>{selected ? glyphs().caretR : ' '} </Text>
-                <Text bold={enabled} color={enabled ? p.color : undefined} dimColor={!enabled}>{enabled ? `[${glyphs().check}]` : '[ ]'}</Text>
                 <Text color={p.color}> {glyphs().dot} </Text>
-                <Box width={9}><Text bold={selected}>{p.name}</Text></Box>
-                <Text dimColor>{enabled ? 'tracking' : 'off'}</Text>
+                <Box width={16}><Text bold={selected}>{p.name}</Text></Box>
+                <Box width={18}><Text color={enabled ? theme.ok : undefined} dimColor={!enabled}>{enabled ? `[${glyphs().check}] tracking` : '[ ] tracking'}</Text></Box>
+                <Text color={discovery ? theme.ok : undefined} dimColor={!discovery}>{discovery ? `[${glyphs().check}] auto-detect` : '[ ] auto-detect'}</Text>
               </Box>
             )
           })}
@@ -407,15 +424,17 @@ export const SettingsView = memo(function SettingsView({
             const rawIdentityLabel = identity?.email || identity?.displayName || acc.name
             const identityLabel = config.privacyMode ? redactEmail(rawIdentityLabel) : rawIdentityLabel
             const plan = identity?.plan ?? null
+            const ignored = acc.source === 'ignored'
+            const sourceLabel = acc.source === 'auto' ? 'auto tracking' : ignored ? 'ignored' : 'configured'
             return (
               <Box key={`${acc.source}:${acc.id}`}>
                 <Text color={selected ? theme.accent : undefined}>{selected ? glyphs().caretR : ' '} </Text>
-                <Text color={acc.color || provider.color}>{isActive ? glyphs().dot : glyphs().radioOff} </Text>
-                <Box width={28}><Text bold>{truncateName(identityLabel, 27)}</Text></Box>
+                <Text color={ignored ? theme.unknown : acc.color || provider.color}>{ignored ? glyphs().warn : isActive ? glyphs().dot : glyphs().radioOff} </Text>
+                <Box width={28}><Text bold={!ignored} dimColor={ignored}>{truncateName(identityLabel, 27)}</Text></Box>
                 <Box width={9}><Text color={provider.color}>{provider.name}</Text></Box>
                 <Box width={18}><Text dimColor>{plan ? truncateName(plan, 17) : ''}</Text></Box>
-                <Box width={12}><Text dimColor>{acc.source === 'auto' ? 'auto tracking' : 'configured'}</Text></Box>
-                <Text dimColor>{truncateName(acc.homeDir, 24)}</Text>
+                <Box width={14}><Text dimColor>{sourceLabel}</Text></Box>
+                <Text dimColor>{config.privacyMode ? '[path hidden]' : truncateName(acc.homeDir, 24)}</Text>
               </Box>
             )
           })}
@@ -441,10 +460,12 @@ export const SettingsView = memo(function SettingsView({
       ) : activeTab === 'desktop' ? (
         <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  {glyphs().arrowL}{glyphs().arrowR}/space adjust  {glyphs().middot}  pins are capped at 2  {glyphs().middot}  s/Esc close</Text>
       ) : activeTab === 'providers' ? (
-        <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  space toggle provider  {glyphs().middot}  s/Esc close</Text>
+        <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  space tracking/global discovery  {glyphs().middot}  a per-provider auto-detect  {glyphs().middot}  s/Esc close</Text>
       ) : activeTab === 'accounts' && cursor >= 0 && cursor < trackedAccounts.length ? (
         trackedAccounts[cursor]?.source === 'auto' ? (
-          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter configure  {glyphs().middot}  space activate  {glyphs().middot}  s/Esc close</Text>
+          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter configure  {glyphs().middot}  space activate  {glyphs().middot}  x ignore  {glyphs().middot}  s/Esc close</Text>
+        ) : trackedAccounts[cursor]?.source === 'ignored' ? (
+          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter/x turn on  {glyphs().middot}  s/Esc close</Text>
         ) : (
           <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  {glyphs().shift}{glyphs().arrowU}{glyphs().arrowD} reorder  {glyphs().middot}  Enter edit  {glyphs().middot}  space activate  {glyphs().middot}  d delete  {glyphs().middot}  s/Esc close</Text>
         )

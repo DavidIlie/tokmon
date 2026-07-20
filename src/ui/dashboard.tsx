@@ -251,7 +251,7 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
           <Rule inner={inner} />
           <Box>
             <Box width={4}><Text dimColor>14d</Text></Box>
-            <Text color={meta.color}>{sparkline(activity.series)}</Text>
+            <Text color={meta.color}>{sparkline(activity.series.slice(-14))}</Text>
             <Box flexGrow={1} justifyContent="flex-end"><Text dimColor>{activity.summary}</Text></Box>
           </Box>
         </>
@@ -417,7 +417,7 @@ function SparkFooter({ series, month, color }: { series: number[]; month: number
   return (
     <Box>
       <Box width={4}><Text dimColor>14d</Text></Box>
-      <Text color={color}>{sparkline(series)}</Text>
+      <Text color={color}>{sparkline(series.slice(-14))}</Text>
       <Box flexGrow={1} justifyContent="flex-end"><Text dimColor>{fmt.currency(month)} mo</Text></Box>
     </Box>
   )

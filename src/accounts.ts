@@ -137,6 +137,9 @@ export function buildAccounts(config: Config, detected: ProviderId[]): Account[]
   const out: Account[] = []
   const usedIds = new Set(config.accounts.map(a => a.id))
   const seenKeys = new Set<string>()
+  const excludedKeys = new Set(
+    config.accountDetection.excludedAccounts.map(ref => accountKey(ref.providerId, ref.homeDir)),
+  )
 
   const add = (account: Account): void => {
     const key = accountKey(account.providerId, account.homeDir)
@@ -159,11 +162,14 @@ export function buildAccounts(config: Config, detected: ProviderId[]): Account[]
       })
     }
 
+    if (!config.accountDetection.enabled || config.accountDetection.disabledProviders.includes(pid)) continue
     const discovered = discoverProviderAccounts(pid, usedIds)
     if (detected.includes(pid)) {
-      add({ id: pid, providerId: pid, name: provider.name, color: provider.color, homeDir: undefined })
+      const account = { id: pid, providerId: pid, name: provider.name, color: provider.color, homeDir: undefined }
+      if (!excludedKeys.has(accountKey(pid))) add(account)
     }
     for (const account of discovered) {
+      if (excludedKeys.has(accountKey(account.providerId, account.homeDir))) continue
       add(account)
     }
   }

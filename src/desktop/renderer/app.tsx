@@ -10,7 +10,7 @@ import {
   togglePin,
 } from './presentation'
 import { ProviderCard } from './provider-card'
-import { ColdState, DesktopSettings, EmptyState, Footer, SettingsHub, ThemeSettings, UpdateReady } from './desktop-chrome'
+import { ColdState, DesktopSettings, DetectionSettings, EmptyState, Footer, SettingsHub, ThemeSettings, UpdateReady } from './desktop-chrome'
 import { TrayStripPainter } from './tray-strip-painter'
 import { OptimisticConfigUpdates } from './config-updates'
 import { applyDesktopTheme } from './theme'
@@ -26,7 +26,7 @@ export function App() {
   const [now, setNow] = useState(() => Date.now())
   const [toast, setToast] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
-  const [surface, setSurface] = useState<'usage' | 'settings' | 'theme' | 'desktop'>('usage')
+  const [surface, setSurface] = useState<'usage' | 'settings' | 'theme' | 'desktop' | 'detection'>('usage')
   const [denyProvider, setDenyProvider] = useState<string | null>(null)
   const [scrollEdges, setScrollEdges] = useState({ up: false, down: false })
   const frame = useRef<HTMLDivElement>(null)
@@ -261,7 +261,7 @@ export function App() {
       const target = event.target as HTMLElement | null
       const editable = target?.matches('input, textarea, select, [contenteditable="true"]') === true
       if (event.key === 'Escape') {
-        if (surface === 'theme' || surface === 'desktop') setSurface('settings')
+        if (surface === 'theme' || surface === 'desktop' || surface === 'detection') setSurface('settings')
         else if (surface === 'settings') setSurface('usage')
         else window.close()
         return
@@ -306,11 +306,13 @@ export function App() {
       {!ready
         ? <ColdState state={state} />
         : surface === 'settings'
-          ? <SettingsHub config={config} onBack={() => setSurface('usage')} onTheme={() => setSurface('theme')} onDesktop={() => setSurface('desktop')} />
+          ? <SettingsHub config={config} onBack={() => setSurface('usage')} onTheme={() => setSurface('theme')} onDesktop={() => setSurface('desktop')} onDetection={() => setSurface('detection')} />
         : surface === 'theme'
           ? <ThemeSettings config={config} systemMode={state?.systemMode ?? 'dark'} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')} />
         : surface === 'desktop'
           ? <DesktopSettings config={config} groups={groups} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')} />
+        : surface === 'detection'
+          ? <DetectionSettings config={config} snapshot={snapshot} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')} />
         : !hasAccounts
           ? <EmptyState onDashboard={() => openDashboard('/settings')} />
           : (

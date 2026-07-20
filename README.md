@@ -252,12 +252,12 @@ Appearance is stored atomically by the daemon, so a change made in any client pr
 
 **Desktop App**
 
-- Choose the menu-bar summary, pin up to two provider values, control provider disclosure, and configure launch at login
+- Choose the menu-bar summary, pin up to two provider values, control provider disclosure, select a 7/14/30-day spend graph, and configure launch at login
 - The compact desktop Theme page previews and selects the entire catalog; **Customize in Dashboard** opens the full paired-palette editor using the selected preset as its starting point
 
-**Providers** — toggle each provider on or off.
+**Providers** — toggle provider tracking independently from automatic account discovery, globally or per provider. Turning discovery off never removes manually configured accounts.
 
-**Accounts** — add, edit, reorder, and delete accounts. Each account has a provider, a name, a home directory (so you can track multiple logins across different `HOME`s), and an accent color. Multiple accounts per provider are supported.
+**Accounts** — add, edit, reorder, or remove manual accounts, and turn individual detected accounts on or off without touching their credentials. Each manual account has a provider, a name, a home directory (so you can track multiple logins across different `HOME`s), and an accent color. Multiple accounts per provider are supported.
 
 ## Options
 
@@ -268,6 +268,8 @@ tokmon usage [options]      Query usage by model (human or JSON)
 tokmon providers [options]  Show accounts and local provider paths
 tokmon snapshot [options]   Print the raw daemon snapshot as JSON
 tokmon config [path]        Print the tokmon config file location
+tokmon config get           Read daemon-owned app settings
+tokmon config set ...       Update app, graph, and discovery settings through daemon CAS
 
 Options:
 -i, --interval <seconds>  Refresh interval in seconds (default: from config, or 2)
@@ -312,7 +314,8 @@ tokmon runs a small local **daemon** that does all the data collection. The term
 - A persistent parse cache keyed by file **mtime + size** makes repeat launches near-instant; edited or deleted files are re-read automatically.
 
 **Accounts**
-- Each enabled provider is detected automatically, and its real account identity — email and plan — is read from local auth (e.g. Claude `~/.claude.json`, the Codex `id_token`, Cursor's state DB). Extra accounts, like additional Claude homes, are auto-discovered too.
+- Each enabled provider can be detected automatically, and its real account identity — email and plan — is read from local auth (e.g. Claude `~/.claude.json`, the Codex `id_token`, Cursor's state DB). Extra accounts, like additional Claude homes, are auto-discovered too.
+- Discovery policy is daemon-owned: it can be disabled globally, per provider, or for one discovered home. Ignored accounts stay restorable in settings, while manual accounts remain independent.
 
 **Limits & billing**
 - Rate limits and remaining spend/quota come from each provider's own official API. Tokmon refreshes them on the configured billing interval; terminal focus and extra dashboard viewers reuse fresh data instead of issuing extra provider requests.

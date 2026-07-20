@@ -1,5 +1,5 @@
 import { PROVIDER_ORDER } from '../providers'
-import { toggleProviderSelection } from '../config'
+import { providerDetectionEnabled, setDetectedAccountExcluded, setProviderDetectionEnabled, toggleProviderSelection } from '../config'
 import { DESKTOP_FIXED_ROWS, DESKTOP_FIXED_SETTINGS, GENERAL_ROWS, GENERAL_SETTINGS, SETTINGS_TABS, THEME_ROWS, THEME_SETTINGS } from './settings'
 import type { InputKey, KeyContext } from './keybinding-context'
 
@@ -33,7 +33,7 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
       : tab === 'desktop'
         ? DESKTOP_FIXED_ROWS + PROVIDER_ORDER.length
       : tab === 'providers'
-          ? PROVIDER_ORDER.length
+          ? PROVIDER_ORDER.length + 1
           : trackedAccounts.length + 1
 
   if (key.tab) { switchTab(key.shift ? -1 : 1); return }
@@ -83,13 +83,39 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
     return
   }
   if (tab === 'providers') {
-    if (cursor < PROVIDER_ORDER.length && (input === ' ' || key.return || key.leftArrow || key.rightArrow)) {
-      toggleProvider(PROVIDER_ORDER[cursor])
+    if (cursor === 0 && (input === ' ' || key.return || key.leftArrow || key.rightArrow)) {
+      updateConfig(current => ({
+        ...current,
+        accountDetection: { ...current.accountDetection, enabled: !current.accountDetection.enabled },
+      }))
+      return
+    }
+    const provider = PROVIDER_ORDER[cursor - 1]
+    if (provider && input === 'a') {
+      updateConfig(current => ({
+        ...current,
+        accountDetection: setProviderDetectionEnabled(
+          current.accountDetection,
+          provider,
+          !providerDetectionEnabled(current.accountDetection, provider),
+        ),
+      }))
+      return
+    }
+    if (provider && (input === ' ' || key.return || key.leftArrow || key.rightArrow)) {
+      toggleProvider(provider)
     }
     return
   }
   if (cursor < trackedAccounts.length) {
     const row = trackedAccounts[cursor]
+    if (row.source === 'ignored' && (key.return || input === 'x')) {
+      if (row.excludedRef) updateConfig(current => ({
+        ...current,
+        accountDetection: setDetectedAccountExcluded(current.accountDetection, row.excludedRef!, false),
+      }))
+      return
+    }
     if (key.return) {
       if (row.source === 'configured') {
         const account = config.accounts.find(candidate => candidate.id === row.explicitId)
@@ -101,6 +127,17 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
     }
     if (row.source === 'configured' && row.explicitId && (input === 'd' || input === 'x')) {
       deleteAccount(row.explicitId)
+      return
+    }
+    if (row.source === 'auto' && input === 'x') {
+      updateConfig(current => ({
+        ...current,
+        activeAccountId: current.activeAccountId === row.id ? null : current.activeAccountId,
+        accountDetection: setDetectedAccountExcluded(current.accountDetection, {
+          providerId: row.providerId,
+          homeDir: row.homeDir,
+        }, true),
+      }))
       return
     }
     if (input === ' ') { updateConfig(current => ({ ...current, activeAccountId: row.id })); return }

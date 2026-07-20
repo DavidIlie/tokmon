@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { parseQueryArgs, queryHelp, runQueryCommand } from './cli-command'
-import { DEFAULTS, type Config } from './config'
+import { DEFAULTS, PROVIDER_IDS, type Config } from './config'
 import type { ConfigState, ConfigUpdateRequest } from './rpc/contract'
 import type { WebSnapshot } from './web/contract'
 
@@ -93,7 +93,7 @@ test('config get reports daemon-owned app preferences and closes its client', as
       activeTimeoutMin: 22,
       launchAtLogin: true,
     },
-    desktop: { expandedProviders: ['cursor'] },
+    desktop: { ...DEFAULTS.desktop, expandedProviders: ['cursor'] },
   })
   const compact = JSON.parse(await runQueryCommand('config', ['get', '--json', '--compact'], harness))
   assert.deepEqual(compact, {
@@ -105,6 +105,9 @@ test('config get reports daemon-owned app preferences and closes its client', as
     summaryMode: 'tightest',
     expandedProviders: ['cursor'],
     activeWindowMinutes: 22,
+    graphRangeDays: 14,
+    autoDetect: 'on',
+    autoDetectProviders: [...PROVIDER_IDS],
     launchAtLogin: 'on',
   })
   assert.equal(harness.gets(), 1)
@@ -129,12 +132,15 @@ test('config set supports every desktop preference through daemon CAS', async ()
   assert.equal(await run('summary-mode', 'tightest'), 'summary-mode tightest\n')
   assert.equal(await run('expanded-providers', 'claude,cursor,codex'), 'expanded-providers claude,cursor,codex\n')
   assert.equal(await run('active-window', '17'), 'active-window 17\n')
+  assert.equal(await run('graph-range', '30'), 'graph-range 30\n')
+  assert.equal(await run('auto-detect', 'off'), 'auto-detect off\n')
+  assert.equal(await run('auto-detect-providers', 'claude,codex'), 'auto-detect-providers claude,codex\n')
   const result = JSON.parse(await runQueryCommand(
     'config',
     ['set', 'launch-at-login', 'on', '--json', '--compact'],
     harness,
   ))
-  assert.deepEqual(result, { setting: 'launch-at-login', value: 'on', revision: 8 })
+  assert.deepEqual(result, { setting: 'launch-at-login', value: 'on', revision: 11 })
 
   const config = harness.current()
   assert.equal(config.privacyMode, false)
@@ -146,8 +152,11 @@ test('config set supports every desktop preference through daemon CAS', async ()
   assert.equal(config.tray.displayMetric, 'tightestRemaining')
   assert.deepEqual(config.desktop.expandedProviders, ['claude', 'cursor', 'codex'])
   assert.equal(config.tray.activeTimeoutMin, 17)
+  assert.equal(config.desktop.graphRangeDays, 30)
+  assert.equal(config.accountDetection.enabled, false)
+  assert.deepEqual(config.accountDetection.disabledProviders, PROVIDER_IDS.filter(id => id !== 'claude' && id !== 'codex'))
   assert.equal(config.tray.launchAtLogin, true)
-  assert.equal(harness.closed(), 8)
+  assert.equal(harness.closed(), 11)
 })
 
 test('config set validates values before connecting', async () => {
@@ -165,6 +174,9 @@ test('config set validates values before connecting', async () => {
   await assert.rejects(runQueryCommand('config', ['set', 'expanded-providers', 'claude,,codex'], dependencies), /comma-separated/)
   await assert.rejects(runQueryCommand('config', ['set', 'summary-mode', 'average'], dependencies), /smart or tightest/)
   await assert.rejects(runQueryCommand('config', ['set', 'active-window', '0'], dependencies), /1 to 1440/)
+  await assert.rejects(runQueryCommand('config', ['set', 'graph-range', '21'], dependencies), /7, 14, or 30/)
+  await assert.rejects(runQueryCommand('config', ['set', 'auto-detect', 'maybe'], dependencies), /must be on or off/)
+  await assert.rejects(runQueryCommand('config', ['set', 'auto-detect-providers', 'claude,wat'], dependencies), /unknown provider: wat/)
   await assert.rejects(runQueryCommand('config', ['set', 'unknown', 'on'], dependencies), /usage: tokmon config set/)
   assert.equal(connects, 0)
 })

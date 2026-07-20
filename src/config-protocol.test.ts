@@ -339,13 +339,18 @@ test('presentation preferences are hot while source and timing changes affect th
     { ...DEFAULTS, privacyMode: !DEFAULTS.privacyMode },
     { ...DEFAULTS, tray: { ...DEFAULTS.tray, pinnedProviders: ['claude'] } },
     { ...DEFAULTS, tray: { ...DEFAULTS.tray, displayMetric: 'tightestRemaining' as const } },
-    { ...DEFAULTS, desktop: { expandedProviders: ['claude'] } },
+    { ...DEFAULTS, desktop: { ...DEFAULTS.desktop, expandedProviders: ['claude'] } },
+    { ...DEFAULTS, desktop: { ...DEFAULTS.desktop, graphRangeDays: 30 as const } },
     { ...DEFAULTS, appearance: { ...DEFAULTS.appearance, mode: 'light' as const } },
   ]
   for (const next of hot) assert.equal(configAffectsEngine(DEFAULTS, next), false)
   assert.equal(configAffectsEngine(DEFAULTS, { ...DEFAULTS, interval: 9 }), true)
   assert.equal(configAffectsEngine(DEFAULTS, { ...DEFAULTS, timezone: 'UTC' }), true)
   assert.equal(configAffectsEngine(DEFAULTS, { ...DEFAULTS, disabledProviders: ['claude'] }), true)
+  assert.equal(configAffectsEngine(DEFAULTS, {
+    ...DEFAULTS,
+    accountDetection: { ...DEFAULTS.accountDetection, disabledProviders: ['claude'] },
+  }), true)
 })
 
 test('an old full-document CAS update preserves every capability-gated config field', async () => {
@@ -363,12 +368,18 @@ test('an old full-document CAS update preserves every capability-gated config fi
   }
   const currentPins = ['claude', 'codex']
   const currentExpanded = ['claude']
-  const state = {
+  const currentDetection: Config['accountDetection'] = {
+    enabled: true,
+    disabledProviders: ['codex'],
+    excludedAccounts: [{ providerId: 'claude' as const, homeDir: '/tmp/old-claude' }],
+  }
+  const state: { config: Config } = {
     config: {
       ...DEFAULTS,
       appearance: currentAppearance,
       tray: { ...DEFAULTS.tray, pinnedProviders: currentPins },
-      desktop: { expandedProviders: currentExpanded },
+      desktop: { ...DEFAULTS.desktop, expandedProviders: currentExpanded, graphRangeDays: 30 },
+      accountDetection: currentDetection,
     },
   }
   const broadcasts: Config[] = []
@@ -378,6 +389,7 @@ test('an old full-document CAS update preserves every capability-gated config fi
   } as never
   const {
     appearance: _unsupportedAppearance,
+    accountDetection: _unsupportedDetection,
     desktop: _unsupportedDesktop,
     ...oldClientTopLevel
   } = state.config
@@ -395,13 +407,18 @@ test('an old full-document CAS update preserves every capability-gated config fi
     assert.deepEqual(saved.config.appearance, currentAppearance)
     assert.deepEqual(saved.config.tray.pinnedProviders, currentPins)
     assert.deepEqual(saved.config.desktop.expandedProviders, currentExpanded)
+    assert.equal(saved.config.desktop.graphRangeDays, 30)
+    assert.deepEqual(saved.config.accountDetection, currentDetection)
     assert.deepEqual(broadcasts[0]?.appearance, currentAppearance)
     assert.deepEqual(broadcasts[0]?.tray.pinnedProviders, currentPins)
     assert.deepEqual(broadcasts[0]?.desktop.expandedProviders, currentExpanded)
+    assert.deepEqual(broadcasts[0]?.accountDetection, currentDetection)
     const persisted = await loadConfig()
     assert.deepEqual(persisted.appearance, currentAppearance)
     assert.deepEqual(persisted.tray.pinnedProviders, currentPins)
     assert.deepEqual(persisted.desktop.expandedProviders, currentExpanded)
+    assert.equal(persisted.desktop.graphRangeDays, 30)
+    assert.deepEqual(persisted.accountDetection, currentDetection)
   } finally {
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME
     else process.env.XDG_CONFIG_HOME = previous
@@ -423,7 +440,7 @@ test('privacy and desktop preference updates persist without reconfiguring the e
     process.env.XDG_CONFIG_HOME = root
     await applyConfigUpdate(engine, state, {
       expectedRevision: 0,
-      config: { ...DEFAULTS, privacyMode: false, desktop: { expandedProviders: ['claude'] } },
+      config: { ...DEFAULTS, privacyMode: false, desktop: { ...DEFAULTS.desktop, expandedProviders: ['claude'] } },
     })
     assert.equal(configured, 0)
     assert.equal(broadcasts, 1)
