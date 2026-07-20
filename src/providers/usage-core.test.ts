@@ -56,7 +56,9 @@ test('request counts survive aggregation and the persisted row codec', async () 
     }
     const parse = async () => [entry]
     const loaded = await loadCachedEntries(
-      [{ path: join(dir, 'source.jsonl'), mtimeMs: 1, size: 1 }],
+      // Keep this persistence fixture inside the cache retention window. A
+      // near-epoch mtime races the intentionally asynchronous stale-shard prune.
+      [{ path: join(dir, 'source.jsonl'), mtimeMs: Date.now(), size: 1 }],
       parse,
       0,
       { storageDir: dir, fingerprint: { format: 'count-test', parser: 'count-test', pricing: 'count-test' } },
