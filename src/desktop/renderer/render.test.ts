@@ -345,7 +345,11 @@ test('desktop settings exposes daemon-backed privacy, summary and provider pin c
     desktop: { ...config.desktop, expandedProviders: ['claude'] },
   } as Config
   const html = renderToStaticMarkup(createElement(DesktopSettings, {
-    config: fullConfig, groups, onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
+    config: fullConfig, groups,
+    update: { status: 'idle', availableVersion: null, progressPercent: null, error: null },
+    appVersion: '0.28.5',
+    onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
+    onCheckUpdates: () => {}, onQuit: () => {},
   }))
   assert.match(html, /Privacy mode/)
   assert.match(html, /Provider summary/)
@@ -355,7 +359,23 @@ test('desktop settings exposes daemon-backed privacy, summary and provider pin c
   assert.match(html, /data-active="true">14d<\/button>/)
   assert.match(html, />30d<\/button>/)
   assert.match(html, /Launch at login/)
+  assert.match(html, /Tokmon 0\.28\.5/)
+  assert.match(html, /Check for Updates/)
+  assert.match(html, /Quit Tokmon/)
   assert.match(html, /Manage all settings/)
+})
+
+test('desktop settings defers a downloaded update to the global restart action', () => {
+  const snap = snapshot([account({})])
+  const html = renderToStaticMarkup(createElement(DesktopSettings, {
+    config, groups: groupByProvider(snap),
+    update: { status: 'downloaded', availableVersion: '0.29.0', progressPercent: 100, error: null },
+    appVersion: '0.28.5',
+    onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
+    onCheckUpdates: () => {}, onQuit: () => {},
+  }))
+  assert.match(html, /0\.29\.0 is ready to install/)
+  assert.match(html, /disabled=""[^>]*>Update Ready/)
 })
 
 test('settings hub separates theme from desktop behavior and summarizes the shared appearance', () => {

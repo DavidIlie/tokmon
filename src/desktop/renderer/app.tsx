@@ -290,6 +290,11 @@ export function App() {
 
   const openDashboard = useCallback((path?: DashboardPath) => { void window.tokmon.openDashboard(path) }, [])
 
+  const checkForUpdates = useCallback(async () => {
+    try { await window.tokmon.checkForUpdates() }
+    catch { flashToast('Couldn’t check for updates. Try again.') }
+  }, [flashToast])
+
   const onSectionsScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
     updateScrollEdges(event.currentTarget)
   }, [updateScrollEdges])
@@ -310,7 +315,15 @@ export function App() {
         : surface === 'theme'
           ? <ThemeSettings config={config} systemMode={state?.systemMode ?? 'dark'} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')} />
         : surface === 'desktop'
-          ? <DesktopSettings config={config} groups={groups} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')} />
+          ? <DesktopSettings
+              config={config} groups={groups}
+              update={state?.update ?? { status: 'disabled', availableVersion: null, progressPercent: null, error: null }}
+              appVersion={state?.appVersion ?? ''}
+              onPatch={mutate => { void updateConfig(mutate) }}
+              onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')}
+              onCheckUpdates={() => { void checkForUpdates() }}
+              onQuit={() => { void window.tokmon.quit() }}
+            />
         : surface === 'detection'
           ? <DetectionSettings config={config} snapshot={snapshot} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')} />
         : !hasAccounts

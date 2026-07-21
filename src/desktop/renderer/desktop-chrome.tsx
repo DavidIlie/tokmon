@@ -238,16 +238,41 @@ export function ThemeSettings({ config, systemMode, onPatch, onBack, onDashboard
   )
 }
 
-export function DesktopSettings({ config, groups, onPatch, onBack, onDashboard }: {
+function updateStatusCopy(update: DesktopUpdateState): string {
+  if (update.status === 'disabled') return 'Automatic updates are available in the installed app'
+  if (update.status === 'checking') return 'Looking for a newer version…'
+  if (update.status === 'available' || update.status === 'downloading') {
+    const progress = update.progressPercent === null ? '' : ` · ${Math.round(update.progressPercent)}%`
+    return `Downloading${update.availableVersion ? ` ${update.availableVersion}` : ''}${progress}`
+  }
+  if (update.status === 'downloaded') return `${update.availableVersion ?? 'An update'} is ready to install`
+  if (update.status === 'error') return 'The last update check failed · Try again'
+  return 'Checks automatically after launch and every hour'
+}
+
+export function DesktopSettings({ config, groups, update, appVersion, onPatch, onBack, onDashboard, onCheckUpdates, onQuit }: {
   config: Config
   groups: ProviderGroup[]
+  update: DesktopUpdateState
+  appVersion: string
   onPatch(mutate: (config: Config) => Config): void
   onBack(): void
   onDashboard(): void
+  onCheckUpdates(): void
+  onQuit(): void
 }) {
   const pins = config.tray.pinnedProviders
   const expandedProviders = config.desktop?.expandedProviders ?? []
   const knownProviders = new Set(groups.map(group => group.providerId))
+  const updateBusy = update.status === 'checking' || update.status === 'available' || update.status === 'downloading'
+  const updateDisabled = update.status === 'disabled' || updateBusy || update.status === 'downloaded'
+  const updateLabel = update.status === 'downloaded'
+    ? 'Update Ready'
+    : update.status === 'checking'
+      ? 'Checking…'
+      : update.status === 'available' || update.status === 'downloading'
+        ? `Downloading${update.progressPercent === null ? '…' : ` ${Math.round(update.progressPercent)}%`}`
+        : update.status === 'error' ? 'Try Again' : 'Check for Updates'
   return (
     <section className="settings-view" aria-label="Desktop settings">
       <SettingsHeader title="Desktop App" backLabel="Settings" onBack={onBack} />
@@ -290,6 +315,19 @@ export function DesktopSettings({ config, groups, onPatch, onBack, onDashboard }
         <SettingsRow label="Launch at login" hint="Start Tokmon silently">
           <Toggle value={config.tray.launchAtLogin} label="Launch at login" onChange={value => onPatch(next => ({ ...next, tray: { ...next.tray, launchAtLogin: value } }))} />
         </SettingsRow>
+        <div className="desktop-app-actions" aria-label="Application actions">
+          <span className="desktop-app-version">
+            <b>Tokmon {appVersion}</b>
+            <small>{updateStatusCopy(update)}</small>
+          </span>
+          <span className="desktop-action-buttons">
+            <button
+              type="button" className="check-updates" disabled={updateDisabled}
+              onClick={onCheckUpdates}
+            >{updateLabel}</button>
+            <button type="button" className="quit-tokmon" onClick={onQuit}>Quit Tokmon</button>
+          </span>
+        </div>
       </div>
       <button type="button" className="manage-settings" onClick={onDashboard}>Manage all settings…</button>
     </section>
