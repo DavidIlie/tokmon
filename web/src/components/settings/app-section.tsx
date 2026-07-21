@@ -51,12 +51,20 @@ export function AppSection({ draft, patch, snapshot }: AppSectionProps) {
             onChange={value => patch(config => ({ ...config, privacyMode: value === 'on' }))}
           />
         </FieldRow>
-        <FieldRow label="Menu bar value" hint="smart pools account capacity · tightest shows the highest single usage">
+        <FieldRow label="Provider summary" hint="smart pools account capacity · tightest shows the highest single usage">
           <Segmented<'smartHeadroom' | 'tightestRemaining'>
             size="xs" ariaLabel="menu bar value"
             options={[{ value: 'smartHeadroom', label: 'smart' }, { value: 'tightestRemaining', label: 'tightest' }]}
             value={draft.tray.displayMetric}
             onChange={displayMetric => patch(config => ({ ...config, tray: { ...config.tray, displayMetric } }))}
+          />
+        </FieldRow>
+        <FieldRow label="Menu bar value" hint="show usage percentage or today's local token total">
+          <Segmented<'usage' | 'todayTokens'>
+            size="xs" ariaLabel="menu bar value"
+            options={[{ value: 'usage', label: 'usage' }, { value: 'todayTokens', label: 'tokens today' }]}
+            value={draft.tray.menuBarValue}
+            onChange={menuBarValue => patch(config => ({ ...config, tray: { ...config.tray, menuBarValue } }))}
           />
         </FieldRow>
         <FieldRow label="Show value in menu bar" hint="hide the number and keep the provider mark">

@@ -390,6 +390,14 @@ function QuotaRow({ quota, color, barW, labelW, resetW, resetDisplay, tz }: {
   tz?: string
 }) {
   const theme = useTuiTheme()
+  if (quota.value?.kind === 'money') {
+    return (
+      <Box>
+        <Box width={labelW} flexShrink={0}><Text dimColor wrap="truncate">{quota.label}</Text></Box>
+        <Text bold color={theme.cost} wrap="truncate-end">{quota.valueText}</Text>
+      </Box>
+    )
+  }
   if (quota.bounded && quota.usedPct !== null) {
     const used = quota.usedPct
     const remaining = quota.remainingPct ?? 0

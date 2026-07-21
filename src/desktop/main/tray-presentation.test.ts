@@ -17,6 +17,8 @@ test('menu-bar titles are terse and never carry a cryptic "!" prefix', () => {
   assert.equal(menuBarTitle(true, 0.2, true), '<1%')
   assert.equal(menuBarTitle(true, 64.4, false), '64%')
   assert.equal(menuBarTitle(false, 8, true), '')
+  assert.equal(menuBarTitle(true, null, false, '1.2B'), '1.2B')
+  assert.equal(menuBarTitle(false, null, false, '1.2B'), '')
   assert.equal(disconnectedMenuBarTitle(true), '')
   assert.equal(disconnectedMenuBarTitle(false), '')
 })

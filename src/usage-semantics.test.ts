@@ -34,6 +34,29 @@ test('unbounded count suffixes remain human-readable across every renderer', () 
   assert.equal(view.valueText, '2 available')
 })
 
+test('bounded provider money keeps exact amounts alongside its percentage meter', () => {
+  const view = deriveQuotaView({
+    key: 'extra_usage', role: 'unbounded', label: 'Extra', used: 3, limit: 100,
+    format: { kind: 'dollars', currency: 'usd' },
+  })
+  assert.equal(view.usedPct, 3)
+  assert.equal(view.remainingPct, 97)
+  assert.equal(view.valueText, '$3.00 used · $97.00 left')
+  assert.deepEqual(view.value, { kind: 'money', used: 3, limit: 100, remaining: 97, currency: 'USD' })
+})
+
+test('money copy distinguishes unlimited and over-limit provider values', () => {
+  assert.equal(deriveQuotaView({
+    label: 'Extra', used: 3, limit: null, format: { kind: 'dollars', currency: 'EUR' },
+  }).valueText, '€3.00')
+  assert.equal(deriveQuotaView({
+    label: 'Extra', used: 105, limit: 100, format: { kind: 'dollars', currency: 'USD' },
+  }).valueText, '$105.00 used · $5.00 over')
+  assert.equal(deriveQuotaView({
+    label: 'Extra', used: 300, limit: 10_000, format: { kind: 'dollars', currency: 'JPY' },
+  }).valueText, '¥300 used · ¥9,700 left')
+})
+
 test('daemon quota contract wins over conflicting legacy raw metrics', () => {
   const canonical = deriveQuotaViews([pct('Session', 12, { role: 'session' })])
   const resolved = resolveQuotaViews({

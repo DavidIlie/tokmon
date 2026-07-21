@@ -1,9 +1,11 @@
 import React, { useEffect, useRef } from 'react'
 import type { Config, WebSnapshot } from '../../web/contract'
 import { usageFromHeadroom } from '../../usage-semantics'
+import { formatCompactTokens } from '../../shared/format'
 import { markRenderPlan, providerMark, providerMonogram } from './provider-icons'
 import {
   providerRepresentative,
+  providerTodayTokens,
   TRAY_STRIP,
   trayStripLayout,
   type TraySegmentValue,
@@ -47,7 +49,7 @@ function paintTrayStrip(canvas: HTMLCanvasElement, scale: number, values: readon
     ctx.font = trayFont()
     ctx.textAlign = 'center'
     ctx.textBaseline = 'alphabetic'
-    ctx.globalAlpha = segment.usage === null ? unknownAlpha : 1
+    ctx.globalAlpha = segment.label === '–' ? unknownAlpha : 1
     ctx.fillText(segment.label, segment.numCenterX, baselineY)
     ctx.restore()
 
@@ -82,9 +84,11 @@ export function TrayStripPainter({ snapshot, config, pins, platform, now }: {
       const values: TraySegmentValue[] = pins.map(providerId => {
         const provider = snapshot.providers.find(candidate => candidate.id === providerId)
         if (provider?.headroom) {
+          const accounts = snapshot.accounts.filter(account => account.providerId === providerId)
           return {
             providerId,
             usage: usageFromHeadroom(provider.headroom.value),
+            ...(config.tray.menuBarValue === 'todayTokens' ? { label: formatCompactTokens(providerTodayTokens(accounts)) } : {}),
             active: provider.headroom.activeAccountIds.length > 0,
           }
         }
@@ -93,6 +97,7 @@ export function TrayStripPainter({ snapshot, config, pins, platform, now }: {
         return {
           providerId,
           usage: usageFromHeadroom(representative.quota?.remaining ?? null),
+          ...(config.tray.menuBarValue === 'todayTokens' ? { label: formatCompactTokens(providerTodayTokens(accounts)) } : {}),
           active: representative.providerActive,
         }
       })
@@ -110,7 +115,7 @@ export function TrayStripPainter({ snapshot, config, pins, platform, now }: {
     } catch {
       // The main process retains its procedural fallback icon.
     }
-  }, [snapshot, pins, platform, config.tray.activeTimeoutMin, now])
+  }, [snapshot, pins, platform, config.tray.activeTimeoutMin, config.tray.menuBarValue, now])
   return (
     <>
       <canvas ref={canvas1x} className="tray-strip-canvas" aria-hidden="true" />

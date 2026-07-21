@@ -13,7 +13,6 @@ import { codexHomes } from './usage'
 
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
 const RESET_CREDITS_URL = 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits'
-const CREDIT_USD_RATE = 0.04
 
 interface CodexAuth {
   accessToken: string
@@ -167,11 +166,16 @@ function appendWindowMetrics(metrics: Metric[], rl: any, headerPct?: (name: stri
   }
 }
 
-function appendCredits(metrics: Metric[], source: any): void {
+export function creditBalanceMetric(source: any): Metric | null {
   const balance = numberValue(source?.credits?.balance ?? source?.credit_balance)
-  if (balance !== undefined && balance >= 0) {
-    metrics.push({ label: 'Credits', used: balance * CREDIT_USD_RATE, limit: null, format: { kind: 'dollars' } })
-  }
+  return balance !== undefined && balance >= 0
+    ? { key: 'credits', role: 'unbounded', label: 'Credits', used: balance, limit: null, format: { kind: 'count', suffix: 'available' } }
+    : null
+}
+
+function appendCredits(metrics: Metric[], source: any): void {
+  const metric = creditBalanceMetric(source)
+  if (metric) metrics.push(metric)
 }
 
 async function fetchResetCredits(headers: Record<string, string>): Promise<number | undefined> {

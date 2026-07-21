@@ -16,6 +16,7 @@ export interface Account {
 export interface TrayConfig {
   enabled: boolean
   showMenuBarText: boolean
+  menuBarValue: 'usage' | 'todayTokens'
   displayMetric: 'smartHeadroom' | 'tightestRemaining'
   pollIntervalSec: number
   activeTimeoutMin: number
@@ -177,6 +178,7 @@ export interface TrackedAccountCandidate {
 export const DEFAULT_TRAY_CONFIG: TrayConfig = {
   enabled: true,
   showMenuBarText: true,
+  menuBarValue: 'usage',
   displayMetric: 'smartHeadroom',
   pollIntervalSec: 30,
   activeTimeoutMin: 10,
@@ -550,6 +552,9 @@ export function repairConfig(input: unknown): ConfigRepair {
     showMenuBarText: typeof rawTray.showMenuBarText === 'boolean'
       ? rawTray.showMenuBarText
       : DEFAULT_TRAY_CONFIG.showMenuBarText,
+    menuBarValue: rawTray.menuBarValue === 'todayTokens' || rawTray.menuBarValue === 'usage'
+      ? rawTray.menuBarValue
+      : DEFAULT_TRAY_CONFIG.menuBarValue,
     displayMetric: rawTray.displayMetric === 'tightestRemaining' || rawTray.displayMetric === 'smartHeadroom'
       ? rawTray.displayMetric
       : DEFAULT_TRAY_CONFIG.displayMetric,

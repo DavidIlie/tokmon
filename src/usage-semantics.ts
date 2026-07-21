@@ -2,6 +2,14 @@ import type { Metric } from './providers/types'
 import { containsEmail, redactEmail } from './config-schema'
 export type MetricRole = 'session' | 'weekly' | 'model' | 'other' | 'unbounded'
 
+export type QuotaValue = {
+  kind: 'money'
+  used: number
+  limit: number | null
+  remaining: number | null
+  currency: string
+}
+
 export interface QuotaView {
   key: string
   label: string
@@ -15,6 +23,8 @@ export interface QuotaView {
   active: boolean
   displayOrder: number
   valueText: string
+  /** Authoritative provider amount retained alongside the percentage meter. */
+  value?: QuotaValue
 }
 
 export interface AccountIdentityView {
@@ -62,13 +72,36 @@ function inferRole(metric: Metric): MetricRole {
   return 'other'
 }
 
-function valueText(metric: Metric, usedPct: number | null): string {
+function formatMoney(value: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(value)
+  } catch { return `$${value.toFixed(2)}` }
+}
+
+function moneyValue(metric: Metric): QuotaValue | undefined {
+  if (metric.format.kind !== 'dollars' || !Number.isFinite(metric.used)) return undefined
+  const limit = metric.limit != null && Number.isFinite(metric.limit) ? metric.limit : null
+  return {
+    kind: 'money',
+    used: metric.used,
+    limit,
+    remaining: limit === null ? null : limit - metric.used,
+    currency: metric.format.currency?.trim().toUpperCase() || 'USD',
+  }
+}
+
+function valueText(metric: Metric, usedPct: number | null, value?: QuotaValue): string {
+  if (value) {
+    if (value.remaining === null) return formatMoney(value.used, value.currency)
+    const used = `${formatMoney(value.used, value.currency)} used`
+    return value.remaining >= 0
+      ? `${used} · ${formatMoney(value.remaining, value.currency)} left`
+      : `${used} · ${formatMoney(-value.remaining, value.currency)} over`
+  }
   if (usedPct !== null) return `${Math.round(usedPct)}% used`
   if (!Number.isFinite(metric.used)) return '—'
   if (metric.format.kind === 'dollars') {
-    try {
-      return new Intl.NumberFormat('en-US', { style: 'currency', currency: metric.format.currency ?? 'USD', maximumFractionDigits: 2 }).format(metric.used)
-    } catch { return `$${metric.used.toFixed(2)}` }
+    return formatMoney(metric.used, metric.format.currency?.trim().toUpperCase() || 'USD')
   }
   if (metric.format.kind === 'count') {
     const suffix = metric.format.suffix?.trim()
@@ -85,6 +118,7 @@ export function deriveQuotaView(metric: Metric, sourceIndex = 0): QuotaView {
   const usedPct = metric.format.kind === 'percent' ? metric.used : metric.limit != null && metric.limit > 0 ? metric.used / metric.limit * 100 : null
   const finiteUsedPct = usedPct == null || !Number.isFinite(usedPct) ? null : clampPct(usedPct)
   const resets = metric.resetsAt ? Date.parse(metric.resetsAt) : Number.NaN
+  const value = moneyValue(metric)
   return {
     key: metric.key ?? `${metric.label}:${sourceIndex}`,
     label: metric.label.replace(/\s*(limit|usage)$/i, '').trim() || metric.label,
@@ -97,7 +131,8 @@ export function deriveQuotaView(metric: Metric, sourceIndex = 0): QuotaView {
     primary: metric.primary === true,
     active: metric.active === true,
     displayOrder: sourceIndex,
-    valueText: valueText(metric, finiteUsedPct),
+    valueText: valueText(metric, finiteUsedPct, value),
+    ...(value ? { value } : {}),
   }
 }
 
@@ -286,8 +321,9 @@ function cumulativeQuotaViews(accounts: readonly HeadroomAccountInput[]): QuotaV
     const remainingPct = rows.reduce((sum, quota) => sum + quota.remainingPct!, 0) / rows.length
     const usedPct = 100 - remainingPct
     const resets = rows.map(quota => quota.resetsAt).filter((value): value is number => value !== null)
+    const { value: _value, ...firstWithoutValue } = first
     return {
-      ...first,
+      ...firstWithoutValue,
       usedPct,
       remainingPct,
       resetsAt: resets.length > 0 ? Math.min(...resets) : null,

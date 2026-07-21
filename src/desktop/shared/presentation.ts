@@ -77,6 +77,12 @@ export function accountFloor(account: WebAccount): Quota | null {
   return tightestQuota(accountQuotas(account))
 }
 
+/** Sum canonical local usage for the current day; null means the provider has no usage feed. */
+export function providerTodayTokens(accounts: readonly WebAccount[]): number | null {
+  const values = accounts.map(account => account.dashboard?.today.tokens).filter((value): value is number => value != null && Number.isFinite(value))
+  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) : null
+}
+
 export type RepresentativeBasis = 'active-floor' | 'idle-runway' | 'none'
 
 export interface ProviderRepresentative {

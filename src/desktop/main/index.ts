@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { writeFile } from 'node:fs/promises'
 import { DEFAULT_APPEARANCE, resolveTheme } from '../../theme'
 import { usageFromHeadroom } from '../../usage-semantics'
+import { formatCompactTokens } from '../../shared/format'
 import { createDaemonRpcClient, type DaemonRpcClient } from '../../client/daemon-rpc-client'
 import { acquireOrAttachDaemon, type DaemonController } from '../../web/daemon-controller'
 import { DesktopStateStore } from './desktop-state'
@@ -23,6 +24,7 @@ import {
   billingObservedAt,
   billingStaleAfterMs,
   providerRepresentative,
+  providerTodayTokens,
   resetLabel,
   resolveProviderPins,
   severity,
@@ -216,7 +218,13 @@ async function bootstrap(): Promise<void> {
     })
     tray.setToolTip(tooltipRows.length ? `${identity.appName}\n${tooltipRows.join('\n')}` : `${identity.appName} is waiting for usage data.`)
     if (process.platform === 'darwin') {
-      tray.setTitle(trayStripActive ? '' : menuBarTitle(config.tray.showMenuBarText, usage, critical))
+      const fallbackAccounts = fallbackProvider
+        ? snapshot.accounts.filter(candidate => candidate.providerId === fallbackProvider)
+        : []
+      const alternate = config.tray.menuBarValue === 'todayTokens'
+        ? formatCompactTokens(providerTodayTokens(fallbackAccounts))
+        : undefined
+      tray.setTitle(trayStripActive ? '' : menuBarTitle(config.tray.showMenuBarText, usage, critical, alternate))
     }
     if (app.isPackaged && lastLaunchAtLogin !== config.tray.launchAtLogin) {
       app.setLoginItemSettings({ openAtLogin: config.tray.launchAtLogin, openAsHidden: true })

@@ -2,7 +2,8 @@
 import Layout from "../layouts/Layout.astro";
 import CopyCommand from "../components/CopyCommand.astro";
 import ProviderMark from "../components/ProviderMark.astro";
-import { PROVIDERS, THEMES, REPO_URL, RELEASES_URL } from "../lib/site.ts";
+import { PROVIDERS, REPO_URL, RELEASES_URL } from "../lib/site.ts";
+import { DEFAULT_THEME_ID, SITE_THEMES } from "../lib/theme.ts";
 
 const title = "Tokmon — every token, every limit, one dashboard";
 const description =
@@ -137,7 +138,10 @@ const description =
   <section id="themes" class="section">
     <div class="wrap">
       <p class="eyebrow">Appearance</p>
-      <h2 class="section-title">One appearance, shared everywhere.</h2>
+      <div class="theme-head">
+        <h2 class="section-title">One appearance, shared everywhere.</h2>
+        <button class="theme-reset" type="button" data-theme-reset hidden>Reset to Tokmon</button>
+      </div>
       <p class="section-lede muted">
         The daemon owns one theme across terminal, web, and desktop: the Tokmon
         and Phosphor presets, the complete ZeroCut editor-theme catalog,
@@ -145,16 +149,32 @@ const description =
         any preset.
       </p>
 
-      <ul class="theme-grid" role="list">
+      <ul class="theme-grid" role="radiogroup" aria-label="Preview a theme across this site" data-theme-grid>
         {
-          THEMES.map((t) => (
-            <li class="theme-chip" style={`background:${t.bg};color:${t.fg}`}>
-              <span class="theme-dot" style={`background:${t.accent}`} aria-hidden="true" />
-              <span class="theme-name">{t.name}</span>
+          SITE_THEMES.map((theme) => (
+            <li>
+              <button
+                class="theme-chip" type="button" role="radio"
+                aria-checked={theme.id === DEFAULT_THEME_ID ? "true" : "false"}
+                tabindex={theme.id === DEFAULT_THEME_ID ? 0 : -1}
+                data-theme-pick={theme.id}
+                style={`background:${theme.bg};color:${theme.fg}`}
+              >
+                <span class="theme-dot" style={`background:${theme.accent}`} aria-hidden="true" />
+                <span class="theme-name">{theme.name}</span>
+                <svg class="theme-check" viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
+                  <path d="M1.5 6.2 4.4 9 10.5 2.8" fill="none" stroke="currentColor" stroke-width="1.6" />
+                </svg>
+              </button>
             </li>
           ))
         }
       </ul>
+      <p class="theme-status" role="status" data-theme-status>
+        {SITE_THEMES.find((theme) => theme.id === DEFAULT_THEME_ID)?.name && (
+          <strong data-theme-status-name>Tokmon</strong>
+        )}<span data-theme-status-copy> — the default palette.</span>
+      </p>
       <p class="provider-foot muted">Plus OS-following Auto mode and custom palettes.</p>
     </div>
   </section>
@@ -313,7 +333,7 @@ const description =
     }
     code {
       font-family: var(--font-mono);
-      color: var(--cost);
+      color: var(--code-fg);
       background: var(--bg-2);
       border: 1px solid var(--line);
       border-radius: 5px;
@@ -334,7 +354,7 @@ const description =
     .surface-h {
       font-family: var(--font-display);
       font-size: 16px;
-      color: var(--accent);
+      color: var(--accent-text);
       margin-bottom: 8px;
     }
     .surface p {
@@ -377,6 +397,31 @@ const description =
     }
 
     /* themes */
+    .theme-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      min-height: 34px;
+    }
+    .theme-reset {
+      padding: 5px 11px;
+      border: 1px solid var(--line-2);
+      border-radius: 7px;
+      background: var(--bg-2);
+      color: var(--fg-dim);
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .theme-reset[hidden] {
+      display: none;
+    }
+    .theme-reset:hover {
+      border-color: var(--accent);
+      color: var(--fg-bright);
+    }
     .theme-grid {
       margin-top: 28px;
       list-style: none;
@@ -385,15 +430,27 @@ const description =
       grid-template-columns: repeat(6, 1fr);
       gap: 10px;
     }
+    .theme-grid > li {
+      display: contents;
+    }
     .theme-chip {
       display: flex;
       align-items: center;
       gap: 8px;
+      width: 100%;
       padding: 12px 12px;
       border: 1px solid var(--line-2);
       border-radius: 10px;
+      position: relative;
+      font: inherit;
       font-size: 12px;
+      text-align: left;
+      cursor: pointer;
       overflow: hidden;
+    }
+    .theme-chip[aria-checked="true"] {
+      border-color: color-mix(in oklab, currentColor 55%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in oklab, currentColor 30%, transparent);
     }
     .theme-dot {
       width: 10px;
@@ -405,6 +462,23 @@ const description =
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    .theme-check {
+      flex: none;
+      margin-left: auto;
+      opacity: 0;
+    }
+    .theme-chip[aria-checked="true"] .theme-check {
+      opacity: 1;
+    }
+    .theme-status {
+      margin-top: 14px;
+      color: var(--fg-dim);
+      font-size: 13px;
+    }
+    .theme-status strong {
+      color: var(--fg-bright);
+      font-weight: 500;
     }
 
     /* open source */

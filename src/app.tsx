@@ -46,11 +46,12 @@ import { useConfigState } from './ui/hooks/use-config-state'
 import { useAccountForm } from './ui/hooks/use-account-form'
 import { TuiThemeProvider, useTuiTheme } from './ui/theme'
 
-export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode = 'degraded' }: {
+export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode = 'degraded', degradedMessage }: {
   interval?: number
   initialConfig?: Config
   baseUrl?: string | null
   mode?: 'connected' | 'degraded'
+  degradedMessage?: string
 }) {
   const connected = mode === 'connected' && baseUrl !== null
   const degraded = !connected
@@ -555,7 +556,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
       </Box>
 
       {degraded && (
-        <Text dimColor>{glyphs().warn} degraded {glyphs().middot} background service unavailable, running in-process</Text>
+        <Text dimColor>{glyphs().warn} degraded {glyphs().middot} {degradedMessage ?? 'background service unavailable, running in-process'}</Text>
       )}
 
       {connected && daemon.conn !== 'live' && (

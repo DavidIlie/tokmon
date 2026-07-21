@@ -102,6 +102,7 @@ test('config get reports daemon-owned app preferences and closes its client', as
     privacyKey: 'x',
     menuBarPins: ['claude', 'codex'],
     menuBarText: 'off',
+    menuBarValue: 'usage',
     summaryMode: 'tightest',
     expandedProviders: ['cursor'],
     activeWindowMinutes: 22,
@@ -129,6 +130,7 @@ test('config set supports every desktop preference through daemon CAS', async ()
   assert.equal(await run('privacy-key', 'v'), 'privacy-key v\n')
   assert.equal(await run('menu-bar-pins', 'claude,codex'), 'menu-bar-pins claude,codex\n')
   assert.equal(await run('menu-bar-text', 'off'), 'menu-bar-text off\n')
+  assert.equal(await run('menu-bar-value', 'tokens-today'), 'menu-bar-value tokens-today\n')
   assert.equal(await run('summary-mode', 'tightest'), 'summary-mode tightest\n')
   assert.equal(await run('expanded-providers', 'claude,cursor,codex'), 'expanded-providers claude,cursor,codex\n')
   assert.equal(await run('active-window', '17'), 'active-window 17\n')
@@ -140,7 +142,7 @@ test('config set supports every desktop preference through daemon CAS', async ()
     ['set', 'launch-at-login', 'on', '--json', '--compact'],
     harness,
   ))
-  assert.deepEqual(result, { setting: 'launch-at-login', value: 'on', revision: 11 })
+  assert.deepEqual(result, { setting: 'launch-at-login', value: 'on', revision: 12 })
 
   const config = harness.current()
   assert.equal(config.privacyMode, false)
@@ -149,6 +151,7 @@ test('config set supports every desktop preference through daemon CAS', async ()
   assert.deepEqual(config.tray.pins, [])
   assert.equal(config.tray.pinnedAccount, null)
   assert.equal(config.tray.showMenuBarText, false)
+  assert.equal(config.tray.menuBarValue, 'todayTokens')
   assert.equal(config.tray.displayMetric, 'tightestRemaining')
   assert.deepEqual(config.desktop.expandedProviders, ['claude', 'cursor', 'codex'])
   assert.equal(config.tray.activeTimeoutMin, 17)
@@ -156,7 +159,7 @@ test('config set supports every desktop preference through daemon CAS', async ()
   assert.equal(config.accountDetection.enabled, false)
   assert.deepEqual(config.accountDetection.disabledProviders, PROVIDER_IDS.filter(id => id !== 'claude' && id !== 'codex'))
   assert.equal(config.tray.launchAtLogin, true)
-  assert.equal(harness.closed(), 11)
+  assert.equal(harness.closed(), 12)
 })
 
 test('config set validates values before connecting', async () => {
@@ -171,6 +174,7 @@ test('config set validates values before connecting', async () => {
   await assert.rejects(runQueryCommand('config', ['set', 'privacy-key', 'pp'], dependencies), /one printable/)
   await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-pins', 'claude,codex,cursor'], dependencies), /at most 2/)
   await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-pins', 'claude,wat'], dependencies), /unknown provider: wat/)
+  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-value', 'money'], dependencies), /usage or tokens-today/)
   await assert.rejects(runQueryCommand('config', ['set', 'expanded-providers', 'claude,,codex'], dependencies), /comma-separated/)
   await assert.rejects(runQueryCommand('config', ['set', 'summary-mode', 'average'], dependencies), /smart or tightest/)
   await assert.rejects(runQueryCommand('config', ['set', 'active-window', '0'], dependencies), /1 to 1440/)

@@ -107,6 +107,7 @@ Settings:
   privacy-key <char>
   menu-bar-pins <ids|none>       Comma-separated provider ids; at most 2
   menu-bar-text <on|off>
+  menu-bar-value <usage|tokens-today>
   summary-mode <smart|tightest>
   expanded-providers <ids|none>  Comma-separated provider ids
   active-window <minutes>        1..1440
@@ -214,7 +215,7 @@ const delay = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve,
 
 export async function connectDaemonConfig(timeoutMs: number): Promise<ConfigClient> {
   const handle = await attachOrSpawn({ timeoutMs })
-  if (handle.kind !== 'spawned' || !handle.baseUrl) throw new Error('tokmon daemon is unavailable')
+  if (handle.kind !== 'spawned' || !handle.baseUrl) throw new Error(handle.issue?.message ?? 'tokmon daemon is unavailable')
   return createDaemonRpcClient(handle.baseUrl, {
     transport: 'node',
     reconnectAttempts: 2,
@@ -224,7 +225,7 @@ export async function connectDaemonConfig(timeoutMs: number): Promise<ConfigClie
 
 export async function fetchDaemonSnapshot(timeoutMs: number, refresh: 'table' | 'all' | null): Promise<WebSnapshot> {
   const handle = await attachOrSpawn({ timeoutMs })
-  if (handle.kind !== 'spawned' || !handle.baseUrl) throw new Error('tokmon daemon is unavailable')
+  if (handle.kind !== 'spawned' || !handle.baseUrl) throw new Error(handle.issue?.message ?? 'tokmon daemon is unavailable')
   const deadline = Date.now() + timeoutMs
 
   if (refresh) {
@@ -276,6 +277,7 @@ type ConfigSetting =
   | 'privacy-key'
   | 'menu-bar-pins'
   | 'menu-bar-text'
+  | 'menu-bar-value'
   | 'summary-mode'
   | 'expanded-providers'
   | 'active-window'
@@ -289,6 +291,7 @@ const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   'privacy-key',
   'menu-bar-pins',
   'menu-bar-text',
+  'menu-bar-value',
   'summary-mode',
   'expanded-providers',
   'active-window',
@@ -304,6 +307,7 @@ interface ConfigReport {
   privacyKey: string
   menuBarPins: string[]
   menuBarText: 'on' | 'off'
+  menuBarValue: 'usage' | 'tokens-today'
   summaryMode: 'smart' | 'tightest'
   expandedProviders: string[]
   activeWindowMinutes: number
@@ -320,6 +324,7 @@ function configReport(config: Config): ConfigReport {
     privacyKey: config.privacyToggleKey,
     menuBarPins: [...config.tray.pinnedProviders],
     menuBarText: config.tray.showMenuBarText ? 'on' : 'off',
+    menuBarValue: config.tray.menuBarValue === 'todayTokens' ? 'tokens-today' : 'usage',
     summaryMode: config.tray.displayMetric === 'smartHeadroom' ? 'smart' : 'tightest',
     expandedProviders: [...config.desktop.expandedProviders],
     activeWindowMinutes: config.tray.activeTimeoutMin,
@@ -337,6 +342,7 @@ function formatConfigReport(report: ConfigReport): string {
     `privacy-key         ${report.privacyKey}`,
     `menu-bar-pins       ${list(report.menuBarPins)}`,
     `menu-bar-text       ${report.menuBarText}`,
+    `menu-bar-value      ${report.menuBarValue}`,
     `summary-mode        ${report.summaryMode}`,
     `expanded-providers  ${list(report.expandedProviders)}`,
     `active-window       ${report.activeWindowMinutes}m`,
@@ -389,6 +395,11 @@ function settingMutation(setting: ConfigSetting, value: string): { mutate(config
   if (setting === 'menu-bar-text') {
     const enabled = onOff(value, setting)
     return { mutate: config => ({ ...config, tray: { ...config.tray, showMenuBarText: enabled } }), display: value }
+  }
+  if (setting === 'menu-bar-value') {
+    if (value !== 'usage' && value !== 'tokens-today') throw new Error('menu-bar-value must be usage or tokens-today')
+    const menuBarValue = value === 'tokens-today' ? 'todayTokens' : 'usage'
+    return { mutate: config => ({ ...config, tray: { ...config.tray, menuBarValue } }), display: value }
   }
   if (setting === 'summary-mode') {
     if (value !== 'smart' && value !== 'tightest') throw new Error('summary-mode must be smart or tightest')

@@ -19,6 +19,14 @@ npx tokmon
 pnpm dlx tokmon
 ```
 
+If you use pnpm's `minimumReleaseAge` setting immediately after a Tokmon
+release, the bare command can intentionally reuse an older cached CLI. Run the
+new release once without changing the global policy:
+
+```bash
+pnpm --config.minimum-release-age=0 dlx tokmon@latest
+```
+
 ## Install the CLI
 
 ```bash

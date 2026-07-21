@@ -32,8 +32,11 @@ export function menuBarTitle(
   showText: boolean,
   usedPct: number | null,
   _critical: boolean,
+  alternate?: string,
 ): string {
-  if (!showText || usedPct === null || !Number.isFinite(usedPct)) return ''
+  if (!showText) return ''
+  if (alternate !== undefined) return alternate
+  if (usedPct === null || !Number.isFinite(usedPct)) return ''
   const bounded = Math.max(0, Math.min(100, usedPct))
   const used = bounded > 0 && bounded < 1 ? '<1' : String(Math.round(bounded))
   return `${used}%`

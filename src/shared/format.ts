@@ -38,6 +38,24 @@ export function formatTokens(value: number): string {
   return String(Math.round(value))
 }
 
+/** Four-character menu-bar token count: 999, 1K, 1.2M, 1B. */
+export function formatCompactTokens(value: number | null): string {
+  if (value === null || !Number.isFinite(value) || value < 0) return '–'
+  if (value < 1_000) return String(Math.round(value))
+  const units = [
+    { size: 1e12, suffix: 'T' },
+    { size: 1e9, suffix: 'B' },
+    { size: 1e6, suffix: 'M' },
+    { size: 1e3, suffix: 'K' },
+  ] as const
+  const unit = units.find((candidate, index) => value >= candidate.size * (index === units.length - 1 ? 1 : 0.9995))!
+  const scaled = value / unit.size
+  const shown = scaled < 10
+    ? scaled.toFixed(1).replace(/\.0$/, '')
+    : String(Math.round(scaled))
+  return `${shown}${unit.suffix}`
+}
+
 export function formatNumber(value: number): string {
   if (!Number.isFinite(value)) return '0'
   return Math.round(value).toLocaleString('en-US')

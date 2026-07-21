@@ -264,6 +264,12 @@ export function DesktopSettings({ config, groups, onPatch, onBack, onDashboard }
         <SettingsRow label="Menu bar text" hint="Show score beside provider mark">
           <Toggle value={config.tray.showMenuBarText} label="Menu bar text" onChange={value => onPatch(next => ({ ...next, tray: { ...next.tray, showMenuBarText: value } }))} />
         </SettingsRow>
+        <SettingsRow label="Menu bar value" hint="Usage percentage or today's local tokens">
+          <span className="segmented">
+            <button type="button" data-active={config.tray.menuBarValue === 'usage'} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, menuBarValue: 'usage' } }))}>Usage</button>
+            <button type="button" data-active={config.tray.menuBarValue === 'todayTokens'} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, menuBarValue: 'todayTokens' } }))}>Tokens today</button>
+          </span>
+        </SettingsRow>
         <SettingsRow label="Pinned providers" hint="Choose up to two · order preserved">
           <span className="provider-chips">{groups.map(group => <button key={group.providerId} type="button" data-active={pins.includes(group.providerId)} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, pinnedProviders: toggleProviderSelection(next.tray.pinnedProviders, group.providerId, knownProviders, MAX_PINNED_PROVIDERS) } }))}>{group.name}</button>)}</span>
         </SettingsRow>

@@ -79,8 +79,10 @@
   --critical: #e5584b;
   --unknown: #8d9090;
   --accent: #79be7e;
+  --accent-text: #79be7e;
   --accent-tint: #18251a;
   --accent-on: #0a0a0a;
+  --code-fg: #d9c074;
   --focus-ring: #79be7e;
 
   /* provider brand hues (distinct for stacked charts). Grok has no brand hue
@@ -172,7 +174,7 @@ img, svg {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   font-size: 11px;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .muted {
@@ -216,6 +218,25 @@ img, svg {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: color-mix(in oklab, var(--bg-1) 92%, transparent);
+}
+
+html[data-theme="phosphor"] body {
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--accent) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--accent) 4%, transparent) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+html[data-theme="phosphor"] {
+  --p-claude: color-mix(in oklab, var(--accent) 100%, var(--fg-dim));
+  --p-codex: color-mix(in oklab, var(--accent) 86%, var(--fg-dim));
+  --p-cursor: color-mix(in oklab, var(--accent) 72%, var(--fg-dim));
+  --p-copilot: color-mix(in oklab, var(--accent) 58%, var(--fg-dim));
+  --p-pi: color-mix(in oklab, var(--accent) 48%, var(--fg-dim));
+  --p-opencode: color-mix(in oklab, var(--accent) 78%, var(--fg-dim));
+  --p-antigravity: color-mix(in oklab, var(--accent) 64%, var(--fg-dim));
+  --p-gemini: color-mix(in oklab, var(--accent) 92%, var(--fg-dim));
+  --p-grok: color-mix(in oklab, var(--accent) 40%, var(--fg-dim));
 }
 
 /* Entrance motion — capped at 200ms, disabled under reduced-motion. */

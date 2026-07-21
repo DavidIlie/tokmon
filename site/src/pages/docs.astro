@@ -75,7 +75,7 @@ const toc = headings.filter(({ depth }) => depth === 2 || depth === 3);
   .docs-hero .lede {
     max-width: 680px;
     margin: 0;
-    color: var(--fg-2);
+    color: var(--fg);
     font-size: 18px;
     line-height: 1.65;
   }
@@ -96,7 +96,7 @@ const toc = headings.filter(({ depth }) => depth === 2 || depth === 3);
   }
   .desktop-toc p {
     margin: 0 0 12px;
-    color: var(--fg-1);
+    color: var(--fg-bright);
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -110,15 +110,15 @@ const toc = headings.filter(({ depth }) => depth === 2 || depth === 3);
   .desktop-toc a,
   .mobile-toc a {
     padding: 6px 8px;
-    border-left: 1px solid var(--line-strong);
-    color: var(--fg-3);
+    border-left: 1px solid var(--line-2);
+    color: var(--fg-dim);
     font-size: 13px;
     line-height: 1.35;
   }
   .desktop-toc a:hover,
   .mobile-toc a:hover {
     border-color: var(--accent);
-    color: var(--fg-1);
+    color: var(--fg-bright);
   }
   .desktop-toc .toc-3,
   .mobile-toc .toc-3 {
@@ -129,13 +129,13 @@ const toc = headings.filter(({ depth }) => depth === 2 || depth === 3);
   }
   .readme {
     min-width: 0;
-    color: var(--fg-2);
+    color: var(--fg);
     font-size: 15px;
     line-height: 1.72;
   }
   .readme :global(h2),
   .readme :global(h3) {
-    color: var(--fg-1);
+    color: var(--fg-bright);
     line-height: 1.15;
     scroll-margin-top: 88px;
   }
@@ -167,19 +167,19 @@ const toc = headings.filter(({ depth }) => depth === 2 || depth === 3);
     margin-top: 7px;
   }
   .readme :global(a) {
-    color: var(--accent);
+    color: var(--accent-text);
     text-decoration: underline;
-    text-decoration-color: color-mix(in oklab, var(--accent) 45%, transparent);
+    text-decoration-color: color-mix(in oklab, var(--accent-text) 45%, transparent);
     text-underline-offset: 3px;
   }
   .readme :global(strong) {
-    color: var(--fg-1);
+    color: var(--fg-bright);
   }
   .readme :global(code) {
     border: 1px solid var(--line);
     border-radius: 5px;
     background: var(--bg-2);
-    color: var(--fg-1);
+    color: var(--fg-bright);
     padding: 0.13em 0.36em;
     font-family: var(--font-mono);
     font-size: 0.88em;
@@ -188,7 +188,7 @@ const toc = headings.filter(({ depth }) => depth === 2 || depth === 3);
     max-width: 100%;
     margin: 20px 0 24px;
     overflow-x: auto;
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--line-2);
     border-radius: 10px;
     background: var(--bg-1);
     padding: 18px 20px;
@@ -197,7 +197,7 @@ const toc = headings.filter(({ depth }) => depth === 2 || depth === 3);
     border: 0;
     background: transparent;
     padding: 0;
-    color: var(--fg-2);
+    color: var(--fg);
     font-size: 13px;
   }
   .readme :global(pre.astro-code span[style*="#6A737D"]) {
@@ -219,14 +219,14 @@ const toc = headings.filter(({ depth }) => depth === 2 || depth === 3);
     text-align: left;
   }
   .readme :global(th) {
-    color: var(--fg-1);
+    color: var(--fg-bright);
   }
   .readme :global(img) {
     display: block;
     max-width: 100%;
     height: auto;
     margin: 24px 0;
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--line-2);
     border-radius: 12px;
     background: var(--bg-1);
   }
@@ -245,14 +245,14 @@ const toc = headings.filter(({ depth }) => depth === 2 || depth === 3);
     .mobile-toc {
       display: block;
       margin-bottom: 42px;
-      border: 1px solid var(--line-strong);
+      border: 1px solid var(--line-2);
       border-radius: 10px;
       background: var(--bg-1);
       padding: 12px 14px;
     }
     .mobile-toc summary {
       cursor: pointer;
-      color: var(--fg-1);
+      color: var(--fg-bright);
       font-weight: 650;
     }
     .mobile-toc nav {

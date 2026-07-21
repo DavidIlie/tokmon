@@ -9,7 +9,7 @@ export const TOKMON_WS_PATH = '/ws'
 
 /** Bump only for an incompatible wire change. Capabilities gate additive features. */
 export const TOKMON_PROTOCOL_VERSION = 4
-export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1'] as const
+export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1', 'menu-bar-today-tokens'] as const
 export type TokmonCapability = typeof TOKMON_CAPABILITIES[number]
 
 export const TOKMON_WS_METHODS = {
@@ -46,6 +46,7 @@ const AccountSchema = Schema.Struct({
 export const TrayConfigSchema = Schema.Struct({
   enabled: Schema.Boolean,
   showMenuBarText: Schema.Boolean,
+  menuBarValue: Schema.optionalKey(Schema.Literals(['usage', 'todayTokens'] as const)),
   displayMetric: Schema.Literals(['smartHeadroom', 'tightestRemaining'] as const),
   pollIntervalSec: Schema.Finite.check(Schema.isBetween({ minimum: 1, maximum: 86_400 })),
   activeTimeoutMin: Schema.Finite.check(Schema.isBetween({ minimum: 1, maximum: 1_440 })),
@@ -322,6 +323,13 @@ const QuotaViewSchema = Schema.Struct({
   active: Schema.Boolean,
   displayOrder: NonNegativeIntegerSchema,
   valueText: Schema.String,
+  value: Schema.optionalKey(Schema.Struct({
+    kind: Schema.Literal('money'),
+    used: Schema.Finite,
+    limit: Schema.NullOr(Schema.Finite),
+    remaining: Schema.NullOr(Schema.Finite),
+    currency: Schema.String,
+  })),
 })
 const HeadroomFactorSchema = Schema.Struct({
   key: Schema.String,

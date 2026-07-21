@@ -271,11 +271,15 @@ test('canonical account identity and quota views survive the streamed snapshot s
       hasUsage: true, hasBilling: true, lastActivityAt: null, dashboard: null, table: null, billing: null,
       summaryState: 'ready', billingState: 'ready', tableState: 'ready',
       identity: { title: 'Claude account 1', subtitle: null, accessibleLabel: 'Claude account 1', redacted: true },
-      quotas: [{ key: 'session', label: 'Session', role: 'session', modelId: null, usedPct: 3, remainingPct: 97, resetsAt: null, bounded: true, primary: true, active: false, displayOrder: 0, valueText: '3% used' }],
+      quotas: [
+        { key: 'session', label: 'Session', role: 'session', modelId: null, usedPct: 3, remainingPct: 97, resetsAt: null, bounded: true, primary: true, active: false, displayOrder: 0, valueText: '3% used' },
+        { key: 'extra', label: 'Extra', role: 'unbounded', modelId: null, usedPct: 3, remainingPct: 97, resetsAt: null, bounded: true, primary: false, active: false, displayOrder: 1, valueText: '$3.00 used · $97.00 left', value: { kind: 'money', used: 3, limit: 100, remaining: 97, currency: 'USD' } },
+      ],
     }],
   })
   assert.equal(decoded.accounts[0]?.identity?.title, 'Claude account 1')
   assert.equal(decoded.accounts[0]?.quotas?.[0]?.remainingPct, 97)
+  assert.equal(decoded.accounts[0]?.quotas?.[1]?.value?.currency, 'USD')
 })
 
 test('the RPC config state rejects incompatible protocol versions', () => {
@@ -381,7 +385,7 @@ test('an old full-document CAS update preserves every capability-gated config fi
     config: {
       ...DEFAULTS,
       appearance: currentAppearance,
-      tray: { ...DEFAULTS.tray, pinnedProviders: currentPins },
+      tray: { ...DEFAULTS.tray, pinnedProviders: currentPins, menuBarValue: 'todayTokens' },
       desktop: { ...DEFAULTS.desktop, expandedProviders: currentExpanded, graphRangeDays: 30 },
       accountDetection: currentDetection,
     },
@@ -397,7 +401,7 @@ test('an old full-document CAS update preserves every capability-gated config fi
     desktop: _unsupportedDesktop,
     ...oldClientTopLevel
   } = state.config
-  const { pinnedProviders: _unsupportedProviderPins, ...oldClientTray } = oldClientTopLevel.tray
+  const { pinnedProviders: _unsupportedProviderPins, menuBarValue: _unsupportedMenuBarValue, ...oldClientTray } = oldClientTopLevel.tray
   const oldClientConfig = { ...oldClientTopLevel, tray: oldClientTray }
 
   try {
@@ -410,16 +414,19 @@ test('an old full-document CAS update preserves every capability-gated config fi
     assert.equal(saved.config.privacyMode, false)
     assert.deepEqual(saved.config.appearance, currentAppearance)
     assert.deepEqual(saved.config.tray.pinnedProviders, currentPins)
+    assert.equal(saved.config.tray.menuBarValue, 'todayTokens')
     assert.deepEqual(saved.config.desktop.expandedProviders, currentExpanded)
     assert.equal(saved.config.desktop.graphRangeDays, 30)
     assert.deepEqual(saved.config.accountDetection, currentDetection)
     assert.deepEqual(broadcasts[0]?.appearance, currentAppearance)
     assert.deepEqual(broadcasts[0]?.tray.pinnedProviders, currentPins)
+    assert.equal(broadcasts[0]?.tray.menuBarValue, 'todayTokens')
     assert.deepEqual(broadcasts[0]?.desktop.expandedProviders, currentExpanded)
     assert.deepEqual(broadcasts[0]?.accountDetection, currentDetection)
     const persisted = await loadConfig()
     assert.deepEqual(persisted.appearance, currentAppearance)
     assert.deepEqual(persisted.tray.pinnedProviders, currentPins)
+    assert.equal(persisted.tray.menuBarValue, 'todayTokens')
     assert.deepEqual(persisted.desktop.expandedProviders, currentExpanded)
     assert.equal(persisted.desktop.graphRangeDays, 30)
     assert.deepEqual(persisted.accountDetection, currentDetection)

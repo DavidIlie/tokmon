@@ -272,8 +272,8 @@ test('desktop account labels are email-only even when daemon titles contain prov
   assert.doesNotMatch(expanded, /class="account-identity">[^<]*(?:Claude|, David|, Max)/)
 
   const single = renderCard(snapshot([makeComposite('c1', 'david@davidilie.com', 'David')]), false, false, visible)
-  assert.match(single, /class="provider-count">· david@davidilie\.com/)
-  assert.doesNotMatch(single, /class="provider-count">[^<]*(?:Claude|, David)/)
+  assert.doesNotMatch(single, /david@davidilie\.com/)
+  assert.doesNotMatch(single, /Claude account 1|Codex account 1/)
 })
 
 test('collapsed multi-account shows an honest secondary summary only when expanded', () => {
@@ -433,5 +433,19 @@ test('daemon headroom replaces the old local representative in the card headline
   const html = renderCard(snap, false)
   assert.match(html, /Usage 62%/)
   assert.doesNotMatch(html, /Headroom|% left|Based on|Session \+ Weekly/)
-  assert.match(html, /Claude account 1/)
+  assert.doesNotMatch(html, /Claude account 1/)
+})
+
+test('single default instances omit redundant account labels while multiple accounts stay identifiable', () => {
+  const single = renderCard(snapshot([account({
+    identity: { title: 'Claude account 1', subtitle: null, accessibleLabel: 'Claude account 1', redacted: true },
+  })]), true)
+  assert.doesNotMatch(single, /Claude account 1/)
+
+  const multiple = renderCard(snapshot([
+    account({ id: 'one', identity: { title: 'Claude account 1', subtitle: null, accessibleLabel: 'Claude account 1', redacted: true } }),
+    account({ id: 'two', identity: { title: 'Claude account 2', subtitle: null, accessibleLabel: 'Claude account 2', redacted: true } }),
+  ]), true)
+  assert.match(multiple, /Claude account 1/)
+  assert.match(multiple, /Claude account 2/)
 })

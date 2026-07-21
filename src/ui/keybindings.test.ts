@@ -9,7 +9,7 @@ import {
   type InputKey,
   type KeyContext,
 } from './keybindings'
-import { DESKTOP_FIXED_ROWS } from './settings'
+import { DESKTOP_FIXED_ROWS, DESKTOP_FIXED_SETTINGS } from './settings'
 
 test('terminal focus reports are recognized without becoming text input', () => {
   assert.equal(terminalFocusEvent('[I'), 'in')
@@ -156,15 +156,15 @@ test('desktop settings persist tray behavior and enforce the two-provider pin ca
     ctx.global.config = config
   }
 
-  ctx.settings.cursor = 1
+  ctx.settings.cursor = DESKTOP_FIXED_SETTINGS.findIndex(row => row.key === 'menuBarValues')
   handleKey(' ', key, ctx)
   assert.equal(config.tray.showMenuBarText, false)
 
-  ctx.settings.cursor = 2
+  ctx.settings.cursor = DESKTOP_FIXED_SETTINGS.findIndex(row => row.key === 'summary')
   handleKey('', { ...key, rightArrow: true }, ctx)
   assert.equal(config.tray.displayMetric, 'tightestRemaining')
 
-  ctx.settings.cursor = 5
+  ctx.settings.cursor = DESKTOP_FIXED_SETTINGS.findIndex(row => row.key === 'graphRange')
   handleKey('', { ...key, rightArrow: true }, ctx)
   assert.equal(config.desktop.graphRangeDays, 30)
 

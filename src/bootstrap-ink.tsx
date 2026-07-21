@@ -37,6 +37,7 @@ export async function bootstrapInk({ interval, config, daemon, mode }: Bootstrap
         initialConfig={config}
         baseUrl={daemon.baseUrl}
         mode={mode}
+        degradedMessage={daemon.issue?.message}
       />
     </MouseProvider>,
   )

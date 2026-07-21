@@ -1,6 +1,7 @@
 import React, { useCallback } from 'react'
 import type { Config, WebAccount, WebSnapshot } from '../../web/contract'
 import { usageFromHeadroom } from '../../usage-semantics'
+import { formatTokens } from '../../shared/format'
 import { accountIdentity } from './privacy'
 import { providerMark, providerMonogram } from './provider-icons'
 import { ProviderUsageStats } from './provider-usage-stats'
@@ -12,6 +13,7 @@ import {
   percentText,
   planLabel,
   providerRepresentative,
+  providerTodayTokens,
   providerSecondarySummary,
   resetLabel,
   severity,
@@ -69,7 +71,7 @@ function MeterRow({ quota, subject, dimmed, now }: { quota: Quota; subject: stri
         <div
           className="meter" role="meter" aria-label={subject}
           aria-valuemin={0} aria-valuemax={100}
-          aria-valuetext={usageAriaValueText(subject, quota.used, quota.resetsAt, now)}
+          aria-valuetext={`${quota.valueText}${reset ? ` · ${reset}` : ''}`}
           {...(quota.used === null ? {} : { 'aria-valuenow': Math.round(width) })}
         >
           <span className="meter-fill" style={{ width: `${width}%` }} />
@@ -177,14 +179,16 @@ export function ProviderCard({
   const headerId = `provider-header-${group.providerId}`
   const regionId = `provider-detail-${group.providerId}`
   const subject = headroom ? `${group.name} usage` : rep.quota ? `${group.name} ${rep.quota.label}` : group.name
+  const todayTokens = providerTodayTokens(group.accounts)
+  const noQuotaText = todayTokens === null ? 'No quota data' : `${formatTokens(todayTokens)} tokens today`
   const valueText = headroom
-    ? (repUsed === null ? (pending ? 'Loading…' : 'No data') : `Usage ${percentText(repUsed)}`)
+    ? (repUsed === null ? (pending ? 'Loading…' : noQuotaText) : `Usage ${percentText(repUsed)}`)
     : rep.noData
-    ? (pending ? 'Loading…' : 'No data')
+    ? (pending ? 'Loading…' : noQuotaText)
     : rep.quota?.used != null ? `${percentText(rep.quota.used)} used` : 'No data'
   const identityChip = multi
     ? `${group.accounts.length} accounts`
-    : (group.accounts[0] ? accountIdentity(group.accounts[0], config.privacyMode) : '')
+    : ''
   const providerStatusAria = providerError
     ? 'data may be outdated, could not refresh'
     : providerStale ? 'data may be outdated' : null
@@ -251,6 +255,7 @@ export function ProviderCard({
               <ExpandedAccount
                 key={account.id} account={account} snapshot={snapshot} config={config}
                 providerName={group.name} showPlan={group.sharedPlan === null} first={index === 0}
+                showIdentity={multi}
                 activeTimeoutMin={activeTimeoutMin} now={now}
               />
             ))}
@@ -261,9 +266,9 @@ export function ProviderCard({
   )
 }
 
-function ExpandedAccount({ account, snapshot, config, providerName, showPlan, first, activeTimeoutMin, now }: {
+function ExpandedAccount({ account, snapshot, config, providerName, showPlan, showIdentity, first, activeTimeoutMin, now }: {
   account: WebAccount; snapshot: WebSnapshot; config: Config; providerName: string
-  showPlan: boolean; first: boolean; activeTimeoutMin: number; now: number
+  showPlan: boolean; showIdentity: boolean; first: boolean; activeTimeoutMin: number; now: number
 }) {
   const fresh = freshness(account, snapshot, now)
   const active = isActive(account, activeTimeoutMin, now)
@@ -272,21 +277,24 @@ function ExpandedAccount({ account, snapshot, config, providerName, showPlan, fi
   const plan = planLabel(account.plan)
   const identity = accountIdentity(account, config.privacyMode)
   const errorText = accountErrorText(account)
+  const showMetadata = showIdentity || (showPlan && !!plan) || fresh === 'error' || fresh === 'stale' || active
   return (
     <div className="account-block">
       {!first && <div className="divider" />}
-      <div className="account-line">
-        <span className="account-identity">{identity}</span>
-        {showPlan && plan && <span className="plan">{plan}</span>}
-        {fresh === 'error' && <ErrorMark message={errorText ?? 'Provider error'} />}
-        {fresh === 'stale' && <StaleTag account={account} now={now} />}
-        {active && <ActiveChip account={account} now={now} />}
-      </div>
+      {showMetadata && (
+        <div className="account-line">
+          {showIdentity && <span className="account-identity">{identity}</span>}
+          {showPlan && plan && <span className="plan">{plan}</span>}
+          {fresh === 'error' && <ErrorMark message={errorText ?? 'Provider error'} />}
+          {fresh === 'stale' && <StaleTag account={account} now={now} />}
+          {active && <ActiveChip account={account} now={now} />}
+        </div>
+      )}
       {errorText && <p className="account-error">{errorText}</p>}
       <div className={`rows${fresh === 'error' ? ' is-dimmed' : ''}`}>
         {quotas.length > 0
           ? quotas.map(quota => (
-            <MeterRow key={quota.key} quota={quota} subject={`${providerName} ${identity} ${quota.label}`} dimmed={fresh === 'error'} now={now} />
+            <MeterRow key={quota.key} quota={quota} subject={[providerName, showIdentity ? identity : null, quota.label].filter(Boolean).join(' ')} dimmed={fresh === 'error'} now={now} />
           ))
           : (
             <div className="row row--nodata">

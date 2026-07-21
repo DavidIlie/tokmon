@@ -499,6 +499,19 @@ test('an incompatible desktop-owned daemon is never signalled', { timeout: 10_00
       timeoutMs: 500,
     })
     assert.equal(handle.kind, 'degraded')
+    assert.deepEqual(handle.issue && {
+      kind: handle.issue.kind,
+      ownerVersion: handle.issue.ownerVersion,
+      ownerProtocolVersion: handle.issue.ownerProtocolVersion,
+      clientProtocolVersion: handle.issue.clientProtocolVersion,
+    }, {
+      kind: 'incompatible-desktop',
+      ownerVersion: 'desktop-test',
+      ownerProtocolVersion: TOKMON_PROTOCOL_VERSION + 1,
+      clientProtocolVersion: TOKMON_PROTOCOL_VERSION,
+    })
+    assert.match(handle.issue?.message ?? '', /Update the CLI/)
+    assert.match(handle.issue?.message ?? '', /minimum-release-age=0/)
     assert.equal(desktop.child.exitCode, null)
     assert.equal(readLock({ cachePath: join(root, 'cache') })?.ownerKind, 'desktop')
   } finally {

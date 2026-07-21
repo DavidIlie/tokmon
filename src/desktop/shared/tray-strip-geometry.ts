@@ -27,6 +27,8 @@ export interface TraySegmentValue {
   providerId: string
   /** Representative usage %, or null for unknown (no bounded data). */
   usage: number | null
+  /** Optional alternate value such as today's compact token count. */
+  label?: string
   active: boolean
 }
 
@@ -94,9 +96,10 @@ export function trayStripLayout(
 ): TrayStripLayout {
   const { iconBox, gapIconNum, gapSeg, edgeBleed, height } = TRAY_STRIP
   const digits = trayStripDigits(values)
-  const labels = values.map(value => trayLabel(value.usage))
+  const labels = values.map(value => value.label ?? trayLabel(value.usage))
   const criticals = values.map(value => trayCritical(value.usage))
-  const slot = ceilHalf(measureText('0'.repeat(digits) + '%'))
+  const stableLabel = values.some(value => value.label !== undefined) ? '999M' : '0'.repeat(digits) + '%'
+  const slot = ceilHalf(Math.max(measureText(stableLabel), ...labels.map(measureText)))
   const segWidth = iconBox + gapIconNum + slot
   const segments: TraySegmentLayout[] = values.map((value, index) => {
     const x = index * (segWidth + gapSeg)

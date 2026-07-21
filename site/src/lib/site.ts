@@ -129,35 +129,3 @@ export const PROVIDERS: ProviderRow[] = [
     hue: "var(--p-gemini)",
   },
 ];
-
-export interface ThemeSwatch {
-  name: string;
-  bg: string;
-  fg: string;
-  accent: string;
-}
-
-// Tokmon + Phosphor are the app's own presets (values from web/src/styles.css);
-// the remaining 16 are the ZeroCut editor-theme catalog (dark values from
-// src/theme/catalog.ts). Auto (OS-following) and custom palettes also ship but
-// have no single swatch, so they are named in prose rather than shown here.
-export const THEMES: ThemeSwatch[] = [
-  { name: "Tokmon", bg: "#0a0a0a", fg: "#d4d6d6", accent: "#79be7e" },
-  { name: "Phosphor", bg: "#0a0a0a", fg: "#79be7e", accent: "#79be7e" },
-  { name: "VS Code", bg: "#1E1E1E", fg: "#CCCCCC", accent: "#0E639C" },
-  { name: "Monokai", bg: "#272822", fg: "#F8F8F2", accent: "#66D9EF" },
-  { name: "Dracula", bg: "#282A36", fg: "#F8F8F2", accent: "#FF79C6" },
-  { name: "GitHub Dark", bg: "#0D1117", fg: "#C9D1D9", accent: "#1F6FEB" },
-  { name: "Nord", bg: "#2E3440", fg: "#D8DEE9", accent: "#88C0D0" },
-  { name: "One Dark Pro", bg: "#282C34", fg: "#ABB2BF", accent: "#61AFEF" },
-  { name: "Solarized Dark", bg: "#002B36", fg: "#839496", accent: "#2AA198" },
-  { name: "Tokyo Night", bg: "#1A1B26", fg: "#C0CAF5", accent: "#BB9AF7" },
-  { name: "Catppuccin", bg: "#1E1E2E", fg: "#CDD6F4", accent: "#F38BA8" },
-  { name: "Midnight", bg: "#0F172A", fg: "#F8FAFC", accent: "#3B82F6" },
-  { name: "Forest", bg: "#052E16", fg: "#DCFCE7", accent: "#22C55E" },
-  { name: "Sunset", bg: "#431407", fg: "#FFEDD5", accent: "#F97316" },
-  { name: "Cyberpunk", bg: "#000000", fg: "#22D3EE", accent: "#F472B6" },
-  { name: "Synthwave", bg: "#2A0A3B", fg: "#F5D0FE", accent: "#D946EF" },
-  { name: "Luxury", bg: "#1C1917", fg: "#E7E5E4", accent: "#D4AF37" },
-  { name: "Minimal Dark", bg: "#18181B", fg: "#FAFAFA", accent: "#FAFAFA" },
-];

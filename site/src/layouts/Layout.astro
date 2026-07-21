@@ -9,6 +9,7 @@ import {
   REPO_URL,
   THIRD_PARTY_NOTICES_URL,
 } from "../lib/site.ts";
+import { themeBootstrapData } from "../lib/theme.ts";
 
 interface Props {
   title: string;
@@ -18,6 +19,7 @@ interface Props {
 
 const { title, description, active = "home" } = Astro.props;
 const year = new Date().getFullYear();
+const themeData = themeBootstrapData();
 ---
 
 <!doctype html>
@@ -30,6 +32,28 @@ const year = new Date().getFullYear();
     <title>{title}</title>
     <meta name="description" content={description} />
     <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <script is:inline define:vars={{ T: themeData }}>
+      (function () {
+        var root = document.documentElement;
+        var id = null;
+        try { id = sessionStorage.getItem(T.key); } catch (_) {}
+        if (!id || !Object.prototype.hasOwnProperty.call(T.table, id)) id = T.defaultId;
+        var row = T.table[id];
+        root.dataset.theme = id;
+        if (id !== T.defaultId) {
+          for (var index = 0; index < T.vars.length; index++) {
+            root.style.setProperty(T.vars[index], row[index]);
+          }
+        }
+        var scheme = T.schemes[id];
+        if (id === T.defaultId) root.style.removeProperty("color-scheme");
+        else root.style.colorScheme = scheme;
+        document.querySelector('meta[name="color-scheme"]')?.setAttribute("content", scheme);
+        document.querySelector('meta[name="theme-color"]')?.setAttribute("content", row[0]);
+        window.__tokmonTheme = T;
+      })();
+    </script>
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
@@ -101,6 +125,11 @@ const year = new Date().getFullYear();
       </div>
     </footer>
 
+    <button class="theme-revert" type="button" data-theme-revert hidden>
+      <span class="theme-revert-dot" aria-hidden="true"></span>
+      <span data-theme-revert-label>Reset theme</span>
+    </button>
+
     <script>
       import { REPO_SLUG } from "../lib/site.ts";
 
@@ -129,6 +158,107 @@ const year = new Date().getFullYear();
             }
           })
           .catch(() => {});
+      }
+
+      interface ThemeRuntime {
+        vars: string[];
+        table: Record<string, string[]>;
+        names: Record<string, string>;
+        schemes: Record<string, "dark" | "light">;
+        key: string;
+        defaultId: string;
+      }
+
+      const runtime = (window as Window & { __tokmonTheme?: ThemeRuntime }).__tokmonTheme;
+      if (runtime) {
+        const root = document.documentElement;
+        const chips = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-pick]")];
+        const grid = document.querySelector<HTMLElement>("[data-theme-grid]");
+        const section = document.querySelector<HTMLElement>("#themes");
+        const inlineReset = document.querySelector<HTMLButtonElement>("[data-theme-reset]");
+        const floatingReset = document.querySelector<HTMLButtonElement>("[data-theme-revert]");
+        const floatingLabel = document.querySelector<HTMLElement>("[data-theme-revert-label]");
+        const statusName = document.querySelector<HTMLElement>("[data-theme-status-name]");
+        const statusCopy = document.querySelector<HTMLElement>("[data-theme-status-copy]");
+        let pickerVisible = section !== null;
+
+        const updateFloatingReset = (id: string) => {
+          if (!floatingReset) return;
+          floatingReset.hidden = id === runtime.defaultId || pickerVisible;
+        };
+
+        const applyTheme = (candidate: string, announce = true) => {
+          const id = Object.hasOwn(runtime.table, candidate) ? candidate : runtime.defaultId;
+          const row = runtime.table[id]!;
+          const isDefault = id === runtime.defaultId;
+          runtime.vars.forEach((variable, index) => {
+            if (isDefault) root.style.removeProperty(variable);
+            else root.style.setProperty(variable, row[index]!);
+          });
+          root.dataset.theme = id;
+          if (isDefault) root.style.removeProperty("color-scheme");
+          else root.style.colorScheme = runtime.schemes[id]!;
+          document.querySelector('meta[name="color-scheme"]')?.setAttribute("content", runtime.schemes[id]!);
+          document.querySelector('meta[name="theme-color"]')?.setAttribute("content", row[0]!);
+          try {
+            if (isDefault) sessionStorage.removeItem(runtime.key);
+            else sessionStorage.setItem(runtime.key, id);
+          } catch {}
+          chips.forEach((chip) => {
+            const checked = chip.dataset.themePick === id;
+            chip.setAttribute("aria-checked", String(checked));
+            chip.tabIndex = checked ? 0 : -1;
+          });
+          if (inlineReset) inlineReset.hidden = isDefault;
+          if (statusName) statusName.textContent = runtime.names[id] ?? id;
+          if (statusCopy) statusCopy.textContent = isDefault ? " — the default palette." : " across the site.";
+          if (announce && statusCopy) statusCopy.parentElement?.setAttribute("data-announced", "true");
+          if (floatingReset) floatingReset.setAttribute("aria-label", `Reset theme — currently previewing ${runtime.names[id] ?? id}`);
+          if (floatingLabel) floatingLabel.textContent = `Reset ${runtime.names[id] ?? "theme"}`;
+          updateFloatingReset(id);
+          return id;
+        };
+
+        let current = applyTheme(root.dataset.theme ?? runtime.defaultId, false);
+        chips.forEach((chip) => chip.addEventListener("click", () => {
+          current = applyTheme(chip.dataset.themePick ?? runtime.defaultId);
+        }));
+
+        grid?.addEventListener("keydown", (event) => {
+          const activeIndex = chips.indexOf(document.activeElement as HTMLButtonElement);
+          if (activeIndex < 0) return;
+          const columns = Math.max(1, getComputedStyle(grid).gridTemplateColumns.split(" ").length);
+          const movement: Record<string, number> = {
+            ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns,
+            Home: -activeIndex, End: chips.length - 1 - activeIndex,
+          };
+          const delta = movement[event.key];
+          if (delta === undefined) return;
+          event.preventDefault();
+          const next = (activeIndex + delta + chips.length) % chips.length;
+          chips[next]?.focus();
+          current = applyTheme(chips[next]?.dataset.themePick ?? runtime.defaultId);
+        });
+
+        const reset = (event: MouseEvent) => {
+          current = applyTheme(runtime.defaultId);
+          if (event.detail !== 0) return;
+          const defaultChip = chips.find((chip) => chip.dataset.themePick === runtime.defaultId);
+          defaultChip?.focus();
+          defaultChip?.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+        };
+        inlineReset?.addEventListener("click", reset);
+        floatingReset?.addEventListener("click", reset);
+
+        if (section) {
+          new IntersectionObserver(([entry]) => {
+            pickerVisible = entry?.isIntersecting === true;
+            updateFloatingReset(current);
+          }).observe(section);
+        } else {
+          pickerVisible = false;
+          updateFloatingReset(current);
+        }
       }
     </script>
 
@@ -202,7 +332,7 @@ const year = new Date().getFullYear();
         color: var(--fg-bright);
       }
       .nav-download {
-        color: var(--accent) !important;
+        color: var(--accent-text) !important;
       }
       .star-link {
         display: inline-flex;
@@ -220,6 +350,40 @@ const year = new Date().getFullYear();
       }
       .star-count {
         min-width: 1.5ch;
+      }
+
+      .theme-revert {
+        position: fixed;
+        z-index: 40;
+        inset-inline-end: 24px;
+        inset-block-end: calc(24px + env(safe-area-inset-bottom));
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 14px;
+        border: 1px solid var(--line-2);
+        border-radius: 999px;
+        background: var(--bg-2);
+        color: var(--fg);
+        box-shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.9);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        animation: tok-rise 160ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+      }
+      .theme-revert[hidden] {
+        display: none;
+      }
+      .theme-revert:hover {
+        border-color: var(--accent);
+        color: var(--fg-bright);
+      }
+      .theme-revert-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 3px;
+        background: var(--accent);
+        flex: none;
       }
 
       .site-footer {
@@ -252,7 +416,7 @@ const year = new Date().getFullYear();
         transition: color 160ms ease;
       }
       .footer-links a:hover {
-        color: var(--accent);
+        color: var(--accent-text);
       }
       .footer-copy {
         font-size: 12px;
@@ -279,6 +443,14 @@ const year = new Date().getFullYear();
         }
         .footer-copy {
           margin-left: 0;
+        }
+      }
+      @media (max-width: 560px) {
+        .theme-revert {
+          inset-inline: 16px auto;
+          inset-block-end: calc(16px + env(safe-area-inset-bottom));
+          padding: 8px 12px;
+          font-size: 12px;
         }
       }
     </style>

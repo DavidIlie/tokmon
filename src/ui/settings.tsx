@@ -217,6 +217,11 @@ export const DESKTOP_FIXED_SETTINGS: SettingRow[] = [
     onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, showMenuBarText: !c.tray.showMenuBarText } })) },
   },
   {
+    key: 'menuBarContent', label: 'Menu bar content',
+    render: rc => caret(<Text bold color={rc.theme.accent}>{rc.config.tray.menuBarValue === 'todayTokens' ? 'tokens today' : 'usage'}</Text>),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, menuBarValue: c.tray.menuBarValue === 'usage' ? 'todayTokens' : 'usage' } })) },
+  },
+  {
     key: 'summary', label: 'Summary',
     render: rc => caret(<Text bold color={rc.theme.accent}>{rc.config.tray.displayMetric === 'smartHeadroom' ? 'smart usage' : 'tightest quota'}</Text>),
     onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, displayMetric: c.tray.displayMetric === 'smartHeadroom' ? 'tightestRemaining' : 'smartHeadroom' } })) },

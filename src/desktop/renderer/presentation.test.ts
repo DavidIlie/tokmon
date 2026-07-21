@@ -12,6 +12,7 @@ import {
   percentText,
   planLabel,
   providerRepresentative,
+  providerTodayTokens,
   providerSecondarySummary,
   resetLabel,
   resolveProviderPins,
@@ -96,6 +97,16 @@ test('metricQuota bounds percent metrics and leaves uncapped spend value-only (n
   const spend = metricQuota(metric({ label: 'Spend', used: 1.2, limit: null, format: { kind: 'dollars' } }))
   assert.equal(spend.remaining, null)
   assert.ok(spend.valueText.startsWith('$'))
+})
+
+test('desktop quotas show authoritative bounded money instead of flattening it to percent copy', () => {
+  const extra = metricQuota(metric({
+    key: 'extra_usage', role: 'unbounded', label: 'Extra', used: 3, limit: 100,
+    format: { kind: 'dollars', currency: 'USD' },
+  }))
+  assert.equal(extra.used, 3)
+  assert.equal(extra.remaining, 97)
+  assert.equal(extra.valueText, '$3.00 used · $97.00 left')
 })
 
 test('desktop renderer trusts daemon quota order and values over raw billing', () => {
@@ -281,4 +292,19 @@ test('severity never changes tray geometry or adds punctuation', () => {
   assert.equal(mixed.slotWidth, normal.slotWidth)
   assert.equal(mixed.segments[0]!.label, '95%')
   assert.ok(!mixed.segments[0]!.label.includes('!'))
+})
+
+test('token labels share a stable menu-bar slot and daily totals sum across accounts', () => {
+  const tokens = (value: number) => ({ cost: 0, tokens: value, input: value, cacheRead: 0, cacheSavings: 0 })
+  const first = account({ dashboard: { today: tokens(1_000_000), week: tokens(1_000_000), month: tokens(1_000_000), burnRate: 0, series: [], lastActivityAt: null } })
+  const second = account({ id: 'b', dashboard: { today: tokens(200_000), week: tokens(200_000), month: tokens(200_000), burnRate: 0, series: [], lastActivityAt: null } })
+  assert.equal(providerTodayTokens([first, second]), 1_200_000)
+  assert.equal(providerTodayTokens([account({ dashboard: null })]), null)
+  const layout = trayStripLayout([
+    { providerId: 'claude', usage: 50, label: '1.2M', active: false },
+    { providerId: 'codex', usage: null, label: '1B', active: true },
+  ], stubMeasure)
+  assert.equal(layout.segments[0]?.label, '1.2M')
+  assert.equal(layout.segments[1]?.label, '1B')
+  assert.ok(layout.slotWidth >= stubMeasure('999M'))
 })
