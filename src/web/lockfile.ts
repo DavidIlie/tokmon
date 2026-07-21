@@ -208,6 +208,39 @@ export function reclaimDeadLock(opts: LockfileOptions = {}): boolean {
 }
 
 /**
+ * Reclaim an unchanged lock after its authenticated health endpoint has failed
+ * for the caller's full retry window. This handles PID reuse: kill(pid, 0) can
+ * only prove that *a* process exists, not that it is still the daemon which
+ * wrote this owner id. Callers must probe health before using this escape hatch.
+ */
+export function reclaimUnhealthyLock(
+  expected: DaemonLock,
+  opts: LockfileOptions = {},
+  minimumAgeMs = 0,
+): boolean {
+  const path = lockfilePath(opts)
+  try {
+    const before = lstatSync(path)
+    if (!before.isFile()) return false
+    const current = readLock(opts)
+    if (
+      !current
+      || current.ownerId !== expected.ownerId
+      || current.pid !== expected.pid
+      || current.startedAt !== expected.startedAt
+      || current.state !== 'ready'
+      || Date.now() - current.startedAt < minimumAgeMs
+    ) return false
+    const after = lstatSync(path)
+    if (after.dev !== before.dev || after.ino !== before.ino) return false
+    unlinkSync(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Reclaim malformed/legacy leftovers without racing an active acquisition.
  * A parseable live pid always wins. Ownerless partials need an age grace period,
  * and the inode is checked again before unlinking so a successor cannot be lost.

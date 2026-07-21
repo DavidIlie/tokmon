@@ -1,7 +1,7 @@
 import { BrowserWindow, screen, type Tray } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { availableCenteredHeight, availablePopoverHeight, centeredPopover, popoverPlacement, positionPopover } from './popover-position'
+import { availableCenteredHeight, availablePopoverHeight, centeredPopover, popoverPlacement, positionPopover, usableTrayBounds } from './popover-position'
 import { DESKTOP_CHANNELS } from '../shared/desktop-contract'
 
 const WIDTH = 360
@@ -70,8 +70,14 @@ export function createPopoverWindow(tray: Tray, rendererUrl: string, initialBack
     }
   })
 
-  const place = () => {
+  let pendingShow: ReturnType<typeof setTimeout> | null = null
+  const clearPendingShow = () => {
+    if (pendingShow) clearTimeout(pendingShow)
+    pendingShow = null
+  }
+  const place = (): boolean => {
     const trayBounds = tray.getBounds()
+    if (!usableTrayBounds(trayBounds, mac)) return false
     const display = screen.getDisplayNearestPoint({
       x: Math.round(trayBounds.x + trayBounds.width / 2),
       y: Math.round(trayBounds.y + trayBounds.height / 2),
@@ -81,16 +87,43 @@ export function createPopoverWindow(tray: Tray, rendererUrl: string, initialBack
       ? centeredPopover(display.workArea, size)
       : positionPopover(trayBounds, display.workArea, size)
     window.setPosition(position.x, position.y, false)
+    return true
   }
-  const show = () => {
-    place()
+  const reveal = () => {
+    if (window.isDestroyed()) return
     window.show()
     window.focus()
+  }
+  const show = () => {
+    clearPendingShow()
+    let attempts = 0
+    const placeAndReveal = () => {
+      if (window.isDestroyed()) return
+      if (place()) {
+        pendingShow = null
+        reveal()
+        return
+      }
+      attempts += 1
+      if (attempts < 20) {
+        pendingShow = setTimeout(placeAndReveal, 50)
+        return
+      }
+      // A deliberately hidden/unsupported tray should not make an explicit
+      // "Open Tokmon" action disappear. Centering is an honest fallback;
+      // anchoring empty bounds to (0, 0) looked like a broken corner window.
+      const display = screen.getPrimaryDisplay()
+      const position = centeredPopover(display.workArea, window.getBounds())
+      window.setPosition(position.x, position.y, false)
+      pendingShow = null
+      reveal()
+    }
+    placeAndReveal()
   }
   return {
     window,
     show,
-    hide: () => window.hide(),
+    hide: () => { clearPendingShow(); window.hide() },
     toggle: () => window.isVisible() ? window.hide() : show(),
     setBackgroundColor(color) {
       // Transparent macOS windows get their rounded surface from the renderer.

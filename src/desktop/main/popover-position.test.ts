@@ -6,6 +6,7 @@ import {
   centeredPopover,
   popoverPlacement,
   positionPopover,
+  usableTrayBounds,
   type Rect,
   type Size,
 } from './popover-position'
@@ -15,6 +16,15 @@ const size = { width: 360, height: 560 }
 
 test('top tray centers and clamps the popover beneath its anchor', () => {
   assert.deepEqual(positionPopover({ x: 1800, y: 0, width: 24, height: 24 }, area, size), { x: 1560, y: 30, placement: 'below' })
+})
+
+test('empty or invalid tray bounds are not treated as a screen-edge anchor', () => {
+  assert.equal(usableTrayBounds({ x: 0, y: 0, width: 0, height: 0 }), false)
+  assert.equal(usableTrayBounds({ x: 0, y: 0, width: 24, height: 24 }), true)
+  assert.equal(usableTrayBounds({ x: 0, y: 0, width: 24, height: 24 }, true), false)
+  assert.equal(usableTrayBounds({ x: 0, y: 25, width: 24, height: 24 }, true), false)
+  assert.equal(usableTrayBounds({ x: 1200, y: 0, width: 24, height: 24 }, true), true)
+  assert.equal(usableTrayBounds({ x: Number.NaN, y: 0, width: 24, height: 24 }), false)
 })
 
 test('bottom and side taskbars place the popover inward', () => {

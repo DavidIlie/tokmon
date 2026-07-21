@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import test, { type TestContext } from 'node:test'
 import { DEFAULTS, PROVIDER_IDS, type Config } from '../src/config.ts'
 import { acquireOrAttachDaemon, type DaemonController } from '../src/web/daemon-controller.ts'
-import { readLock } from '../src/web/lockfile.ts'
+import { acquireLock, readLock, type DaemonLock } from '../src/web/lockfile.ts'
+import { TOKMON_CAPABILITIES, TOKMON_PROTOCOL_VERSION } from '../src/rpc/contract.ts'
 
 function testConfig(): Config {
   return {
@@ -92,6 +93,43 @@ test('an attached controller cannot stop or unlink the owner daemon', async (t) 
       await owner.stop()
     }
     assert.equal(readLock({ cachePath }), null)
+  })
+})
+
+test('a ready lock with a reused live PID but no authenticated owner is recovered', async (t) => {
+  await withRoot(t, async (cachePath) => {
+    const stale: DaemonLock = {
+      pid: process.pid,
+      port: 1,
+      url: 'http://127.0.0.1:1',
+      wsToken: 's'.repeat(43),
+      version: 'stale-test-version',
+      protocolVersion: TOKMON_PROTOCOL_VERSION,
+      capabilities: [...TOKMON_CAPABILITIES],
+      ownerKind: 'desktop',
+      channel: 'release',
+      startedAt: Date.now() - 60_000,
+      ownerId: 'o'.repeat(43),
+      state: 'ready',
+    }
+    assert.equal(acquireLock(stale, { cachePath }), true)
+
+    const controller = await acquireOrAttachDaemon({
+      ownerKind: 'desktop',
+      cachePath,
+      port: 0,
+      config: testConfig(),
+      ownerWaitAttempts: 1,
+      ownerWaitIntervalMs: 1,
+      ownerVerifyTimeoutMs: 20,
+    })
+    try {
+      assert.equal(controller.role, 'owner')
+      assert.notEqual(controller.lock.ownerId, stale.ownerId)
+      assert.equal(readLock({ cachePath })?.ownerId, controller.lock.ownerId)
+    } finally {
+      await controller.stop()
+    }
   })
 })
 

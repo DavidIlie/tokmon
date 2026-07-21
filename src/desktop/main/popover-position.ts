@@ -1,6 +1,22 @@
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Size { width: number; height: number }
 
+/** Electron can briefly report an empty status-item rectangle while macOS is
+ * still inserting it into the menu bar. Treat that as "not placed yet" rather
+ * than anchoring a popover to the origin of the primary display. */
+export function usableTrayBounds(rect: Rect, rejectScreenOrigin = false): boolean {
+  return Number.isFinite(rect.x)
+    && Number.isFinite(rect.y)
+    && Number.isFinite(rect.width)
+    && Number.isFinite(rect.height)
+    && rect.width > 0
+    && rect.height > 0
+    // macOS may report a non-empty placeholder at the global origin when a
+    // status item is crowded out or has not been inserted yet. A real macOS
+    // status item cannot occupy the Apple-menu corner.
+    && (!rejectScreenOrigin || rect.x !== 0)
+}
+
 /** Which side of the tray the popover opens on. `below` is the top-menu-bar
  * default (macOS / Windows top); `above` is a bottom taskbar; `left`/`right`
  * are vertical taskbars (the popover sits beside the tray). */

@@ -11,6 +11,7 @@ import {
   readLock,
   reclaimAbandonedLock,
   reclaimDeadLock,
+  reclaimUnhealthyLock,
   readForeignLock,
   retireIncompatibleCliOwner,
   unlinkLock,
@@ -131,6 +132,21 @@ async function discoverOwner(
 
   const live = await verifyLock(current, protocolVersion)
   if (live) return live
+
+  // A crashed owner can leave a valid lock whose PID has since been reused by
+  // an unrelated process. Give a same-protocol ready daemon the complete
+  // recovery window, then reclaim only the exact unchanged owner record. Never
+  // signal the process: it has not authenticated as the daemon in the lock.
+  if (
+    current?.state === 'ready'
+    && current.protocolVersion === protocolVersion
+    && isAlive(current.pid)
+  ) {
+    const winner = await waitForOwner(opts, protocolVersion)
+    if (winner) return winner
+    if (reclaimUnhealthyLock(current, opts)) return null
+    current = readLock(opts)
+  }
 
   if (
     current?.state === 'starting'

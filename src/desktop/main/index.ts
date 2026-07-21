@@ -286,7 +286,6 @@ async function bootstrap(): Promise<void> {
               reconnectFailures += 1
               showDisconnectedPresentation(error)
               scheduleReconnect(connectDaemon)
-              if (!state.get().snapshot && !popover.window.isVisible()) popover.show()
             }
           },
         })
@@ -310,7 +309,6 @@ async function bootstrap(): Promise<void> {
             reconnectFailures += 1
             showDisconnectedPresentation(error)
             scheduleReconnect(connectDaemon)
-            if (!state.get().snapshot && !popover.window.isVisible()) popover.show()
           })
       } catch (error) {
         reconnectFailures += 1
@@ -318,9 +316,9 @@ async function bootstrap(): Promise<void> {
         state.connection('error', error)
         showDisconnectedPresentation(error)
         scheduleReconnect(connectDaemon)
-        // A startup failure is actionable in the popover and context menu.
-        // Showing it once also prevents an LSUIElement launch from appearing to do nothing.
-        if (!popover.window.isVisible()) popover.show()
+        // Remain a menu-bar app on startup failures. The error icon, tooltip,
+        // and context menu remain available without opening a detached window
+        // before macOS has assigned the status item usable bounds.
         console.error('[tokmon] daemon connection failed', error)
       }
     })().finally(() => { connectAttempt = null })
