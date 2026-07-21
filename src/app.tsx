@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } fro
 import { Box, Text, useInput, useApp } from 'ink'
 import { useMouse } from '@zenobius/ink-mouse'
 import {
-  DEFAULTS, getTrackedAccountRows,
+  DEFAULTS, getTrackedAccountRows, setProviderTrackingEnabled,
   type Config,
 } from './config'
 import { buildAccounts, accountsByProvider } from './accounts'
@@ -123,7 +123,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     : settingsTab === 'theme'
       ? THEME_ROWS
       : settingsTab === 'desktop'
-        ? DESKTOP_FIXED_ROWS + PROVIDER_ORDER.length
+        ? DESKTOP_FIXED_ROWS
       : settingsTab === 'providers'
           ? PROVIDER_ORDER.length + 1
           : trackedAccountRows.length + 1
@@ -363,13 +363,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     })
   }
   function toggleProvider(pid: ProviderId): void {
-    updateConfig(c => ({
-      ...c,
-      knownProviders: c.knownProviders.includes(pid) ? c.knownProviders : [...c.knownProviders, pid],
-      disabledProviders: c.disabledProviders.includes(pid)
-        ? c.disabledProviders.filter(p => p !== pid)
-        : [...c.disabledProviders, pid],
-    }))
+    updateConfig(c => setProviderTrackingEnabled(c, pid, c.disabledProviders.includes(pid)))
   }
   function confirmOnboarding(): void {
     const enabled = onboardEnabled

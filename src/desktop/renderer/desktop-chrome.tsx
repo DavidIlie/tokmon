@@ -3,12 +3,14 @@ import {
   PROVIDER_META,
   PROVIDER_ORDER,
   DESKTOP_GRAPH_RANGES,
-  MAX_PINNED_PROVIDERS,
+  DEFAULT_MENU_BAR_CONFIG,
   providerDetectionEnabled,
   setDetectedAccountExcluded,
   setProviderDetectionEnabled,
+  setProviderTrackingEnabled,
   toggleProviderSelection,
   type Config,
+  type MenuBarDensity,
   type WebSnapshot,
 } from '../../web/contract'
 import type { DesktopState, DesktopUpdateState } from '../shared/desktop-contract'
@@ -23,6 +25,8 @@ import {
   type AppearanceConfig,
   type ThemePreset,
 } from '../../theme'
+import { MenuBarStripPreview, menuBarValues } from './tray-strip-painter'
+import { menuBarWidthBudget, type MenuBarPlan } from '../shared/menu-bar-plan'
 
 type PreviewStyle = React.CSSProperties & Record<'--preview-bg' | '--preview-accent' | '--preview-cost' | '--preview-dim', string>
 
@@ -158,8 +162,17 @@ function SettingsRow({ label, hint, children }: { label: string; hint?: string; 
   return <div className="settings-row"><span><b>{label}</b>{hint && <small>{hint}</small>}</span><span className="settings-control">{children}</span></div>
 }
 
-function Toggle({ value, onChange, label }: { value: boolean; onChange(value: boolean): void; label: string }) {
-  return <button type="button" className="toggle" data-on={value} role="switch" aria-checked={value} aria-label={label} onClick={() => onChange(!value)}><span /></button>
+function Toggle({ value, onChange, label, disabled = false, title }: {
+  value: boolean
+  onChange(value: boolean): void
+  label: string
+  disabled?: boolean
+  title?: string
+}) {
+  return <button
+    type="button" className="toggle" data-on={value} role="switch" aria-checked={value}
+    aria-label={label} disabled={disabled} title={title} onClick={() => onChange(!value)}
+  ><span /></button>
 }
 
 function SettingsHeader({ title, backLabel, onBack }: { title: string; backLabel: string; onBack(): void }) {
@@ -171,12 +184,13 @@ function SettingsHeader({ title, backLabel, onBack }: { title: string; backLabel
   )
 }
 
-export function SettingsHub({ config, onBack, onTheme, onDesktop, onDetection }: {
+export function SettingsHub({ config, onBack, onTheme, onMenuBar, onProviders, onDesktop }: {
   config: Config
   onBack(): void
   onTheme(): void
+  onMenuBar(): void
+  onProviders(): void
   onDesktop(): void
-  onDetection(): void
 }) {
   const preset = themePresetOption(config.appearance.preset).name
   const mode = isDarkOnlyThemePreset(config.appearance.preset)
@@ -191,14 +205,19 @@ export function SettingsHub({ config, onBack, onTheme, onDesktop, onDetection }:
           <span><b>Theme</b><small>{preset} · {mode}</small></span>
           <span className="destination-chevron" aria-hidden="true">›</span>
         </button>
-        <button type="button" className="settings-destination" onClick={onDesktop}>
-          <span className="desktop-glyph" aria-hidden="true"><i /></span>
-          <span><b>Desktop App</b><small>Menu bar, privacy, startup</small></span>
+        <button type="button" className="settings-destination" onClick={onMenuBar}>
+          <span className="menubar-glyph" aria-hidden="true"><i /><i /></span>
+          <span><b>Menu Bar</b><small>Content, spacing, and compact screens</small></span>
           <span className="destination-chevron" aria-hidden="true">›</span>
         </button>
-        <button type="button" className="settings-destination" onClick={onDetection}>
+        <button type="button" className="settings-destination" onClick={onProviders}>
           <span className="detection-glyph" aria-hidden="true"><i /><i /></span>
-          <span><b>Accounts & Detection</b><small>{config.accountDetection.enabled ? 'Automatic discovery on' : 'Manual accounts only'} · {config.accountDetection.excludedAccounts.length} ignored</small></span>
+          <span><b>Providers &amp; Accounts</b><small>{config.accountDetection.enabled ? 'Automatic discovery on' : 'Manual accounts only'} · {config.accountDetection.excludedAccounts.length} ignored</small></span>
+          <span className="destination-chevron" aria-hidden="true">›</span>
+        </button>
+        <button type="button" className="settings-destination" onClick={onDesktop}>
+          <span className="desktop-glyph" aria-hidden="true"><i /></span>
+          <span><b>Desktop App</b><small>Privacy, cards, startup, and updates</small></span>
           <span className="destination-chevron" aria-hidden="true">›</span>
         </button>
       </nav>
@@ -257,11 +276,12 @@ export function ThemeSettings({ config, systemMode, onPatch, onBack, onDashboard
       <div className="settings-list theme-settings-list">
         <div className="theme-section">
           <div className="theme-section-copy"><b>Appearance</b><small>Auto is currently {systemMode}</small></div>
-          <span className="segmented theme-mode" aria-label="Appearance mode">
+          <span className="segmented theme-mode" role="radiogroup" aria-label="Appearance mode">
             {MODES.map(option => {
               const unavailable = darkOnly && option.value !== 'dark'
               return <button
-                key={option.value} type="button" data-active={shownMode === option.value}
+                key={option.value} type="button" role="radio" aria-checked={shownMode === option.value}
+                data-active={shownMode === option.value}
                 disabled={unavailable} aria-disabled={unavailable}
                 title={unavailable ? 'Phosphor is dark only' : undefined}
                 onClick={() => onPatch(next => ({ ...next, appearance: { ...next.appearance, mode: option.value } }))}
@@ -295,6 +315,217 @@ export function ThemeSettings({ config, systemMode, onPatch, onBack, onDashboard
   )
 }
 
+const MENU_BAR_DENSITIES: ReadonlyArray<{ value: MenuBarDensity; label: string }> = [
+  { value: 'comfortable', label: 'Comfortable' },
+  { value: 'compact', label: 'Compact' },
+  { value: 'tight', label: 'Tight' },
+]
+
+export function setMenuBarElementVisibility(
+  config: Config,
+  key: keyof Config['tray']['menuBar']['elements'],
+  value: boolean,
+): Config {
+  const enabled = Object.values(config.tray.menuBar.elements).filter(Boolean).length
+  if (!value && config.tray.menuBar.elements[key] && enabled === 1) return config
+  return {
+    ...config,
+    tray: {
+      ...config.tray,
+      menuBar: {
+        ...config.tray.menuBar,
+        elements: { ...config.tray.menuBar.elements, [key]: value },
+      },
+      ...(key === 'value' ? { showMenuBarText: value } : {}),
+    },
+  }
+}
+
+export function patchMenuBarPresentation(
+  config: Config,
+  patch: Partial<Omit<Config['tray']['menuBar'], 'elements' | 'customSpacing'>> & {
+    elements?: Partial<Config['tray']['menuBar']['elements']>
+    customSpacing?: Partial<Config['tray']['menuBar']['customSpacing']>
+  },
+): Config {
+  return {
+    ...config,
+    tray: {
+      ...config.tray,
+      menuBar: {
+        ...config.tray.menuBar,
+        ...patch,
+        elements: { ...config.tray.menuBar.elements, ...patch.elements },
+        customSpacing: { ...config.tray.menuBar.customSpacing, ...patch.customSpacing },
+      },
+    },
+  }
+}
+
+export function setMenuBarValue(config: Config, menuBarValue: Config['tray']['menuBarValue']): Config {
+  return { ...config, tray: { ...config.tray, menuBarValue } }
+}
+
+export function resetMenuBarPresentation(config: Config): Config {
+  return {
+    ...config,
+    tray: {
+      ...config.tray,
+      menuBar: {
+        ...DEFAULT_MENU_BAR_CONFIG,
+        elements: { ...DEFAULT_MENU_BAR_CONFIG.elements },
+        customSpacing: { ...DEFAULT_MENU_BAR_CONFIG.customSpacing },
+      },
+      showMenuBarText: DEFAULT_MENU_BAR_CONFIG.elements.value,
+    },
+  }
+}
+
+function MenuBarStepper({ label, value, min, max, onChange }: {
+  label: string
+  value: number
+  min: number
+  max: number
+  onChange(value: number): void
+}) {
+  const adjust = (delta: number) => onChange(Math.max(min, Math.min(max, Math.round((value + delta) * 2) / 2)))
+  return (
+    <div className="menubar-stepper">
+      <span>{label}</span>
+      <span className="stepper-control">
+        <button type="button" aria-label={`Decrease ${label}`} disabled={value <= min} onClick={() => adjust(-0.5)}>−</button>
+        <output aria-label={`${label} value`}>{value.toFixed(1)} pt</output>
+        <button type="button" aria-label={`Increase ${label}`} disabled={value >= max} onClick={() => adjust(0.5)}>+</button>
+      </span>
+    </div>
+  )
+}
+
+export function MenuBarSettings({ config, snapshot, pins, platform, displayWidthPt, update, onPatch, onBack, onToast }: {
+  config: Config
+  snapshot: WebSnapshot
+  pins: string[]
+  platform: string
+  displayWidthPt: number
+  update: DesktopUpdateState
+  onPatch(mutate: (config: Config) => Config): void
+  onBack(): void
+  onToast(message: string): void
+}) {
+  const [previewWidth, setPreviewWidth] = React.useState<number | null>(null)
+  const [previewPlan, setPreviewPlan] = React.useState<MenuBarPlan | null>(null)
+  const previewStrip = React.useRef<HTMLSpanElement>(null)
+  const menuBar = config.tray.menuBar
+  const values = menuBarValues(snapshot, config, pins)
+  const enabledElements = Object.values(menuBar.elements).filter(Boolean).length
+  React.useEffect(() => {
+    const canvas = previewStrip.current?.querySelector('canvas')
+    if (!canvas) { setPreviewWidth(null); return }
+    const measure = () => setPreviewWidth(Number.parseFloat(canvas.style.width) || canvas.getBoundingClientRect().width || null)
+    const observer = new ResizeObserver(measure)
+    observer.observe(canvas)
+    measure()
+    return () => observer.disconnect()
+  }, [values.length, menuBar, displayWidthPt, update.status])
+  const setElement = (key: keyof Config['tray']['menuBar']['elements'], value: boolean) => {
+    if (!value && menuBar.elements[key] && enabledElements === 1) {
+      onToast('Keep at least one menu bar element visible.')
+      return
+    }
+    onPatch(next => setMenuBarElementVisibility(next, key, value))
+  }
+  const setSpacing = (key: keyof Config['tray']['menuBar']['customSpacing'], value: number) => onPatch(next => (
+    patchMenuBarPresentation(next, { customSpacing: { [key]: value } })
+  ))
+  const reset = () => onPatch(resetMenuBarPresentation)
+  const platformNote = platform === 'darwin'
+    ? 'Changes appear in the macOS menu bar immediately.'
+    : 'The composed strip is a macOS feature. These preferences are saved for your Macs.'
+  const adaptiveNote = menuBar.mode === 'auto' && previewPlan?.collapsed
+    ? 'Auto simplified this strip to fit the current display.'
+    : menuBar.mode === 'custom' && previewPlan && previewPlan.width > menuBarWidthBudget(displayWidthPt)
+      ? 'This custom strip is wider than Tokmon’s compact-display budget.'
+      : null
+  return (
+    <section className="settings-view menubar-settings" aria-label="Menu bar settings">
+      <SettingsHeader title="Menu Bar" backLabel="Settings" onBack={onBack} />
+      <div className="menubar-preview-stage" aria-label="Live menu bar preview">
+        <div className="menubar-preview-band">
+          <span ref={previewStrip} className="menubar-preview-bracket" data-empty={pins.length === 0 || undefined}>
+            {pins.length === 0
+              ? <span className="menubar-preview-empty"><i aria-hidden="true" />Pin a provider from Usage</span>
+              : <MenuBarStripPreview
+                  values={values} menuBar={menuBar} displayWidthPt={displayWidthPt}
+                  updateReady={update.status === 'downloaded'} className="menubar-live-preview"
+                  ariaLabel={`Tokmon menu bar preview with ${pins.length} pinned provider${pins.length === 1 ? '' : 's'}`}
+                  onPlan={setPreviewPlan}
+                />}
+          </span>
+          <span className="menubar-preview-system" aria-hidden="true"><i /><i /><i /></span>
+        </div>
+        <span className="menubar-preview-width">{previewWidth === null ? '—' : previewWidth.toFixed(1)} pt</span>
+      </div>
+      <p className="menubar-preview-caption">macOS reserves the outer spacing. Tokmon controls everything inside the bracket.</p>
+      <div className="settings-list menubar-controls">
+        <p className="settings-platform-note">{platformNote}</p>
+        {adaptiveNote && <p className="menubar-adaptive-note" role="status">{adaptiveNote}</p>}
+        <SettingsRow label="Layout" hint={menuBar.mode === 'auto' ? 'Can simplify on compact displays' : 'Renders your chosen elements'}>
+          <span className="segmented" role="radiogroup" aria-label="Menu bar layout mode">
+            {(['auto', 'custom'] as const).map(mode => <button
+              key={mode} type="button" role="radio" aria-checked={menuBar.mode === mode}
+              data-active={menuBar.mode === mode}
+              onClick={() => onPatch(next => patchMenuBarPresentation(next, { mode }))}
+            >{mode === 'auto' ? 'Auto' : 'Custom'}</button>)}
+          </span>
+        </SettingsRow>
+        <div className="menubar-element-group" aria-label="Menu bar elements">
+          {([
+            ['providerMark', 'Provider mark'],
+            ['value', 'Value'],
+            ['progress', 'Progress'],
+          ] as const).map(([key, label]) => {
+            const lastVisible = menuBar.elements[key] && enabledElements === 1
+            return <SettingsRow key={key} label={label} hint={key === 'progress' ? 'A quiet usage line below each provider' : undefined}>
+              <Toggle
+                value={menuBar.elements[key]} label={`Show ${label.toLowerCase()}`}
+                disabled={lastVisible}
+                title={lastVisible ? 'Keep at least one menu bar element visible' : undefined}
+                onChange={value => setElement(key, value)}
+              />
+            </SettingsRow>
+          })}
+        </div>
+        <SettingsRow label="Menu bar content" hint="What the menu bar number represents">
+          <span className="segmented" role="radiogroup" aria-label="Menu bar value">
+            <button type="button" role="radio" aria-checked={config.tray.menuBarValue === 'usage'} data-active={config.tray.menuBarValue === 'usage'} onClick={() => onPatch(next => setMenuBarValue(next, 'usage'))}>Usage</button>
+            <button type="button" role="radio" aria-checked={config.tray.menuBarValue === 'todayTokens'} data-active={config.tray.menuBarValue === 'todayTokens'} onClick={() => onPatch(next => setMenuBarValue(next, 'todayTokens'))}>Tokens today</button>
+          </span>
+        </SettingsRow>
+        <SettingsRow label="Density" hint={menuBar.mode === 'custom' ? 'Icon and text size' : 'Baseline spacing between elements'}>
+          <span className="segmented menubar-density" role="radiogroup" aria-label="Menu bar density">
+            {MENU_BAR_DENSITIES.map(option => <button
+              key={option.value} type="button" role="radio" aria-checked={menuBar.density === option.value}
+              data-active={menuBar.density === option.value}
+              onClick={() => onPatch(next => patchMenuBarPresentation(next, { density: option.value }))}
+            >{option.label}</button>)}
+          </span>
+        </SettingsRow>
+        {menuBar.mode === 'custom' && (
+          <div className="menubar-spacing" aria-label="Custom menu bar spacing">
+            <MenuBarStepper label="Edge" value={menuBar.customSpacing.edgePaddingPt} min={0} max={6} onChange={value => setSpacing('edgePaddingPt', value)} />
+            <MenuBarStepper label="Mark to value" value={menuBar.customSpacing.markValueGapPt} min={0} max={8} onChange={value => setSpacing('markValueGapPt', value)} />
+            <MenuBarStepper label="Between providers" value={menuBar.customSpacing.providerGapPt} min={0} max={16} onChange={value => setSpacing('providerGapPt', value)} />
+          </div>
+        )}
+        <div className="menubar-reset-row">
+          <span>Provider pins stay in their left-to-right order.</span>
+          <button type="button" onClick={reset}>Reset Menu Bar</button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 function updateStatusCopy(update: DesktopUpdateState): string {
   if (update.status === 'disabled') return 'Automatic updates are available in the installed app'
   if (update.status === 'unsupported') return 'Updates for this Linux package are managed by your package manager'
@@ -321,7 +552,6 @@ export function DesktopSettings({ config, groups, update, appVersion, daemon, on
   onCheckUpdates(): void
   onQuit(): void
 }) {
-  const pins = config.tray.pinnedProviders
   const expandedProviders = config.desktop?.expandedProviders ?? []
   const knownProviders = new Set(groups.map(group => group.providerId))
   const service = daemonLabel(daemon)
@@ -346,36 +576,25 @@ export function DesktopSettings({ config, groups, update, appVersion, daemon, on
           <Toggle value={config.privacyMode} label="Privacy mode" onChange={value => onPatch(next => ({ ...next, privacyMode: value }))} />
         </SettingsRow>
         <SettingsRow label="Provider summary" hint="Smart pools accounts · highest usage shows one account">
-          <span className="segmented">
-            <button type="button" data-active={config.tray.displayMetric === 'smartHeadroom'} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, displayMetric: 'smartHeadroom' } }))}>Smart</button>
-            <button type="button" data-active={config.tray.displayMetric === 'tightestRemaining'} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, displayMetric: 'tightestRemaining' } }))}>Highest usage</button>
+          <span className="segmented" role="radiogroup" aria-label="Provider summary">
+            <button type="button" role="radio" aria-checked={config.tray.displayMetric === 'smartHeadroom'} data-active={config.tray.displayMetric === 'smartHeadroom'} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, displayMetric: 'smartHeadroom' } }))}>Smart</button>
+            <button type="button" role="radio" aria-checked={config.tray.displayMetric === 'tightestRemaining'} data-active={config.tray.displayMetric === 'tightestRemaining'} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, displayMetric: 'tightestRemaining' } }))}>Highest usage</button>
           </span>
-        </SettingsRow>
-        <SettingsRow label="Menu bar text" hint="Show score beside provider mark">
-          <Toggle value={config.tray.showMenuBarText} label="Menu bar text" onChange={value => onPatch(next => ({ ...next, tray: { ...next.tray, showMenuBarText: value } }))} />
-        </SettingsRow>
-        <SettingsRow label="Menu bar value" hint="Usage percentage or today's local tokens">
-          <span className="segmented">
-            <button type="button" data-active={config.tray.menuBarValue === 'usage'} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, menuBarValue: 'usage' } }))}>Usage</button>
-            <button type="button" data-active={config.tray.menuBarValue === 'todayTokens'} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, menuBarValue: 'todayTokens' } }))}>Tokens today</button>
-          </span>
-        </SettingsRow>
-        <SettingsRow label="Pinned providers" hint="Choose up to two · order preserved">
-          <span className="provider-chips">{groups.map(group => <button key={group.providerId} type="button" data-active={pins.includes(group.providerId)} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, pinnedProviders: toggleProviderSelection(next.tray.pinnedProviders, group.providerId, knownProviders, MAX_PINNED_PROVIDERS) } }))}>{group.name}</button>)}</span>
         </SettingsRow>
         <SettingsRow label="Expanded by default" hint="Synced through the daemon">
-          <span className="provider-chips">{groups.map(group => <button key={group.providerId} type="button" data-active={expandedProviders.includes(group.providerId)} onClick={() => onPatch(next => ({ ...next, desktop: { ...next.desktop, expandedProviders: toggleProviderSelection(next.desktop.expandedProviders, group.providerId, knownProviders) } }))}>{group.name}</button>)}</span>
+          <span className="provider-chips" role="group" aria-label="Providers expanded by default">{groups.map(group => <button key={group.providerId} type="button" aria-pressed={expandedProviders.includes(group.providerId)} data-active={expandedProviders.includes(group.providerId)} onClick={() => onPatch(next => ({ ...next, desktop: { ...next.desktop, expandedProviders: toggleProviderSelection(next.desktop.expandedProviders, group.providerId, knownProviders) } }))}>{group.name}</button>)}</span>
         </SettingsRow>
         <SettingsRow label="Graph range" hint="Trailing spend activity">
-          <span className="segmented">
+          <span className="segmented" role="radiogroup" aria-label="Graph range">
             {DESKTOP_GRAPH_RANGES.map(value => <button
-              key={value} type="button" data-active={config.desktop.graphRangeDays === value}
+              key={value} type="button" role="radio" aria-checked={config.desktop.graphRangeDays === value}
+              data-active={config.desktop.graphRangeDays === value}
               onClick={() => onPatch(next => ({ ...next, desktop: { ...next.desktop, graphRangeDays: value } }))}
             >{value}d</button>)}
           </span>
         </SettingsRow>
         <SettingsRow label="Active window" hint="Recent usage emphasis">
-          <span className="segmented">{[5, 10, 20, 30].map(value => <button key={value} type="button" data-active={config.tray.activeTimeoutMin === value} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, activeTimeoutMin: value } }))}>{value}m</button>)}</span>
+          <span className="segmented" role="radiogroup" aria-label="Active window">{[5, 10, 20, 30].map(value => <button key={value} type="button" role="radio" aria-checked={config.tray.activeTimeoutMin === value} data-active={config.tray.activeTimeoutMin === value} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, activeTimeoutMin: value } }))}>{value}m</button>)}</span>
         </SettingsRow>
         <SettingsRow label="Launch at login" hint="Start Tokmon silently">
           <Toggle value={config.tray.launchAtLogin} label="Launch at login" onChange={value => onPatch(next => ({ ...next, tray: { ...next.tray, launchAtLogin: value } }))} />
@@ -400,7 +619,7 @@ export function DesktopSettings({ config, groups, update, appVersion, daemon, on
   )
 }
 
-export function DetectionSettings({ config, snapshot, onPatch, onBack, onDashboard }: {
+export function ProvidersSettings({ config, snapshot, onPatch, onBack, onDashboard }: {
   config: Config
   snapshot: WebSnapshot
   onPatch(mutate: (config: Config) => Config): void
@@ -413,9 +632,29 @@ export function DetectionSettings({ config, snapshot, onPatch, onBack, onDashboa
     return !manualKeys.has(`${account.providerId}:${homeDir}`) && !config.accounts.some(manual => manual.id === account.id)
   })
   return (
-    <section className="settings-view" aria-label="Account detection settings">
-      <SettingsHeader title="Accounts & Detection" backLabel="Settings" onBack={onBack} />
+    <section className="settings-view" aria-label="Providers and accounts settings">
+      <SettingsHeader title="Providers & Accounts" backLabel="Settings" onBack={onBack} />
       <div className="settings-list">
+        <div className="settings-subsection">
+          <span><b>Track these providers</b><small>Turn a provider off everywhere without deleting its accounts, pins, or card preferences.</small></span>
+          <div className="provider-switches">
+            {PROVIDER_ORDER.map(providerId => {
+              const enabled = !config.disabledProviders.includes(providerId)
+              const name = PROVIDER_META[providerId].name
+              return <div key={providerId}>
+                <span>{name}</span>
+                <Toggle
+                  value={enabled} label={`Track ${name}`}
+                  onChange={value => onPatch(next => setProviderTrackingEnabled(next, providerId, value))}
+                />
+              </div>
+            })}
+          </div>
+        </div>
+        <div className="settings-subsection-heading">
+          <b>Automatic discovery</b>
+          <small>Discovery finds local accounts. It does not control whether a provider is tracked.</small>
+        </div>
         <SettingsRow label="Discover accounts" hint="Manual accounts keep working when this is off">
           <Toggle
             value={config.accountDetection.enabled}
@@ -424,11 +663,11 @@ export function DetectionSettings({ config, snapshot, onPatch, onBack, onDashboa
           />
         </SettingsRow>
         <SettingsRow label="Provider detectors" hint="Choose where Tokmon searches automatically">
-          <span className="provider-chips">
+          <span className="provider-chips" role="group" aria-label="Provider detectors">
             {PROVIDER_ORDER.map(providerId => {
               const enabled = providerDetectionEnabled(config.accountDetection, providerId)
               return <button
-                key={providerId} type="button" data-active={enabled}
+                key={providerId} type="button" aria-pressed={enabled} data-active={enabled}
                 disabled={!config.accountDetection.enabled}
                 onClick={() => onPatch(next => ({
                   ...next,

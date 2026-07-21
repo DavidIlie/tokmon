@@ -1,4 +1,4 @@
-import { providerDetectionEnabled, PROVIDER_META, PROVIDER_ORDER, setProviderDetectionEnabled, type Config, type ProviderId } from '@shared'
+import { providerDetectionEnabled, PROVIDER_META, PROVIDER_ORDER, setProviderDetectionEnabled, setProviderTrackingEnabled, type Config, type ProviderId } from '@shared'
 import { namedColorHex } from '../../lib/colors'
 import { Check } from '../icons'
 import { FOCUS_RING } from '../ui/primitives'
@@ -6,13 +6,7 @@ import { Section } from './primitives'
 
 export function ProvidersSection({ draft, patch }: { draft: Config; patch: (fn: (c: Config) => Config) => void }) {
   const toggle = (pid: ProviderId, enabled: boolean) =>
-    patch(c => ({
-      ...c,
-      knownProviders: c.knownProviders.includes(pid) ? c.knownProviders : [...c.knownProviders, pid],
-      disabledProviders: enabled
-        ? c.disabledProviders.filter(p => p !== pid)
-        : Array.from(new Set([...c.disabledProviders, pid])),
-    }))
+    patch(c => setProviderTrackingEnabled(c, pid, enabled))
   return (
     <Section title="Providers" right={
       <button

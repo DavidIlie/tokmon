@@ -1,7 +1,7 @@
 import { Fragment, memo, type ReactNode } from 'react'
 import { Box, Text } from 'ink'
 import { glyphs } from '../glyphs'
-import { configLocation, DESKTOP_GRAPH_RANGES, generateAccountId, COLOR_PALETTE, providerDetectionEnabled, redactEmail, sanitizeTyped, toggleProviderSelection, type Config, type Account, type TrackedAccountRow } from '../config'
+import { configLocation, DEFAULT_MENU_BAR_CONFIG, DESKTOP_GRAPH_RANGES, generateAccountId, COLOR_PALETTE, providerDetectionEnabled, redactEmail, sanitizeTyped, toggleProviderSelection, type Config, type Account, type MenuBarConfig, type TrackedAccountRow } from '../config'
 import { PROVIDER_ORDER, PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
 import { systemTimezone } from '../tz'
@@ -62,6 +62,43 @@ function cycleNumber(values: readonly number[], current: number, direction: -1 |
 const step = (key: InputKey): -1 | 1 => (key.leftArrow ? -1 : 1)
 const isToggleKey = (key: InputKey): boolean => key.leftArrow || key.rightArrow || key.return
 const isAdjustKey = (input: string, key: InputKey): boolean => input === ' ' || key.leftArrow || key.rightArrow || key.return
+
+type MenuBarElement = keyof MenuBarConfig['elements']
+
+function toggleMenuBarPresentationElement(config: Config, element: MenuBarElement): Config {
+  const elements = config.tray.menuBar.elements
+  if (elements[element] && Object.values(elements).filter(Boolean).length === 1) return config
+  const nextElements = { ...elements, [element]: !elements[element] }
+  return {
+    ...config,
+    tray: {
+      ...config.tray,
+      showMenuBarText: nextElements.value,
+      menuBar: { ...config.tray.menuBar, elements: nextElements },
+    },
+  }
+}
+
+function adjustMenuBarSpacing(
+  config: Config,
+  field: keyof MenuBarConfig['customSpacing'],
+  direction: -1 | 1,
+  max: number,
+): Config {
+  const current = config.tray.menuBar.customSpacing[field]
+  const value = Math.min(max, Math.max(0, Math.round((current + direction * 0.5) * 2) / 2))
+  return {
+    ...config,
+    tray: {
+      ...config.tray,
+      menuBar: {
+        ...config.tray.menuBar,
+        mode: 'custom',
+        customSpacing: { ...config.tray.menuBar.customSpacing, [field]: value },
+      },
+    },
+  }
+}
 
 export const GENERAL_SETTINGS: SettingRow[] = [
   {
@@ -212,14 +249,71 @@ export const DESKTOP_FIXED_SETTINGS: SettingRow[] = [
     onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, enabled: !c.tray.enabled } })) },
   },
   {
-    key: 'menuBarValues', label: 'Menu bar values',
-    render: rc => toggleText(rc.config.tray.showMenuBarText, rc.theme, 'shown', 'icon only', rc.theme.unknown),
-    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, showMenuBarText: !c.tray.showMenuBarText } })) },
+    key: 'menuBarMode', label: 'Menu bar layout',
+    render: rc => caret(<Text bold color={rc.theme.accent}>{rc.config.tray.menuBar.mode}</Text>),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, menuBar: { ...c.tray.menuBar, mode: c.tray.menuBar.mode === 'auto' ? 'custom' : 'auto' } } })) },
+  },
+  {
+    key: 'menuBarMark', label: 'Provider mark',
+    render: rc => toggleText(rc.config.tray.menuBar.elements.providerMark, rc.theme, 'shown', 'hidden', rc.theme.unknown),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => toggleMenuBarPresentationElement(c, 'providerMark')) },
+  },
+  {
+    key: 'menuBarValue', label: 'Value',
+    render: rc => toggleText(rc.config.tray.menuBar.elements.value, rc.theme, 'shown', 'hidden', rc.theme.unknown),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => toggleMenuBarPresentationElement(c, 'value')) },
+  },
+  {
+    key: 'menuBarProgress', label: 'Progress',
+    render: rc => toggleText(rc.config.tray.menuBar.elements.progress, rc.theme, 'shown', 'hidden', rc.theme.unknown),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => toggleMenuBarPresentationElement(c, 'progress')) },
   },
   {
     key: 'menuBarContent', label: 'Menu bar content',
     render: rc => caret(<Text bold color={rc.theme.accent}>{rc.config.tray.menuBarValue === 'todayTokens' ? 'tokens today' : 'usage'}</Text>),
     onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, menuBarValue: c.tray.menuBarValue === 'usage' ? 'todayTokens' : 'usage' } })) },
+  },
+  {
+    key: 'menuBarDensity', label: 'Density',
+    render: rc => caret(<Text bold color={rc.theme.accent}>{rc.config.tray.menuBar.density}</Text>),
+    onAdjust: (input, key, ctx) => {
+      if (!isAdjustKey(input, key)) return
+      const choices = ['comfortable', 'compact', 'tight'] as const
+      ctx.global.updateConfig(c => {
+        const current = choices.indexOf(c.tray.menuBar.density)
+        return { ...c, tray: { ...c.tray, menuBar: { ...c.tray.menuBar, density: choices[(current + step(key) + choices.length) % choices.length]! } } }
+      })
+    },
+  },
+  {
+    key: 'menuBarEdgePadding', label: 'Edge padding',
+    render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.tray.menuBar.customSpacing.edgePaddingPt.toFixed(1)}pt</Text>),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => adjustMenuBarSpacing(c, 'edgePaddingPt', step(key), 6)) },
+  },
+  {
+    key: 'menuBarMarkValueGap', label: 'Mark/value gap',
+    render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.tray.menuBar.customSpacing.markValueGapPt.toFixed(1)}pt</Text>),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => adjustMenuBarSpacing(c, 'markValueGapPt', step(key), 8)) },
+  },
+  {
+    key: 'menuBarProviderGap', label: 'Provider gap',
+    render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.tray.menuBar.customSpacing.providerGapPt.toFixed(1)}pt</Text>),
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => adjustMenuBarSpacing(c, 'providerGapPt', step(key), 16)) },
+  },
+  {
+    key: 'menuBarReset', label: 'Reset presentation',
+    render: rc => <Text bold color={rc.theme.unknown}>press enter</Text>,
+    onAdjust: (input, key, ctx) => {
+      if (input !== ' ' && !key.return) return
+      ctx.global.updateConfig(c => {
+        const menuBar: MenuBarConfig = {
+          ...DEFAULT_MENU_BAR_CONFIG,
+          elements: { ...DEFAULT_MENU_BAR_CONFIG.elements },
+          customSpacing: { ...DEFAULT_MENU_BAR_CONFIG.customSpacing },
+        }
+        return { ...c, tray: { ...c.tray, menuBar, showMenuBarText: menuBar.elements.value } }
+      })
+    },
   },
   {
     key: 'summary', label: 'Summary',
@@ -371,21 +465,11 @@ export const SettingsView = memo(function SettingsView({
               {row.below?.(rc, cursor === i)}
             </Fragment>
           ))}
-          <Box marginTop={1}><Text bold dimColor>Menu bar pins</Text><Text dimColor>  up to 2 providers, in order</Text></Box>
-          {PROVIDER_ORDER.map((pid, i) => {
-            const idx = DESKTOP_FIXED_ROWS + i
-            const selected = cursor === idx
-            const pinned = config.tray.pinnedProviders.includes(pid)
-            const position = config.tray.pinnedProviders.indexOf(pid)
-            const meta = PROVIDERS[pid]
-            return (
-              <Box key={pid}>
-                <Text color={selected ? theme.accent : undefined}>{selected ? glyphs().caretR : ' '} </Text>
-                <Box width={20}><Text color={meta.color}>{glyphs().dot} </Text><Text bold={pinned}>{meta.name}</Text></Box>
-                <Text color={pinned ? theme.ok : undefined} dimColor={!pinned}>{pinned ? `[${position + 1}] pinned` : '[ ] not pinned'}</Text>
-              </Box>
-            )
-          })}
+          <Box marginTop={1} flexDirection="column">
+            <Text dimColor>  Menu-bar presentation applies to the macOS desktop app.</Text>
+            <Text dimColor>  Pin providers from their cards in the desktop overview.</Text>
+            <Text dimColor>  Adjusting a spacing value switches the layout to custom.</Text>
+          </Box>
         </>
       )}
 

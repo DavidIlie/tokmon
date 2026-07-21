@@ -22,10 +22,6 @@ import {
   staleAgeLabel,
   tightestQuota,
   togglePin,
-  TRAY_STRIP,
-  trayLabel,
-  trayStripDigits,
-  trayStripLayout,
   totalsCopy,
   usageDataStatus,
   usageNumberText,
@@ -242,91 +238,12 @@ test('togglePin adds up to two, removes, and rejects a third', () => {
   assert.deepEqual(togglePin(['claude', 'codex'], 'cursor'), { pins: ['claude', 'codex'], rejected: true })
 })
 
-// ── Menu-bar strip geometry ───────────────────────────────────────────────────
-const stubMeasure = (text: string) => text.length * 6
-
-test('tray numerals never carry "!"; unknown is an en dash', () => {
-  assert.equal(trayLabel(7), '7%')
-  assert.equal(trayLabel(57), '57%')
-  assert.equal(trayLabel(100), '100%')
-  assert.equal(trayLabel(0.4), '<1%')
-  assert.equal(trayLabel(null), '–')
-  for (const v of [7, 5, 0.4, 100, null]) assert.ok(!trayLabel(v).includes('!'))
-})
-
-test('shared digit count is max(2, widest); the 3-digit slot holds from 98% to avoid reset flutter', () => {
-  assert.equal(trayStripDigits([{ providerId: 'claude', usage: 57, active: false }, { providerId: 'codex', usage: 82, active: false }]), 2)
-  assert.equal(trayStripDigits([{ providerId: 'claude', usage: 7, active: false }]), 2) // min 2
-  assert.equal(trayStripDigits([{ providerId: 'claude', usage: 100, active: false }]), 3)
-  assert.equal(trayStripDigits([{ providerId: 'claude', usage: 98, active: false }]), 3) // hold near limit
-  assert.equal(trayStripDigits([{ providerId: 'claude', usage: null, active: false }]), 2)
-})
-
-test('strip layout: shared centred numeral slot, 8pt gaps, 1pt bleed, no divider', () => {
-  const two = trayStripLayout([
-    { providerId: 'claude', usage: 57, active: false },
-    { providerId: 'codex', usage: 82, active: true },
-  ], stubMeasure)
-  const slot = two.slotWidth
-  const seg = TRAY_STRIP.iconBox + TRAY_STRIP.gapIconNum + slot
-  assert.equal(two.segWidth, seg)
-  assert.equal(two.width, 2 * seg + TRAY_STRIP.gapSeg + TRAY_STRIP.edgeBleed)
-  assert.equal(two.height, 22)
-  // Twins: both numeral slots identical width, numeral centred within.
-  assert.equal(two.segments[0]!.numCenterX - two.segments[0]!.numLeft, slot / 2)
-  assert.equal(two.segments[1]!.numCenterX - two.segments[1]!.numLeft, slot / 2)
-  // Second segment offset by one segment + one gap; no separator band between.
-  assert.equal(two.segments[1]!.x, seg + TRAY_STRIP.gapSeg)
-
-  const one = trayStripLayout([{ providerId: 'claude', usage: 42, active: false }], stubMeasure)
-  assert.equal(one.width, seg + TRAY_STRIP.edgeBleed)
-})
-
-test('a downloaded update adds one stable trailing action glyph after zero, one, or two pins', () => {
-  for (const values of [
-    [],
-    [{ providerId: 'claude', usage: 42, active: false }],
-    [
-      { providerId: 'claude', usage: 42, active: false },
-      { providerId: 'codex', usage: 17, active: true },
-    ],
-  ]) {
-    const ordinary = trayStripLayout(values, stubMeasure)
-    const ready = trayStripLayout(values, stubMeasure, true)
-    const gap = values.length > 0 ? TRAY_STRIP.updateGap : 0
-    assert.equal(ready.width, ordinary.width + gap + TRAY_STRIP.updateBox)
-    assert.equal(ready.updateCenterX, ordinary.width + gap + TRAY_STRIP.updateBox / 2)
-  }
-})
-
-test('severity never changes tray geometry or adds punctuation', () => {
-  const mixed = trayStripLayout([
-    { providerId: 'claude', usage: 95, active: false },
-    { providerId: 'codex', usage: 57, active: false },
-  ], stubMeasure)
-  const normal = trayStripLayout([
-    { providerId: 'claude', usage: 55, active: false },
-    { providerId: 'codex', usage: 57, active: false },
-  ], stubMeasure)
-  assert.equal(mixed.width, normal.width)
-  assert.equal(mixed.slotWidth, normal.slotWidth)
-  assert.equal(mixed.segments[0]!.label, '95%')
-  assert.ok(!mixed.segments[0]!.label.includes('!'))
-})
-
 test('token labels share a stable menu-bar slot and daily totals sum across accounts', () => {
   const tokens = (value: number) => ({ cost: 0, tokens: value, input: value, cacheRead: 0, cacheSavings: 0 })
   const first = account({ dashboard: { today: tokens(1_000_000), week: tokens(1_000_000), month: tokens(1_000_000), burnRate: 0, series: [], lastActivityAt: null } })
   const second = account({ id: 'b', dashboard: { today: tokens(200_000), week: tokens(200_000), month: tokens(200_000), burnRate: 0, series: [], lastActivityAt: null } })
   assert.equal(providerTodayTokens([first, second]), 1_200_000)
   assert.equal(providerTodayTokens([account({ dashboard: null })]), null)
-  const layout = trayStripLayout([
-    { providerId: 'claude', usage: 50, label: '1.2M', active: false },
-    { providerId: 'codex', usage: null, label: '1B', active: true },
-  ], stubMeasure)
-  assert.equal(layout.segments[0]?.label, '1.2M')
-  assert.equal(layout.segments[1]?.label, '1B')
-  assert.ok(layout.slotWidth >= stubMeasure('999M'))
 })
 
 test('cross-provider totals use canonical dashboard aggregation and shared freshness', () => {

@@ -2,24 +2,44 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   cleanProviderSelection,
-  MAX_PINNED_PROVIDERS,
-  moveProviderSelection,
+  defaultMenuBarPresentation,
+  toggleMenuBarElement,
   toggleProviderSelection,
 } from './app-section.logic'
 
 const known = new Set(['claude', 'codex', 'cursor'])
 
-test('provider selection removes unknowns and preserves ordered unique pins', () => {
+test('provider selection removes unknowns and preserves ordered unique ids', () => {
   assert.deepEqual(cleanProviderSelection(['codex', 'missing', 'claude', 'codex', 'cursor'], known, 2), ['codex', 'claude'])
 })
 
-test('pin toggles enforce the two-provider maximum', () => {
-  assert.deepEqual(toggleProviderSelection(['claude'], 'codex', known, MAX_PINNED_PROVIDERS), ['claude', 'codex'])
-  assert.deepEqual(toggleProviderSelection(['claude', 'codex'], 'cursor', known, MAX_PINNED_PROVIDERS), ['claude', 'codex'])
-  assert.deepEqual(toggleProviderSelection(['claude', 'codex'], 'claude', known, MAX_PINNED_PROVIDERS), ['codex'])
+test('expanded provider selections remain bounded to known providers', () => {
+  assert.deepEqual(toggleProviderSelection(['claude'], 'codex', known), ['claude', 'codex'])
+  assert.deepEqual(toggleProviderSelection(['claude', 'codex'], 'claude', known), ['codex'])
+  assert.deepEqual(toggleProviderSelection(['claude'], 'missing', known), ['claude'])
 })
 
-test('pin order can move without changing membership', () => {
-  assert.deepEqual(moveProviderSelection(['claude', 'codex'], 'codex', -1), ['codex', 'claude'])
-  assert.deepEqual(moveProviderSelection(['claude', 'codex'], 'claude', -1), ['claude', 'codex'])
+test('menu-bar elements cannot all be hidden', () => {
+  const onlyMark = { providerMark: true, value: false, progress: false }
+  assert.equal(toggleMenuBarElement(onlyMark, 'providerMark'), onlyMark)
+  assert.deepEqual(toggleMenuBarElement(onlyMark, 'value'), {
+    providerMark: true,
+    value: true,
+    progress: false,
+  })
+})
+
+test('menu-bar reset returns independent presentation objects', () => {
+  const first = defaultMenuBarPresentation()
+  const second = defaultMenuBarPresentation()
+  assert.notEqual(first, second)
+  assert.notEqual(first.elements, second.elements)
+  assert.notEqual(first.customSpacing, second.customSpacing)
+  assert.deepEqual(first, {
+    version: 1,
+    mode: 'auto',
+    elements: { providerMark: true, value: true, progress: false },
+    density: 'comfortable',
+    customSpacing: { edgePaddingPt: 1, markValueGapPt: 3, providerGapPt: 8 },
+  })
 })

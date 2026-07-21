@@ -6,6 +6,7 @@ import test from 'node:test'
 import { Schema } from 'effect'
 import {
   cleanProviderSelection,
+  DEFAULT_MENU_BAR_CONFIG,
   DEFAULTS,
   DEFAULT_TRAY_CONFIG,
   loadConfig,
@@ -14,6 +15,7 @@ import {
   normalizeConfig,
   PROVIDER_IDS,
   repairConfig,
+  repairMenuBarConfig,
   saveConfig,
   toggleProviderSelection,
   type Config,
@@ -56,10 +58,11 @@ test('the RPC config schema rejects malformed config documents', () => {
 test('tray config defaults and repairs are stable', () => {
   assert.deepEqual(normalizeConfig({ ...DEFAULTS, tray: undefined }).tray, DEFAULT_TRAY_CONFIG)
 
+  const { menuBar: _legacyMenuBar, ...legacyTray } = DEFAULT_TRAY_CONFIG
   const repaired = repairConfig({
     ...DEFAULTS,
     tray: {
-      ...DEFAULT_TRAY_CONFIG,
+      ...legacyTray,
       enabled: false,
       showMenuBarText: false,
       pollIntervalSec: 0,
@@ -78,6 +81,10 @@ test('tray config defaults and repairs are stable', () => {
   assert.deepEqual(repaired.config.tray, {
     ...DEFAULT_TRAY_CONFIG,
     enabled: false,
+    menuBar: {
+      ...DEFAULT_MENU_BAR_CONFIG,
+      elements: { ...DEFAULT_MENU_BAR_CONFIG.elements, value: false },
+    },
     showMenuBarText: false,
     activeTimeoutMin: 60,
     graceMin: 60,
@@ -86,6 +93,63 @@ test('tray config defaults and repairs are stable', () => {
     pinnedAccount: 'claude-work',
     launchAtLogin: true,
   })
+})
+
+test('menu-bar builder migrates legacy text visibility and mirrors the compatibility field', () => {
+  const { menuBar: _menuBar, ...legacyTray } = DEFAULT_TRAY_CONFIG
+  const migrated = normalizeConfig({
+    ...DEFAULTS,
+    tray: { ...legacyTray, showMenuBarText: false },
+  })
+  assert.deepEqual(migrated.tray.menuBar, {
+    ...DEFAULT_MENU_BAR_CONFIG,
+    elements: { ...DEFAULT_MENU_BAR_CONFIG.elements, value: false },
+  })
+  assert.equal(migrated.tray.showMenuBarText, false)
+
+  const explicit = normalizeConfig({
+    ...DEFAULTS,
+    tray: {
+      ...DEFAULT_TRAY_CONFIG,
+      showMenuBarText: true,
+      menuBar: {
+        ...DEFAULT_MENU_BAR_CONFIG,
+        mode: 'custom',
+        elements: { providerMark: false, value: false, progress: true },
+      },
+    },
+  })
+  assert.equal(explicit.tray.menuBar.mode, 'custom')
+  assert.deepEqual(explicit.tray.menuBar.elements, { providerMark: false, value: false, progress: true })
+  assert.equal(explicit.tray.showMenuBarText, false)
+})
+
+test('menu-bar builder repair bounds and half-point normalizes custom spacing', () => {
+  const repaired = repairMenuBarConfig({
+    version: 99,
+    mode: 'custom',
+    elements: { providerMark: false, value: true, progress: true },
+    density: 'tight',
+    customSpacing: {
+      edgePaddingPt: -2,
+      markValueGapPt: 2.26,
+      providerGapPt: 99,
+    },
+  })
+  assert.deepEqual(repaired, {
+    version: 1,
+    mode: 'custom',
+    elements: { providerMark: false, value: true, progress: true },
+    density: 'tight',
+    customSpacing: { edgePaddingPt: 0, markValueGapPt: 2.5, providerGapPt: 16 },
+  })
+
+  assert.deepEqual(repairMenuBarConfig({
+    mode: 'invalid',
+    elements: { value: 'yes' },
+    density: 'spacious',
+    customSpacing: { edgePaddingPt: Number.NaN, markValueGapPt: Number.POSITIVE_INFINITY },
+  }), DEFAULT_MENU_BAR_CONFIG)
 })
 
 test('shared provider selection contract enforces membership, order, and pin cap', () => {
@@ -127,6 +191,16 @@ test('the strict RPC tray schema accepts only the normalized shape', () => {
     ...DEFAULTS,
     tray: { ...DEFAULT_TRAY_CONFIG, theme: 'system' },
   }))
+  assert.throws(() => Schema.decodeUnknownSync(ConfigSchema)({
+    ...DEFAULTS,
+    tray: {
+      ...DEFAULT_TRAY_CONFIG,
+      menuBar: {
+        ...DEFAULT_MENU_BAR_CONFIG,
+        customSpacing: { ...DEFAULT_MENU_BAR_CONFIG.customSpacing, providerGapPt: 2.25 },
+      },
+    },
+  }))
 })
 
 test('the desktop snapshot contract has a distinct protocol version', () => {
@@ -136,6 +210,7 @@ test('the desktop snapshot contract has a distinct protocol version', () => {
   assert.equal(TOKMON_PROTOCOL_VERSION, 4)
   assert.ok(TOKMON_CAPABILITIES.includes('appearance-v1'))
   assert.ok(TOKMON_CAPABILITIES.includes('theme-engine'))
+  assert.ok(TOKMON_CAPABILITIES.includes('menu-bar-builder-v1'))
   assert.doesNotThrow(() => Schema.decodeUnknownSync(AppearanceConfigSchema)(DEFAULTS.appearance))
   assert.doesNotThrow(() => Schema.decodeUnknownSync(AppearanceConfigSchema)({
     ...DEFAULTS.appearance,
@@ -347,6 +422,13 @@ test('presentation preferences are hot while source and timing changes affect th
     { ...DEFAULTS, privacyMode: !DEFAULTS.privacyMode },
     { ...DEFAULTS, tray: { ...DEFAULTS.tray, pinnedProviders: ['claude'] } },
     { ...DEFAULTS, tray: { ...DEFAULTS.tray, displayMetric: 'tightestRemaining' as const } },
+    {
+      ...DEFAULTS,
+      tray: {
+        ...DEFAULTS.tray,
+        menuBar: { ...DEFAULTS.tray.menuBar, density: 'tight' as const },
+      },
+    },
     { ...DEFAULTS, desktop: { ...DEFAULTS.desktop, expandedProviders: ['claude'] } },
     { ...DEFAULTS, desktop: { ...DEFAULTS.desktop, graphRangeDays: 30 as const } },
     { ...DEFAULTS, appearance: { ...DEFAULTS.appearance, mode: 'light' as const } },
@@ -381,11 +463,22 @@ test('an old full-document CAS update preserves every capability-gated config fi
     disabledProviders: ['codex'],
     excludedAccounts: [{ providerId: 'claude' as const, homeDir: '/tmp/old-claude' }],
   }
+  const currentMenuBar: Config['tray']['menuBar'] = {
+    ...DEFAULTS.tray.menuBar,
+    mode: 'custom',
+    elements: { providerMark: false, value: true, progress: true },
+    density: 'compact',
+  }
   const state: { config: Config } = {
     config: {
       ...DEFAULTS,
       appearance: currentAppearance,
-      tray: { ...DEFAULTS.tray, pinnedProviders: currentPins, menuBarValue: 'todayTokens' },
+      tray: {
+        ...DEFAULTS.tray,
+        menuBar: currentMenuBar,
+        pinnedProviders: currentPins,
+        menuBarValue: 'todayTokens',
+      },
       desktop: { ...DEFAULTS.desktop, expandedProviders: currentExpanded, graphRangeDays: 30 },
       accountDetection: currentDetection,
     },
@@ -401,7 +494,12 @@ test('an old full-document CAS update preserves every capability-gated config fi
     desktop: _unsupportedDesktop,
     ...oldClientTopLevel
   } = state.config
-  const { pinnedProviders: _unsupportedProviderPins, menuBarValue: _unsupportedMenuBarValue, ...oldClientTray } = oldClientTopLevel.tray
+  const {
+    menuBar: _unsupportedMenuBar,
+    pinnedProviders: _unsupportedProviderPins,
+    menuBarValue: _unsupportedMenuBarValue,
+    ...oldClientTray
+  } = oldClientTopLevel.tray
   const oldClientConfig = { ...oldClientTopLevel, tray: oldClientTray }
 
   try {
@@ -414,22 +512,86 @@ test('an old full-document CAS update preserves every capability-gated config fi
     assert.equal(saved.config.privacyMode, false)
     assert.deepEqual(saved.config.appearance, currentAppearance)
     assert.deepEqual(saved.config.tray.pinnedProviders, currentPins)
+    assert.deepEqual(saved.config.tray.menuBar, currentMenuBar)
     assert.equal(saved.config.tray.menuBarValue, 'todayTokens')
     assert.deepEqual(saved.config.desktop.expandedProviders, currentExpanded)
     assert.equal(saved.config.desktop.graphRangeDays, 30)
     assert.deepEqual(saved.config.accountDetection, currentDetection)
     assert.deepEqual(broadcasts[0]?.appearance, currentAppearance)
     assert.deepEqual(broadcasts[0]?.tray.pinnedProviders, currentPins)
+    assert.deepEqual(broadcasts[0]?.tray.menuBar, currentMenuBar)
     assert.equal(broadcasts[0]?.tray.menuBarValue, 'todayTokens')
     assert.deepEqual(broadcasts[0]?.desktop.expandedProviders, currentExpanded)
     assert.deepEqual(broadcasts[0]?.accountDetection, currentDetection)
     const persisted = await loadConfig()
     assert.deepEqual(persisted.appearance, currentAppearance)
     assert.deepEqual(persisted.tray.pinnedProviders, currentPins)
+    assert.deepEqual(persisted.tray.menuBar, currentMenuBar)
     assert.equal(persisted.tray.menuBarValue, 'todayTokens')
     assert.deepEqual(persisted.desktop.expandedProviders, currentExpanded)
     assert.equal(persisted.desktop.graphRangeDays, 30)
     assert.deepEqual(persisted.accountDetection, currentDetection)
+  } finally {
+    if (previous === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previous
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('legacy and builder-aware CAS updates reconcile menu-bar value visibility', async () => {
+  const previous = process.env.XDG_CONFIG_HOME
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-menu-bar-cas-'))
+  const initialMenuBar = {
+    ...DEFAULT_MENU_BAR_CONFIG,
+    mode: 'custom' as const,
+    elements: { providerMark: false, value: true, progress: true },
+  }
+  const state = {
+    config: {
+      ...DEFAULTS,
+      tray: { ...DEFAULTS.tray, menuBar: initialMenuBar, showMenuBarText: true },
+    },
+  }
+  const engine = {
+    setConfig: () => assert.fail('menu-bar settings must remain hot'),
+    broadcastConfig: () => undefined,
+  } as never
+
+  try {
+    process.env.XDG_CONFIG_HOME = root
+    const { menuBar: _unsupported, ...legacyTray } = state.config.tray
+    const folded = await applyConfigUpdate(engine, state, {
+      expectedRevision: 0,
+      config: {
+        ...state.config,
+        tray: { ...legacyTray, showMenuBarText: false },
+      } as unknown as Config,
+    })
+    assert.deepEqual(folded.config.tray.menuBar, {
+      ...initialMenuBar,
+      elements: { ...initialMenuBar.elements, value: false },
+    })
+    assert.equal(folded.config.tray.showMenuBarText, false)
+
+    const explicitMenuBar = {
+      ...folded.config.tray.menuBar,
+      elements: { providerMark: true, value: true, progress: false },
+      density: 'tight' as const,
+    }
+    const explicit = await applyConfigUpdate(engine, state, {
+      expectedRevision: 1,
+      config: {
+        ...folded.config,
+        tray: {
+          ...folded.config.tray,
+          menuBar: explicitMenuBar,
+          // An explicit builder object wins over a stale compatibility mirror.
+          showMenuBarText: false,
+        },
+      },
+    })
+    assert.deepEqual(explicit.config.tray.menuBar, explicitMenuBar)
+    assert.equal(explicit.config.tray.showMenuBarText, true)
   } finally {
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME
     else process.env.XDG_CONFIG_HOME = previous

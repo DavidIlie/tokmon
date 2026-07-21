@@ -60,11 +60,15 @@ signed and notarized. Windows builds are currently unsigned.
 | --- | --- | --- |
 | Terminal | A fast overview while coding | `tokmon` |
 | Web dashboard | Charts, filtering, all-time history, and exports | `tokmon serve` |
-| Desktop | Pinned quota rings and quick account details | Install from Releases |
+| Desktop | A customisable menu-bar summary and quick account details | Install from Releases |
 
-The desktop app can pin two providers in the macOS menu bar. Clicking it opens
-a compact view of every provider and account, including usage, reset times,
-token totals, spend, cache savings, and recent history.
+Pin up to two providers directly from their desktop cards, then decide exactly
+what the macOS menu bar shows: provider marks, usage or today's tokens, optional
+progress lines, and comfortable, compact, or tight spacing. Auto layout adapts
+to smaller displays; Custom mode exposes half-point edge and gap controls.
+Clicking the item opens a compact view of every enabled provider and account,
+including usage, reset times, token totals, spend, cache savings, and recent
+history.
 
 ![Tokmon desktop quota popover](assets/desktop/tray-popover.png)
 

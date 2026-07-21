@@ -3,11 +3,24 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { DEFAULTS, type Config, type DashboardData, type Metric, type UsageSummary, type WebAccount, type WebSnapshot } from '../../web/contract'
-import { DesktopSettings, DetectionSettings, Footer, SettingsHub, ThemeSettings, TotalsBar, UpdateReady } from './desktop-chrome'
+import {
+  DesktopSettings,
+  MenuBarSettings,
+  ProvidersSettings,
+  Footer,
+  SettingsHub,
+  ThemeSettings,
+  TotalsBar,
+  UpdateReady,
+  patchMenuBarPresentation,
+  resetMenuBarPresentation,
+  setMenuBarElementVisibility,
+  setMenuBarValue,
+} from './desktop-chrome'
 import { ProviderCard } from './provider-card'
 import { groupByProvider } from './presentation'
 import { providerMark } from './provider-icons'
-import { measuredPopoverHeight } from './app'
+import { measuredPopoverHeight, pinProviderFromCard, pinProviderPreservingStoredPins } from './app'
 
 // Server-render the components (no window, no effects) to catch runtime crashes in the
 // provider-disclosure UI that pure-function unit tests can't reach.
@@ -46,7 +59,8 @@ const config: Config = { ...DEFAULTS, tray: { ...DEFAULTS.tray, activeTimeoutMin
 function renderCard(snap: WebSnapshot, expanded: boolean, pinned = false, cardConfig = config): string {
   const group = groupByProvider(snap)[0]!
   return renderToStaticMarkup(createElement(ProviderCard, {
-    group, snapshot: snap, config: cardConfig, pinned, expanded, deny: false, refreshing: false,
+    group, snapshot: snap, config: cardConfig, pinned, pinPosition: pinned ? 1 : null, pinCount: pinned ? 1 : 0,
+    expanded, deny: false, refreshing: false,
     now: Date.now(), onToggle: () => {}, onPin: () => {}, onArrow: () => {},
   }))
 }
@@ -404,7 +418,7 @@ test('popover measurement includes totals, update state and footer chrome', () =
   assert.equal(measuredPopoverHeight(480.2, [28, 52, 58]), 619)
 })
 
-test('desktop settings exposes daemon-backed privacy, summary and provider pin controls', () => {
+test('desktop settings keeps app behavior while menu bar composition lives elsewhere', () => {
   const snap = snapshot([account({})])
   const groups = groupByProvider(snap)
   const fullConfig = {
@@ -429,7 +443,9 @@ test('desktop settings exposes daemon-backed privacy, summary and provider pin c
   }))
   assert.match(html, /Privacy mode/)
   assert.match(html, /Provider summary/)
-  assert.match(html, /Pinned providers/)
+  assert.match(html, /role="radiogroup" aria-label="Provider summary"/)
+  assert.match(html, /role="group" aria-label="Providers expanded by default"/)
+  assert.doesNotMatch(html, /Pinned providers|Menu bar text|Menu bar value/)
   assert.match(html, /Graph range/)
   assert.match(html, />7d<\/button>/)
   assert.match(html, /data-active="true">14d<\/button>/)
@@ -469,44 +485,200 @@ test('desktop settings defers a downloaded update to the global restart action',
   assert.match(html, /disabled=""[^>]*>Update Ready/)
 })
 
-test('settings hub separates theme from desktop behavior and summarizes the shared appearance', () => {
+test('settings hub orders theme, menu bar, providers, then desktop behavior', () => {
   const fullConfig = {
     ...config,
     appearance: { version: 1, mode: 'auto', preset: 'tokmon', terminal: 'ansi' },
   } as Config
   const html = renderToStaticMarkup(createElement(SettingsHub, {
-    config: fullConfig, onBack: () => {}, onTheme: () => {}, onDesktop: () => {}, onDetection: () => {},
+    config: fullConfig, onBack: () => {}, onTheme: () => {}, onMenuBar: () => {},
+    onProviders: () => {}, onDesktop: () => {},
   }))
 
   assert.match(html, /aria-label="Settings sections"/)
   assert.match(html, />Theme</)
   assert.match(html, /Tokmon · Auto/)
+  assert.match(html, />Menu Bar</)
+  assert.match(html, /Content, spacing, and compact screens/)
+  assert.match(html, /Providers &amp; Accounts/)
   assert.match(html, />Desktop App</)
-  assert.match(html, /Menu bar, privacy, startup/)
-  assert.match(html, /Accounts &amp; Detection/)
+  assert.ok(html.indexOf('>Theme<') < html.indexOf('>Menu Bar<'))
+  assert.ok(html.indexOf('>Menu Bar<') < html.indexOf('>Providers &amp; Accounts<'))
+  assert.ok(html.indexOf('>Providers &amp; Accounts<') < html.indexOf('>Desktop App<'))
 })
 
-test('account detection settings expose global, provider, and per-account controls', () => {
+test('providers and accounts separates global tracking from discovery controls', () => {
   const fullConfig: Config = {
     ...config,
     privacyMode: false,
+    disabledProviders: ['codex'],
     accountDetection: {
       enabled: true,
       disabledProviders: ['codex'],
       excludedAccounts: [{ providerId: 'claude', homeDir: '/tmp/old-claude' }],
     },
   }
-  const html = renderToStaticMarkup(createElement(DetectionSettings, {
+  const html = renderToStaticMarkup(createElement(ProvidersSettings, {
     config: fullConfig,
     snapshot: snapshot([account({ id: 'claude-alt', homeDir: '/tmp/claude-alt' })]),
     onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
   }))
+  assert.match(html, /Track these providers/)
+  assert.match(html, /Turn a provider off everywhere without deleting its accounts, pins, or card preferences/)
+  assert.match(html, /aria-label="Track Claude"/)
+  assert.match(html, /aria-checked="false" aria-label="Track Codex"/)
+  assert.match(html, /Automatic discovery/)
   assert.match(html, /Discover accounts/)
   assert.match(html, /Provider detectors/)
+  assert.match(html, /role="group" aria-label="Provider detectors"/)
+  assert.match(html, /aria-pressed="false"[^>]*>Codex</)
   assert.ok(html.includes('/tmp/claude-alt'))
   assert.ok(html.includes('/tmp/old-claude'))
   assert.match(html, />Turn off</)
   assert.match(html, />Turn on</)
+})
+
+test('provider pin segment reserves its ordinal and announces the menu bar position', () => {
+  const pinned = renderCard(snapshot([account({})]), false, true)
+  assert.match(pinned, /class="pin"[^>]*aria-pressed="true"/)
+  assert.match(pinned, /aria-label="Unpin Claude from position 1 in the menu bar"/)
+  assert.match(pinned, /class="pin-position"[^>]*>1</)
+
+  const unpinned = renderCard(snapshot([account({})]), false, false)
+  assert.match(unpinned, /aria-label="Pin Claude to position 1 in the menu bar"/)
+  assert.match(unpinned, /class="pin-position"[^>]*><\/span>/)
+})
+
+test('Option pinning replaces position two without reordering the first provider', () => {
+  assert.deepEqual(pinProviderFromCard(['claude', 'codex'], 'cursor', true), {
+    pins: ['claude', 'cursor'], rejected: false, replaced: true,
+  })
+  assert.equal(pinProviderFromCard(['claude', 'codex'], 'cursor').rejected, true)
+  assert.deepEqual(pinProviderFromCard(['claude'], 'codex').pins, ['claude', 'codex'])
+})
+
+test('pin writes preserve providers absent from the live snapshot', () => {
+  assert.deepEqual(
+    pinProviderPreservingStoredPins(['claude', 'codex'], ['codex'], 'cursor'),
+    { pins: ['claude', 'codex'], rejected: true, replaced: false },
+  )
+  assert.deepEqual(
+    pinProviderPreservingStoredPins(['claude', 'codex'], ['codex'], 'cursor', true),
+    { pins: ['claude', 'cursor'], rejected: false, replaced: true },
+  )
+  assert.deepEqual(
+    pinProviderPreservingStoredPins(['claude', 'codex'], ['codex'], 'codex'),
+    { pins: ['claude'], rejected: false, replaced: false },
+  )
+})
+
+test('menu bar builder exposes production controls, exact spacing copy, and a truthful empty preview', () => {
+  const html = renderToStaticMarkup(createElement(MenuBarSettings, {
+    config,
+    snapshot: snapshot([account({})]),
+    pins: [],
+    platform: 'darwin',
+    displayWidthPt: 1440,
+    update: { status: 'idle', availableVersion: null, progressPercent: null, error: null },
+    onPatch: () => {}, onBack: () => {}, onToast: () => {},
+  }))
+  assert.match(html, /aria-label="Live menu bar preview"/)
+  assert.match(html, /Pin a provider from Usage/)
+  assert.match(html, /macOS reserves the outer spacing\. Tokmon controls everything inside the bracket\./)
+  assert.match(html, /role="radiogroup" aria-label="Menu bar layout mode"/)
+  assert.match(html, /role="radio" aria-checked="true" data-active="true">Auto</)
+  assert.match(html, />Auto<\/button>/)
+  assert.match(html, />Custom<\/button>/)
+  assert.match(html, /Show provider mark/)
+  assert.match(html, /Show value/)
+  assert.match(html, /Show progress/)
+  assert.match(html, /Menu bar content/)
+  assert.match(html, /Tokens today/)
+  assert.match(html, />Comfortable<\/button>/)
+  assert.match(html, />Compact<\/button>/)
+  assert.match(html, />Tight<\/button>/)
+  assert.match(html, /Reset Menu Bar/)
+
+  const customConfig = patchMenuBarPresentation(config, { mode: 'custom' })
+  const customHtml = renderToStaticMarkup(createElement(MenuBarSettings, {
+    config: customConfig, snapshot: snapshot([account({})]), pins: [], platform: 'win32',
+    displayWidthPt: 1280,
+    update: { status: 'idle', availableVersion: null, progressPercent: null, error: null },
+    onPatch: () => {}, onBack: () => {}, onToast: () => {},
+  }))
+  assert.match(customHtml, /The composed strip is a macOS feature/)
+  assert.match(customHtml, /Custom menu bar spacing/)
+  assert.match(customHtml, />Edge</)
+  assert.match(customHtml, />Mark to value</)
+  assert.match(customHtml, />Between providers</)
+  assert.match(customHtml, /1\.0 pt/)
+  assert.match(customHtml, /3\.0 pt/)
+  assert.match(customHtml, /8\.0 pt/)
+})
+
+test('menu bar element updates mirror legacy value state and prevent an invisible strip', () => {
+  const withoutValue = setMenuBarElementVisibility(config, 'value', false)
+  assert.equal(withoutValue.tray.menuBar.elements.value, false)
+  assert.equal(withoutValue.tray.showMenuBarText, false)
+
+  const markOnly: Config = {
+    ...config,
+    tray: {
+      ...config.tray,
+      menuBar: {
+        ...config.tray.menuBar,
+        elements: { providerMark: true, value: false, progress: false },
+      },
+      showMenuBarText: false,
+    },
+  }
+  assert.equal(setMenuBarElementVisibility(markOnly, 'providerMark', false), markOnly)
+  const html = renderToStaticMarkup(createElement(MenuBarSettings, {
+    config: markOnly, snapshot: snapshot([account({})]), pins: [], platform: 'darwin',
+    displayWidthPt: 1440,
+    update: { status: 'idle', availableVersion: null, progressPercent: null, error: null },
+    onPatch: () => {}, onBack: () => {}, onToast: () => {},
+  }))
+  assert.match(html, /aria-label="Show provider mark" disabled=""/)
+})
+
+test('menu bar builder patches mode, density, custom spacing, and value without losing sibling fields', () => {
+  const custom = patchMenuBarPresentation(config, { mode: 'custom', density: 'tight' })
+  assert.equal(custom.tray.menuBar.mode, 'custom')
+  assert.equal(custom.tray.menuBar.density, 'tight')
+  assert.deepEqual(custom.tray.menuBar.elements, config.tray.menuBar.elements)
+
+  const spaced = patchMenuBarPresentation(custom, { customSpacing: { edgePaddingPt: 2.5 } })
+  assert.equal(spaced.tray.menuBar.customSpacing.edgePaddingPt, 2.5)
+  assert.equal(spaced.tray.menuBar.customSpacing.markValueGapPt, config.tray.menuBar.customSpacing.markValueGapPt)
+  assert.equal(spaced.tray.menuBar.customSpacing.providerGapPt, config.tray.menuBar.customSpacing.providerGapPt)
+
+  const tokens = setMenuBarValue(spaced, 'todayTokens')
+  assert.equal(tokens.tray.menuBarValue, 'todayTokens')
+  assert.deepEqual(tokens.tray.menuBar, spaced.tray.menuBar)
+})
+
+test('resetting menu bar presentation preserves pins and the selected value', () => {
+  const custom: Config = {
+    ...config,
+    tray: {
+      ...config.tray,
+      pinnedProviders: ['claude', 'codex'],
+      menuBarValue: 'todayTokens',
+      menuBar: {
+        ...config.tray.menuBar,
+        mode: 'custom', density: 'tight',
+        elements: { providerMark: false, value: false, progress: true },
+        customSpacing: { edgePaddingPt: 6, markValueGapPt: 8, providerGapPt: 16 },
+      },
+      showMenuBarText: false,
+    },
+  }
+  const reset = resetMenuBarPresentation(custom)
+  assert.deepEqual(reset.tray.menuBar, DEFAULTS.tray.menuBar)
+  assert.deepEqual(reset.tray.pinnedProviders, ['claude', 'codex'])
+  assert.equal(reset.tray.menuBarValue, 'todayTokens')
+  assert.equal(reset.tray.showMenuBarText, true)
 })
 
 test('compact theme page exposes the shared catalog while keeping Phosphor dark-only', () => {

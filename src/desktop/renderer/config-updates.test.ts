@@ -23,7 +23,8 @@ function state(revision: number, privacyMode: boolean, snapshotMode?: boolean): 
   return {
     appName: 'Tokmon', appVersion: 'test', update: { status: 'disabled', availableVersion: null, progressPercent: null, error: null },
     snapshot: snapshotMode === undefined ? null : snapshot(snapshotMode), config: { revision, privacyMode } as Config, configRevision: revision,
-    connection: 'live', daemon: null, platform: 'darwin', systemMode: 'dark', activeAccountIds: [], error: null,
+    connection: 'live', daemon: null, platform: 'darwin', displayWidthPt: 1440,
+    systemMode: 'dark', activeAccountIds: [], error: null,
   }
 }
 

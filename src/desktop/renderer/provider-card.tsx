@@ -81,15 +81,32 @@ function MeterRow({ quota, subject, dimmed, now }: { quota: Quota; subject: stri
   )
 }
 
-function PinToggle({ pinned, name, deny, onToggle }: {
-  pinned: boolean; name: string; deny: boolean; onToggle(): void
+function PinToggle({ pinned, pinPosition, pinCount, name, deny, onToggle }: {
+  pinned: boolean
+  pinPosition?: number | null
+  pinCount: number
+  name: string
+  deny: boolean
+  onToggle(replaceSecond: boolean): void
 }) {
+  const label = pinned && pinPosition
+    ? `Unpin ${name} from position ${pinPosition} in the menu bar`
+    : pinCount >= 2
+      ? `Pin ${name} by replacing position 2 in the menu bar with Option-click or Option-Enter`
+      : `Pin ${name} to position ${pinCount + 1} in the menu bar`
   return (
     <button
       type="button" className="pin" data-pinned={pinned} data-deny={deny} aria-pressed={pinned}
-      title={pinned ? `Unpin ${name} from the menu bar` : `Pin ${name} to the menu bar`}
-      aria-label={pinned ? `Unpin ${name} from the menu bar` : `Pin ${name} to the menu bar`}
-      onClick={event => { event.stopPropagation(); onToggle() }}
+      title={label}
+      aria-label={label}
+      onClick={event => { event.stopPropagation(); onToggle(event.altKey) }}
+      onKeyDown={event => {
+        if (event.altKey && event.key === 'Enter') {
+          event.preventDefault()
+          event.stopPropagation()
+          onToggle(true)
+        }
+      }}
     >
       <svg viewBox="0 0 16 16" aria-hidden="true" width={16} height={16} focusable="false">
         <path
@@ -98,6 +115,7 @@ function PinToggle({ pinned, name, deny, onToggle }: {
           strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"
         />
       </svg>
+      <span className="pin-position" aria-hidden="true">{pinPosition ?? ''}</span>
     </button>
   )
 }
@@ -146,17 +164,19 @@ interface ProviderCardProps {
   snapshot: WebSnapshot
   config: Config
   pinned: boolean
+  pinPosition: number | null
+  pinCount?: number
   expanded: boolean
   deny: boolean
   refreshing: boolean
   now: number
   onToggle(): void
-  onPin(): void
+  onPin(replaceSecond: boolean): void
   onArrow(direction: 'up' | 'down'): void
 }
 
 export function ProviderCard({
-  group, snapshot, config, pinned, expanded, deny, refreshing, now, onToggle, onPin, onArrow,
+  group, snapshot, config, pinned, pinPosition = null, pinCount = 0, expanded, deny, refreshing, now, onToggle, onPin, onArrow,
 }: ProviderCardProps) {
   const activeTimeoutMin = config.tray.activeTimeoutMin
   const rep = providerRepresentative(group.accounts, activeTimeoutMin, now)
@@ -239,7 +259,7 @@ export function ProviderCard({
             </span>
             <Chevron expanded={expanded} />
           </button>
-          <PinToggle pinned={pinned} name={group.name} deny={deny} onToggle={onPin} />
+          <PinToggle pinned={pinned} pinPosition={pinPosition} pinCount={pinCount} name={group.name} deny={deny} onToggle={onPin} />
         </div>
 
         <div className="provider-detail-wrap" data-expanded={expanded}>

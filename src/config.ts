@@ -4,11 +4,15 @@ import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { DEFAULTS, normalizeConfig, repairConfig, type Config, type Account } from './config-schema'
 
-export type { Config, Account, TrayConfig, AccountDetectionConfig, DetectedAccountRef, DesktopGraphRange } from './config-schema'
+export type {
+  Config, Account, TrayConfig, MenuBarConfig, MenuBarMode, MenuBarDensity,
+  AccountDetectionConfig, DetectedAccountRef, DesktopGraphRange,
+} from './config-schema'
 export type { TrackedAccountRow, TrackedAccountSource } from './config-schema'
 export {
   DEFAULTS,
   DEFAULT_TRAY_CONFIG,
+  DEFAULT_MENU_BAR_CONFIG,
   DEFAULT_ACCOUNT_DETECTION_CONFIG,
   DESKTOP_GRAPH_RANGES,
   ACCENT_COLORS,
@@ -17,11 +21,13 @@ export {
   PROVIDER_META,
   getTrackedAccountRows,
   providerDetectionEnabled,
+  setProviderTrackingEnabled,
   setProviderDetectionEnabled,
   setDetectedAccountExcluded,
   clampNum,
   normalizeConfig,
   repairConfig,
+  repairMenuBarConfig,
   normalizeAllowedHost,
   normalizeAllowedHosts,
   slugify,

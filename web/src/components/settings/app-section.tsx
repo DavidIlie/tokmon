@@ -1,12 +1,12 @@
-import { DESKTOP_GRAPH_RANGES, type Config, type WebSnapshot } from '@shared'
-import { Check, ChevronDown, ChevronUp } from '../icons'
+import { DESKTOP_GRAPH_RANGES, type Config, type MenuBarConfig, type WebSnapshot } from '@shared'
 import { Segmented } from '../ui/controls'
 import { FOCUS_RING } from '../ui/primitives'
-import { FieldRow, IconBtn, NumberStepper, Section } from './primitives'
+import { FieldRow, NumberStepper, Section } from './primitives'
 import {
   cleanProviderSelection,
-  MAX_PINNED_PROVIDERS,
-  moveProviderSelection,
+  defaultMenuBarPresentation,
+  type MenuBarElement,
+  toggleMenuBarElement,
   toggleProviderSelection,
 } from './app-section.logic'
 
@@ -19,24 +19,39 @@ interface AppSectionProps {
 export function AppSection({ draft, patch, snapshot }: AppSectionProps) {
   const providers = snapshot?.providers ?? []
   const known = new Set(providers.map(provider => provider.id as string))
-  const pinned = cleanProviderSelection(draft.tray.pinnedProviders, known, MAX_PINNED_PROVIDERS)
   const expanded = cleanProviderSelection(draft.desktop.expandedProviders, known)
-
-  const setPins = (next: string[]) => patch(config => ({
-    ...config,
-    tray: {
-      ...config.tray,
-      pinnedProviders: next,
-      pins: [],
-      pinnedAccount: null,
-    },
-  }))
 
   const toggleExpanded = (providerId: string) => patch(config => ({
     ...config,
     desktop: {
       ...config.desktop,
       expandedProviders: toggleProviderSelection(config.desktop.expandedProviders, providerId, known),
+    },
+  }))
+
+  const setMenuBarElement = (element: MenuBarElement) => patch(config => {
+    const elements = toggleMenuBarElement(config.tray.menuBar.elements, element)
+    return {
+      ...config,
+      tray: {
+        ...config.tray,
+        showMenuBarText: elements.value,
+        menuBar: { ...config.tray.menuBar, elements },
+      },
+    }
+  })
+
+  const setSpacing = (
+    key: keyof MenuBarConfig['customSpacing'],
+    value: number,
+  ) => patch(config => ({
+    ...config,
+    tray: {
+      ...config.tray,
+      menuBar: {
+        ...config.tray.menuBar,
+        customSpacing: { ...config.tray.menuBar.customSpacing, [key]: value },
+      },
     },
   }))
 
@@ -57,22 +72,6 @@ export function AppSection({ draft, patch, snapshot }: AppSectionProps) {
             options={[{ value: 'smartHeadroom', label: 'smart' }, { value: 'tightestRemaining', label: 'tightest' }]}
             value={draft.tray.displayMetric}
             onChange={displayMetric => patch(config => ({ ...config, tray: { ...config.tray, displayMetric } }))}
-          />
-        </FieldRow>
-        <FieldRow label="Menu bar value" hint="show usage percentage or today's local token total">
-          <Segmented<'usage' | 'todayTokens'>
-            size="xs" ariaLabel="menu bar value"
-            options={[{ value: 'usage', label: 'usage' }, { value: 'todayTokens', label: 'tokens today' }]}
-            value={draft.tray.menuBarValue}
-            onChange={menuBarValue => patch(config => ({ ...config, tray: { ...config.tray, menuBarValue } }))}
-          />
-        </FieldRow>
-        <FieldRow label="Show value in menu bar" hint="hide the number and keep the provider mark">
-          <Segmented<'on' | 'off'>
-            size="xs" ariaLabel="show menu bar value"
-            options={[{ value: 'on', label: 'on' }, { value: 'off', label: 'off' }]}
-            value={draft.tray.showMenuBarText ? 'on' : 'off'}
-            onChange={value => patch(config => ({ ...config, tray: { ...config.tray, showMenuBarText: value === 'on' } }))}
           />
         </FieldRow>
         <FieldRow label="Active window" hint="recent activity used by smart headroom">
@@ -105,40 +104,90 @@ export function AppSection({ draft, patch, snapshot }: AppSectionProps) {
         </FieldRow>
       </Section>
 
-      <Section title="Menu bar providers" right={<span className="text-[10px] text-fg-faint">{pinned.length}/{MAX_PINNED_PROVIDERS} pinned</span>}>
-        {providers.length === 0 ? (
-          <p className="rounded border border-line bg-bg-2/50 px-3 py-3 text-xs text-fg-faint">Waiting for provider data…</p>
-        ) : (
-          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-            {providers.map(provider => {
-              const index = pinned.indexOf(provider.id)
-              const selected = index >= 0
-              const full = !selected && pinned.length >= MAX_PINNED_PROVIDERS
+      <Section title="macOS menu bar" right={
+        <button
+          type="button"
+          onClick={() => patch(config => {
+            const menuBar = defaultMenuBarPresentation()
+            return {
+              ...config,
+              tray: { ...config.tray, menuBar, showMenuBarText: menuBar.elements.value },
+            }
+          })}
+          className={`rounded border border-line px-2 py-1 text-[10px] text-fg-faint transition hover:border-line-2 hover:text-fg ${FOCUS_RING}`}
+        >Reset presentation</button>
+      }>
+        <p className="mb-2.5 text-[11px] text-fg-faint">
+          Controls the native menu-bar item. Pin providers from their cards in the desktop overview.
+        </p>
+        <FieldRow label="Layout" hint="auto tightens spacing on smaller displays">
+          <Segmented<'auto' | 'custom'>
+            size="xs" ariaLabel="menu bar layout mode"
+            options={[{ value: 'auto', label: 'auto' }, { value: 'custom', label: 'custom' }]}
+            value={draft.tray.menuBar.mode}
+            onChange={mode => patch(config => ({
+              ...config,
+              tray: { ...config.tray, menuBar: { ...config.tray.menuBar, mode } },
+            }))}
+          />
+        </FieldRow>
+        <FieldRow label="Elements" hint="choose at least one">
+          <div className="flex items-center overflow-hidden rounded border border-line" role="group" aria-label="menu bar elements">
+            {([
+              ['providerMark', 'provider mark'],
+              ['value', 'value'],
+              ['progress', 'progress'],
+            ] as const).map(([element, label]) => {
+              const active = draft.tray.menuBar.elements[element]
+              const last = active && Object.values(draft.tray.menuBar.elements).filter(Boolean).length === 1
               return (
-                <div key={provider.id} className={`flex items-center gap-2 rounded border px-2.5 py-2 ${selected ? 'border-line-2 bg-bg-2' : 'border-line bg-bg-1'}`}>
-                  <button
-                    type="button" role="checkbox" aria-checked={selected} disabled={full}
-                    aria-label={`${selected ? 'Unpin' : 'Pin'} ${provider.name}`}
-                    onClick={() => setPins(toggleProviderSelection(pinned, provider.id, known, MAX_PINNED_PROVIDERS))}
-                    className={`inline-flex size-5 shrink-0 items-center justify-center rounded border text-[10px] transition disabled:cursor-not-allowed disabled:opacity-35 ${FOCUS_RING}`}
-                    style={{ borderColor: selected ? provider.color : 'var(--color-line-2)', color: provider.color }}
-                  >
-                    {selected ? index + 1 : <Check className="size-3 opacity-0" />}
-                  </button>
-                  <span className="size-2 shrink-0 rounded-full" style={{ background: provider.color }} aria-hidden />
-                  <span className="min-w-0 flex-1 truncate text-xs text-fg">{provider.name}</span>
-                  {selected && (
-                    <span className="flex shrink-0 items-center">
-                      <IconBtn label={`Move ${provider.name} left`} disabled={index === 0} onClick={() => setPins(moveProviderSelection(pinned, provider.id, -1))}><ChevronUp className="size-3.5 -rotate-90" /></IconBtn>
-                      <IconBtn label={`Move ${provider.name} right`} disabled={index === pinned.length - 1} onClick={() => setPins(moveProviderSelection(pinned, provider.id, 1))}><ChevronDown className="size-3.5 -rotate-90" /></IconBtn>
-                    </span>
-                  )}
-                </div>
+                <button
+                  key={element} type="button" aria-pressed={active} disabled={last}
+                  onClick={() => setMenuBarElement(element)}
+                  className={`px-1.5 py-0.5 text-[10px] transition disabled:cursor-not-allowed ${FOCUS_RING} ${
+                    active ? 'bg-bg-3 text-accent' : 'text-fg-faint hover:text-fg'
+                  }`}
+                >{label}</button>
               )
             })}
           </div>
-        )}
-        <p className="mt-2 text-[11px] text-fg-faint">The numbered order matches the menu bar from left to right.</p>
+        </FieldRow>
+        <FieldRow label="Value" hint="usage percentage or today's local tokens">
+          <Segmented<'usage' | 'todayTokens'>
+            size="xs" ariaLabel="menu bar value"
+            options={[{ value: 'usage', label: 'usage' }, { value: 'todayTokens', label: 'tokens today' }]}
+            value={draft.tray.menuBarValue}
+            onChange={menuBarValue => patch(config => ({ ...config, tray: { ...config.tray, menuBarValue } }))}
+          />
+        </FieldRow>
+        <FieldRow label="Density" hint="sets the baseline space between providers">
+          <Segmented<'comfortable' | 'compact' | 'tight'>
+            size="xs" ariaLabel="menu bar density"
+            options={[
+              { value: 'comfortable', label: 'comfortable' },
+              { value: 'compact', label: 'compact' },
+              { value: 'tight', label: 'tight' },
+            ]}
+            value={draft.tray.menuBar.density}
+            onChange={density => patch(config => ({
+              ...config,
+              tray: { ...config.tray, menuBar: { ...config.tray.menuBar, density } },
+            }))}
+          />
+        </FieldRow>
+        {draft.tray.menuBar.mode === 'custom' ? (
+          <div className="mt-1 border-t border-line pt-1">
+            <FieldRow label="Edge padding" hint="inside Tokmon's rendered menu-bar item">
+              <SpacingStepper label="Edge padding" value={draft.tray.menuBar.customSpacing.edgePaddingPt} max={6} onChange={value => setSpacing('edgePaddingPt', value)} />
+            </FieldRow>
+            <FieldRow label="Mark to value" hint="space between provider mark and value">
+              <SpacingStepper label="Mark to value gap" value={draft.tray.menuBar.customSpacing.markValueGapPt} max={8} onChange={value => setSpacing('markValueGapPt', value)} />
+            </FieldRow>
+            <FieldRow label="Provider gap" hint="space between pinned providers">
+              <SpacingStepper label="Provider gap" value={draft.tray.menuBar.customSpacing.providerGapPt} max={16} onChange={value => setSpacing('providerGapPt', value)} />
+            </FieldRow>
+          </div>
+        ) : null}
       </Section>
 
       <Section title="Popover defaults">
@@ -160,5 +209,31 @@ export function AppSection({ draft, patch, snapshot }: AppSectionProps) {
         </div>
       </Section>
     </>
+  )
+}
+
+function SpacingStepper({ label, value, max, onChange }: {
+  label: string
+  value: number
+  max: number
+  onChange: (value: number) => void
+}) {
+  const change = (next: number) => onChange(Math.min(max, Math.max(0, Math.round(next * 2) / 2)))
+  return (
+    <div className="flex items-center overflow-hidden rounded border border-line">
+      <button
+        type="button" aria-label={`Decrease ${label}`} disabled={value <= 0}
+        onClick={() => change(value - 0.5)}
+        className={`px-2 py-0.5 text-xs text-fg-dim transition hover:bg-bg-3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-35 ${FOCUS_RING}`}
+      >−</button>
+      <output aria-label={`${label} in points`} className="tnum min-w-12 border-x border-line bg-bg-2 px-1.5 py-0.5 text-center text-[10px] text-fg">
+        {value.toFixed(1)}pt
+      </output>
+      <button
+        type="button" aria-label={`Increase ${label}`} disabled={value >= max}
+        onClick={() => change(value + 0.5)}
+        className={`px-2 py-0.5 text-xs text-fg-dim transition hover:bg-bg-3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-35 ${FOCUS_RING}`}
+      >+</button>
+    </div>
   )
 }

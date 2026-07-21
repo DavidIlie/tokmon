@@ -21,7 +21,8 @@ export type { Severity } from '../usage-semantics'
 export { severity, severityTag, accountIdentityText } from '../usage-semantics'
 
 export type {
-  Config, Account, TrayConfig, AccountDetectionConfig, DetectedAccountRef, DesktopGraphRange,
+  Config, Account, TrayConfig, MenuBarConfig, MenuBarMode, MenuBarDensity,
+  AccountDetectionConfig, DetectedAccountRef, DesktopGraphRange,
   TrackedAccountRow, TrackedAccountSource,
 } from '../config-schema'
 export type { TrackedAccountCandidate } from '../config-schema'
@@ -30,8 +31,10 @@ export {
   normalizeAllowedHost,
   normalizeAllowedHosts,
   repairConfig,
+  repairMenuBarConfig,
   DEFAULTS,
   DEFAULT_TRAY_CONFIG,
+  DEFAULT_MENU_BAR_CONFIG,
   DEFAULT_ACCOUNT_DETECTION_CONFIG,
   DESKTOP_GRAPH_RANGES,
   generateAccountId,
@@ -42,6 +45,7 @@ export {
   PROVIDER_ORDER,
   getTrackedAccountRows,
   providerDetectionEnabled,
+  setProviderTrackingEnabled,
   setProviderDetectionEnabled,
   setDetectedAccountExcluded,
   sanitizeTyped,

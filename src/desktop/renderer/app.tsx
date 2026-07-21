@@ -6,11 +6,12 @@ import { readExpandedProviders, writeExpandedProviders } from './disclosure-stat
 import {
   groupByProvider,
   MAX_PINS,
+  readProviderPins,
   resolveProviderPins,
   togglePin,
 } from './presentation'
 import { ProviderCard } from './provider-card'
-import { ColdState, DesktopSettings, DetectionSettings, EmptyState, Footer, SettingsHub, ThemeSettings, TotalsBar, UpdateReady } from './desktop-chrome'
+import { ColdState, DesktopSettings, EmptyState, Footer, MenuBarSettings, ProvidersSettings, SettingsHub, ThemeSettings, TotalsBar, UpdateReady } from './desktop-chrome'
 import { TrayStripPainter } from './tray-strip-painter'
 import { OptimisticConfigUpdates } from './config-updates'
 import { applyDesktopTheme } from './theme'
@@ -23,6 +24,29 @@ export function measuredPopoverHeight(contentHeight: number, chromeHeights: read
   return Math.ceil(contentHeight + chromeHeights.reduce((total, height) => total + height, 0))
 }
 
+export function pinProviderFromCard(
+  pins: readonly string[],
+  providerId: string,
+  replaceSecond = false,
+): { pins: string[]; rejected: boolean; replaced: boolean } {
+  if (replaceSecond && !pins.includes(providerId) && pins.length >= MAX_PINS) {
+    return { pins: [pins[0]!, providerId], rejected: false, replaced: true }
+  }
+  const result = togglePin(pins, providerId)
+  return { ...result, replaced: false }
+}
+
+/** Keep disabled or temporarily unavailable providers in their saved slots. */
+export function pinProviderPreservingStoredPins(
+  storedPins: readonly string[],
+  effectivePins: readonly string[],
+  providerId: string,
+  replaceSecond = false,
+): { pins: string[]; rejected: boolean; replaced: boolean } {
+  const uniqueStored = [...new Set(storedPins.filter(Boolean))].slice(0, MAX_PINS)
+  return pinProviderFromCard(uniqueStored.length > 0 ? uniqueStored : effectivePins, providerId, replaceSecond)
+}
+
 // ── App ──────────────────────────────────────────────────────────────────────
 export function App() {
   const [state, setState] = useState<DesktopState | null>(null)
@@ -30,7 +54,7 @@ export function App() {
   const [now, setNow] = useState(() => Date.now())
   const [toast, setToast] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
-  const [surface, setSurface] = useState<'usage' | 'settings' | 'theme' | 'desktop' | 'detection'>('usage')
+  const [surface, setSurface] = useState<'usage' | 'settings' | 'theme' | 'menubar' | 'providers' | 'desktop'>('usage')
   const [denyProvider, setDenyProvider] = useState<string | null>(null)
   const [scrollEdges, setScrollEdges] = useState({ up: false, down: false })
   const frame = useRef<HTMLDivElement>(null)
@@ -102,6 +126,11 @@ export function App() {
 
   const groups = useMemo(() => (snapshot ? groupByProvider(snapshot) : []), [snapshot])
   const pins = useMemo(() => (config && snapshot ? resolveProviderPins(config, snapshot) : []), [config, snapshot])
+  const storedPins = useMemo(() => {
+    if (!config) return pins
+    const explicit = readProviderPins(config)
+    return explicit.length > 0 ? [...new Set(explicit)].slice(0, MAX_PINS) : pins
+  }, [config, pins])
 
   const flashToast = useCallback((message: string) => {
     setToast(message)
@@ -227,10 +256,19 @@ export function App() {
     return () => { resize.disconnect(); mutation.disconnect() }
   }, [state?.connection, groups.length, updateScrollEdges])
 
-  const onPinProvider = useCallback((providerId: string) => {
-    const result = togglePin(pins, providerId)
+  const onPinProvider = useCallback((providerId: string, replaceSecond = false) => {
+    const result = pinProviderPreservingStoredPins(storedPins, pins, providerId, replaceSecond)
+    if (result.replaced) {
+      void updateConfig(next => ({
+        ...next,
+        tray: { ...next.tray, pinnedProviders: result.pins, pins: [], pinnedAccount: null },
+      }))
+      const name = groups.find(group => group.providerId === providerId)?.name ?? providerId
+      flashToast(`${name} replaced menu bar position 2.`)
+      return
+    }
     if (result.rejected) {
-      flashToast(`Up to ${MAX_PINS} providers in the menu bar.`)
+      flashToast(`Up to ${MAX_PINS} providers. Option-click to replace position 2.`)
       setDenyProvider(providerId)
       clearTimeout(denyTimer.current)
       denyTimer.current = setTimeout(() => setDenyProvider(null), 360)
@@ -240,7 +278,7 @@ export function App() {
       ...next,
       tray: { ...next.tray, pinnedProviders: result.pins, pins: [], pinnedAccount: null },
     }))
-  }, [pins, flashToast, updateConfig])
+  }, [storedPins, pins, groups, flashToast, updateConfig])
 
   const onArrow = useCallback((providerId: string, direction: 'up' | 'down') => {
     const root = frame.current
@@ -264,7 +302,7 @@ export function App() {
       const target = event.target as HTMLElement | null
       const editable = target?.matches('input, textarea, select, [contenteditable="true"]') === true
       if (event.key === 'Escape') {
-        if (surface === 'theme' || surface === 'desktop' || surface === 'detection') setSurface('settings')
+        if (surface === 'theme' || surface === 'menubar' || surface === 'providers' || surface === 'desktop') setSurface('settings')
         else if (surface === 'settings') setSurface('usage')
         else window.close()
         return
@@ -304,6 +342,8 @@ export function App() {
 
   const ready = snapshot && config
   const hasAccounts = (snapshot?.accounts.length ?? 0) > 0
+  const displayWidthPt = state?.displayWidthPt ?? window.screen?.availWidth ?? 1440
+  const updateState = state?.update ?? { status: 'disabled' as const, availableVersion: null, progressPercent: null, error: null }
 
   return (
     <main
@@ -311,12 +351,29 @@ export function App() {
       data-can-scroll-up={scrollEdges.up} data-can-scroll-down={scrollEdges.down}
       role="dialog" aria-label="Tokmon usage"
     >
+      {ready && (
+        <TrayStripPainter
+          snapshot={snapshot} config={config} pins={pins} platform={state?.platform ?? ''}
+          update={updateState} displayWidthPt={displayWidthPt}
+        />
+      )}
       {!ready
         ? <ColdState state={state} />
         : surface === 'settings'
-          ? <SettingsHub config={config} onBack={() => setSurface('usage')} onTheme={() => setSurface('theme')} onDesktop={() => setSurface('desktop')} onDetection={() => setSurface('detection')} />
+          ? <SettingsHub
+              config={config} onBack={() => setSurface('usage')}
+              onTheme={() => setSurface('theme')} onMenuBar={() => setSurface('menubar')}
+              onProviders={() => setSurface('providers')} onDesktop={() => setSurface('desktop')}
+            />
         : surface === 'theme'
           ? <ThemeSettings config={config} systemMode={state?.systemMode ?? 'dark'} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')} />
+        : surface === 'menubar'
+          ? <MenuBarSettings
+              config={config} snapshot={snapshot} pins={pins} platform={state?.platform ?? ''}
+              displayWidthPt={displayWidthPt} update={updateState}
+              onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')}
+              onToast={flashToast}
+            />
         : surface === 'desktop'
           ? <DesktopSettings
               config={config} groups={groups}
@@ -328,8 +385,8 @@ export function App() {
               onCheckUpdates={() => { void checkForUpdates() }}
               onQuit={() => { void window.tokmon.quit() }}
             />
-        : surface === 'detection'
-          ? <DetectionSettings config={config} snapshot={snapshot} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')} />
+        : surface === 'providers'
+          ? <ProvidersSettings config={config} snapshot={snapshot} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')} />
         : !hasAccounts
           ? <EmptyState onDashboard={() => openDashboard('/settings')} />
           : (
@@ -341,10 +398,12 @@ export function App() {
                 {groups.map(group => (
                   <ProviderCard
                     key={group.providerId} group={group} snapshot={snapshot} config={config}
-                    pinned={pins.includes(group.providerId)} expanded={expanded.has(group.providerId)}
+                    pinned={pins.includes(group.providerId)} pinPosition={pins.indexOf(group.providerId) >= 0 ? pins.indexOf(group.providerId) + 1 : null}
+                    pinCount={storedPins.length}
+                    expanded={expanded.has(group.providerId)}
                     deny={denyProvider === group.providerId} refreshing={refreshing} now={now}
                     onToggle={() => onToggleProvider(group.providerId)}
-                    onPin={() => onPinProvider(group.providerId)}
+                    onPin={replaceSecond => onPinProvider(group.providerId, replaceSecond)}
                     onArrow={direction => onArrow(group.providerId, direction)}
                   />
                 ))}
@@ -352,15 +411,11 @@ export function App() {
                   <p className="pin-hint">Pin up to {MAX_PINS} providers to the menu bar.</p>
                 )}
               </div>
-              <TrayStripPainter
-                snapshot={snapshot} config={config} pins={pins} platform={state?.platform ?? ''} now={now}
-                update={state?.update ?? { status: 'disabled', availableVersion: null, progressPercent: null, error: null }}
-              />
             </>
           )}
       {surface === 'usage' && snapshot && <TotalsBar snapshot={snapshot} now={now} />}
       <UpdateReady
-        update={state?.update ?? { status: 'disabled', availableVersion: null, progressPercent: null, error: null }}
+        update={updateState}
         currentVersion={state?.appVersion ?? ''}
         onInstall={() => void window.tokmon.installUpdate()}
         onCheck={() => void window.tokmon.checkForUpdates()}

@@ -60,6 +60,8 @@ test('every query command has focused help without starting the daemon', async (
   assert.match(queryHelp('snapshot'), /complete raw snapshot/)
   assert.match(await runQueryCommand('config', ['--json', '--compact']), /^\{"path":".+config\.json"\}\n$/)
   assert.match(queryHelp('config'), /summary-mode <smart\|tightest>/)
+  assert.match(queryHelp('config'), /menu-bar-elements <list>/)
+  assert.match(queryHelp('config'), /menu-bar-pins <ids\|none>\s+Deprecated/)
 })
 
 test('config path remains daemon-free and backward compatible', async () => {
@@ -89,6 +91,10 @@ test('config get reports daemon-owned app preferences and closes its client', as
       ...DEFAULTS.tray,
       pinnedProviders: ['claude', 'codex'],
       showMenuBarText: false,
+      menuBar: {
+        ...DEFAULTS.tray.menuBar,
+        elements: { ...DEFAULTS.tray.menuBar.elements, value: false },
+      },
       displayMetric: 'tightestRemaining',
       activeTimeoutMin: 22,
       launchAtLogin: true,
@@ -103,10 +109,17 @@ test('config get reports daemon-owned app preferences and closes its client', as
     menuBarPins: ['claude', 'codex'],
     menuBarText: 'off',
     menuBarValue: 'usage',
+    menuBarMode: 'auto',
+    menuBarElements: ['mark'],
+    menuBarDensity: 'comfortable',
+    menuBarEdgePaddingPt: 1,
+    menuBarMarkValueGapPt: 3,
+    menuBarProviderGapPt: 8,
     summaryMode: 'tightest',
     expandedProviders: ['cursor'],
     activeWindowMinutes: 22,
     graphRangeDays: 14,
+    enabledProviders: [...PROVIDER_IDS],
     autoDetect: 'on',
     autoDetectProviders: [...PROVIDER_IDS],
     launchAtLogin: 'on',
@@ -117,7 +130,10 @@ test('config get reports daemon-owned app preferences and closes its client', as
   const humanHarness = configHarness()
   const human = await runQueryCommand('config', ['get'], humanHarness)
   assert.match(human, /^privacy\s+on$/m)
-  assert.match(human, /^menu-bar-pins\s+none$/m)
+  assert.doesNotMatch(human, /^menu-bar-pins\s+/m)
+  assert.match(human, /^menu-bar-mode\s+auto$/m)
+  assert.match(human, /^menu-bar-elements\s+mark,value$/m)
+  assert.match(human, /^menu-bar-edge-padding\s+1pt$/m)
   assert.match(human, /^summary-mode\s+smart$/m)
 })
 
@@ -131,10 +147,17 @@ test('config set supports every desktop preference through daemon CAS', async ()
   assert.equal(await run('menu-bar-pins', 'claude,codex'), 'menu-bar-pins claude,codex\n')
   assert.equal(await run('menu-bar-text', 'off'), 'menu-bar-text off\n')
   assert.equal(await run('menu-bar-value', 'tokens-today'), 'menu-bar-value tokens-today\n')
+  assert.equal(await run('menu-bar-mode', 'custom'), 'menu-bar-mode custom\n')
+  assert.equal(await run('menu-bar-elements', 'mark,progress'), 'menu-bar-elements mark,progress\n')
+  assert.equal(await run('menu-bar-density', 'tight'), 'menu-bar-density tight\n')
+  assert.equal(await run('menu-bar-edge-padding', '0.5'), 'menu-bar-edge-padding 0.5\n')
+  assert.equal(await run('menu-bar-mark-value-gap', '2.5'), 'menu-bar-mark-value-gap 2.5\n')
+  assert.equal(await run('menu-bar-provider-gap', '4'), 'menu-bar-provider-gap 4\n')
   assert.equal(await run('summary-mode', 'tightest'), 'summary-mode tightest\n')
   assert.equal(await run('expanded-providers', 'claude,cursor,codex'), 'expanded-providers claude,cursor,codex\n')
   assert.equal(await run('active-window', '17'), 'active-window 17\n')
   assert.equal(await run('graph-range', '30'), 'graph-range 30\n')
+  assert.equal(await run('enabled-providers', 'claude,codex'), 'enabled-providers claude,codex\n')
   assert.equal(await run('auto-detect', 'off'), 'auto-detect off\n')
   assert.equal(await run('auto-detect-providers', 'claude,codex'), 'auto-detect-providers claude,codex\n')
   const result = JSON.parse(await runQueryCommand(
@@ -142,7 +165,7 @@ test('config set supports every desktop preference through daemon CAS', async ()
     ['set', 'launch-at-login', 'on', '--json', '--compact'],
     harness,
   ))
-  assert.deepEqual(result, { setting: 'launch-at-login', value: 'on', revision: 12 })
+  assert.deepEqual(result, { setting: 'launch-at-login', value: 'on', revision: 19 })
 
   const config = harness.current()
   assert.equal(config.privacyMode, false)
@@ -151,15 +174,34 @@ test('config set supports every desktop preference through daemon CAS', async ()
   assert.deepEqual(config.tray.pins, [])
   assert.equal(config.tray.pinnedAccount, null)
   assert.equal(config.tray.showMenuBarText, false)
+  assert.equal(config.tray.menuBar.elements.value, false)
   assert.equal(config.tray.menuBarValue, 'todayTokens')
+  assert.equal(config.tray.menuBar.mode, 'custom')
+  assert.deepEqual(config.tray.menuBar.elements, { providerMark: true, value: false, progress: true })
+  assert.equal(config.tray.menuBar.density, 'tight')
+  assert.deepEqual(config.tray.menuBar.customSpacing, {
+    edgePaddingPt: 0.5,
+    markValueGapPt: 2.5,
+    providerGapPt: 4,
+  })
   assert.equal(config.tray.displayMetric, 'tightestRemaining')
   assert.deepEqual(config.desktop.expandedProviders, ['claude', 'cursor', 'codex'])
   assert.equal(config.tray.activeTimeoutMin, 17)
   assert.equal(config.desktop.graphRangeDays, 30)
+  assert.deepEqual(config.disabledProviders, PROVIDER_IDS.filter(id => id !== 'claude' && id !== 'codex'))
+  assert.deepEqual(config.knownProviders, [...PROVIDER_IDS])
   assert.equal(config.accountDetection.enabled, false)
   assert.deepEqual(config.accountDetection.disabledProviders, PROVIDER_IDS.filter(id => id !== 'claude' && id !== 'codex'))
   assert.equal(config.tray.launchAtLogin, true)
-  assert.equal(harness.closed(), 12)
+  assert.equal(harness.closed(), 19)
+})
+
+test('setting literal menu-bar spacing switches auto layout to custom', async () => {
+  const harness = configHarness()
+  assert.equal(harness.current().tray.menuBar.mode, 'auto')
+  await runQueryCommand('config', ['set', 'menu-bar-provider-gap', '3.5'], harness)
+  assert.equal(harness.current().tray.menuBar.mode, 'custom')
+  assert.equal(harness.current().tray.menuBar.customSpacing.providerGapPt, 3.5)
 })
 
 test('config set validates values before connecting', async () => {
@@ -175,14 +217,40 @@ test('config set validates values before connecting', async () => {
   await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-pins', 'claude,codex,cursor'], dependencies), /at most 2/)
   await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-pins', 'claude,wat'], dependencies), /unknown provider: wat/)
   await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-value', 'money'], dependencies), /usage or tokens-today/)
+  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-mode', 'manual'], dependencies), /auto or custom/)
+  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-elements', 'none'], dependencies), /at least one/)
+  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-elements', 'mark,logo'], dependencies), /unknown menu-bar element: logo/)
+  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-density', 'huge'], dependencies), /comfortable, compact, or tight/)
+  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-edge-padding', '6.5'], dependencies), /0 to 6/)
+  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-mark-value-gap', '2.25'], dependencies), /0.5pt increments/)
+  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-provider-gap', '16.5'], dependencies), /0 to 16/)
   await assert.rejects(runQueryCommand('config', ['set', 'expanded-providers', 'claude,,codex'], dependencies), /comma-separated/)
   await assert.rejects(runQueryCommand('config', ['set', 'summary-mode', 'average'], dependencies), /smart or tightest/)
   await assert.rejects(runQueryCommand('config', ['set', 'active-window', '0'], dependencies), /1 to 1440/)
   await assert.rejects(runQueryCommand('config', ['set', 'graph-range', '21'], dependencies), /7, 14, or 30/)
   await assert.rejects(runQueryCommand('config', ['set', 'auto-detect', 'maybe'], dependencies), /must be on or off/)
+  await assert.rejects(runQueryCommand('config', ['set', 'enabled-providers', 'claude,wat'], dependencies), /unknown provider: wat/)
   await assert.rejects(runQueryCommand('config', ['set', 'auto-detect-providers', 'claude,wat'], dependencies), /unknown provider: wat/)
   await assert.rejects(runQueryCommand('config', ['set', 'unknown', 'on'], dependencies), /usage: tokmon config set/)
   assert.equal(connects, 0)
+})
+
+test('deprecated menu-bar-text alias cannot hide the final visible element', async () => {
+  const harness = configHarness({
+    ...structuredClone(DEFAULTS),
+    tray: {
+      ...structuredClone(DEFAULTS.tray),
+      menuBar: {
+        ...structuredClone(DEFAULTS.tray.menuBar),
+        elements: { providerMark: false, value: true, progress: false },
+      },
+    },
+  })
+  await assert.rejects(
+    runQueryCommand('config', ['set', 'menu-bar-text', 'off'], harness),
+    /would hide every menu-bar element/,
+  )
+  assert.equal(harness.closed(), 1)
 })
 
 test('config set retries one conflict from fresh daemon state without losing remote fields', async () => {

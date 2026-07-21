@@ -13,8 +13,29 @@ export interface Account {
   color?: string
 }
 
+export type MenuBarMode = 'auto' | 'custom'
+export type MenuBarDensity = 'comfortable' | 'compact' | 'tight'
+
+export interface MenuBarConfig {
+  version: 1
+  mode: MenuBarMode
+  elements: {
+    providerMark: boolean
+    value: boolean
+    progress: boolean
+  }
+  density: MenuBarDensity
+  customSpacing: {
+    edgePaddingPt: number
+    markValueGapPt: number
+    providerGapPt: number
+  }
+}
+
 export interface TrayConfig {
   enabled: boolean
+  /** Builder-owned menu-bar presentation. `showMenuBarText` mirrors `elements.value`. */
+  menuBar: MenuBarConfig
   showMenuBarText: boolean
   menuBarValue: 'usage' | 'todayTokens'
   displayMetric: 'smartHeadroom' | 'tightestRemaining'
@@ -175,8 +196,25 @@ export interface TrackedAccountCandidate {
   color?: string | null
 }
 
+export const DEFAULT_MENU_BAR_CONFIG: MenuBarConfig = {
+  version: 1,
+  mode: 'auto',
+  elements: {
+    providerMark: true,
+    value: true,
+    progress: false,
+  },
+  density: 'comfortable',
+  customSpacing: {
+    edgePaddingPt: 1,
+    markValueGapPt: 3,
+    providerGapPt: 8,
+  },
+}
+
 export const DEFAULT_TRAY_CONFIG: TrayConfig = {
   enabled: true,
+  menuBar: DEFAULT_MENU_BAR_CONFIG,
   showMenuBarText: true,
   menuBarValue: 'usage',
   displayMetric: 'smartHeadroom',
@@ -365,6 +403,25 @@ export function providerDetectionEnabled(config: AccountDetectionConfig, provide
   return config.enabled && !config.disabledProviders.includes(providerId)
 }
 
+/**
+ * Enable or disable all tracking for one provider without discarding any of
+ * its account, desktop, menu-bar, or discovery preferences.
+ */
+export function setProviderTrackingEnabled(
+  config: Config,
+  providerId: ProviderId,
+  enabled: boolean,
+): Config {
+  const disabledProviders = config.disabledProviders.filter(id => id !== providerId)
+  return {
+    ...config,
+    knownProviders: config.knownProviders.includes(providerId)
+      ? config.knownProviders
+      : [...config.knownProviders, providerId],
+    disabledProviders: enabled ? disabledProviders : [...disabledProviders, providerId],
+  }
+}
+
 export function setProviderDetectionEnabled(
   config: AccountDetectionConfig,
   providerId: ProviderId,
@@ -400,6 +457,11 @@ function finiteInRange(v: unknown, fallback: number, min: number, max: number): 
   return typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : fallback
 }
 
+function halfPointInRange(v: unknown, fallback: number, min: number, max: number): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return fallback
+  return Math.min(max, Math.max(min, Math.round(v * 2) / 2))
+}
+
 export function isValidTimezone(tz: string): boolean {
   try {
     new Intl.DateTimeFormat('en-CA', { timeZone: tz })
@@ -422,6 +484,64 @@ function sameJson(a: unknown, b: unknown): boolean {
     return JSON.stringify(a) === JSON.stringify(b)
   } catch {
     return false
+  }
+}
+
+/** Normalize the additive menu-bar builder block, migrating the legacy value toggle when absent. */
+export function repairMenuBarConfig(
+  input: unknown,
+  legacyShowMenuBarText = DEFAULT_TRAY_CONFIG.showMenuBarText,
+): MenuBarConfig {
+  if (!isRecord(input)) {
+    return {
+      ...DEFAULT_MENU_BAR_CONFIG,
+      elements: {
+        ...DEFAULT_MENU_BAR_CONFIG.elements,
+        value: legacyShowMenuBarText,
+      },
+      customSpacing: { ...DEFAULT_MENU_BAR_CONFIG.customSpacing },
+    }
+  }
+
+  const elements = isRecord(input.elements) ? input.elements : {}
+  const spacing = isRecord(input.customSpacing) ? input.customSpacing : {}
+  return {
+    version: 1,
+    mode: input.mode === 'custom' ? 'custom' : 'auto',
+    elements: {
+      providerMark: typeof elements.providerMark === 'boolean'
+        ? elements.providerMark
+        : DEFAULT_MENU_BAR_CONFIG.elements.providerMark,
+      value: typeof elements.value === 'boolean'
+        ? elements.value
+        : DEFAULT_MENU_BAR_CONFIG.elements.value,
+      progress: typeof elements.progress === 'boolean'
+        ? elements.progress
+        : DEFAULT_MENU_BAR_CONFIG.elements.progress,
+    },
+    density: input.density === 'compact' || input.density === 'tight'
+      ? input.density
+      : DEFAULT_MENU_BAR_CONFIG.density,
+    customSpacing: {
+      edgePaddingPt: halfPointInRange(
+        spacing.edgePaddingPt,
+        DEFAULT_MENU_BAR_CONFIG.customSpacing.edgePaddingPt,
+        0,
+        6,
+      ),
+      markValueGapPt: halfPointInRange(
+        spacing.markValueGapPt,
+        DEFAULT_MENU_BAR_CONFIG.customSpacing.markValueGapPt,
+        0,
+        8,
+      ),
+      providerGapPt: halfPointInRange(
+        spacing.providerGapPt,
+        DEFAULT_MENU_BAR_CONFIG.customSpacing.providerGapPt,
+        0,
+        16,
+      ),
+    },
   }
 }
 
@@ -547,11 +667,15 @@ export function repairConfig(input: unknown): ConfigRepair {
 
   const rawTray = isRecord(parsed.tray) ? parsed.tray : {}
   if (parsed.tray !== undefined && !isRecord(parsed.tray)) reasons.push('tray was not an object')
+  const legacyShowMenuBarText = typeof rawTray.showMenuBarText === 'boolean'
+    ? rawTray.showMenuBarText
+    : DEFAULT_TRAY_CONFIG.showMenuBarText
+  const menuBar = repairMenuBarConfig(rawTray.menuBar, legacyShowMenuBarText)
   const tray: TrayConfig = {
     enabled: typeof rawTray.enabled === 'boolean' ? rawTray.enabled : DEFAULT_TRAY_CONFIG.enabled,
-    showMenuBarText: typeof rawTray.showMenuBarText === 'boolean'
-      ? rawTray.showMenuBarText
-      : DEFAULT_TRAY_CONFIG.showMenuBarText,
+    menuBar,
+    // Keep the legacy field canonical for older desktop and CLI clients.
+    showMenuBarText: menuBar.elements.value,
     menuBarValue: rawTray.menuBarValue === 'todayTokens' || rawTray.menuBarValue === 'usage'
       ? rawTray.menuBarValue
       : DEFAULT_TRAY_CONFIG.menuBarValue,

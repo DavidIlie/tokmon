@@ -9,7 +9,7 @@ export const TOKMON_WS_PATH = '/ws'
 
 /** Bump only for an incompatible wire change. Capabilities gate additive features. */
 export const TOKMON_PROTOCOL_VERSION = 4
-export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1', 'menu-bar-today-tokens'] as const
+export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1', 'menu-bar-today-tokens', 'menu-bar-builder-v1'] as const
 export type TokmonCapability = typeof TOKMON_CAPABILITIES[number]
 
 export const TOKMON_WS_METHODS = {
@@ -45,6 +45,29 @@ const AccountSchema = Schema.Struct({
 
 export const TrayConfigSchema = Schema.Struct({
   enabled: Schema.Boolean,
+  // Additive under `menu-bar-builder-v1`; old peers omit it and repair from
+  // `showMenuBarText`, while the daemon's CAS boundary preserves newer state.
+  menuBar: Schema.optionalKey(Schema.Struct({
+    version: Schema.Literal(1),
+    mode: Schema.Literals(['auto', 'custom'] as const),
+    elements: Schema.Struct({
+      providerMark: Schema.Boolean,
+      value: Schema.Boolean,
+      progress: Schema.Boolean,
+    }),
+    density: Schema.Literals(['comfortable', 'compact', 'tight'] as const),
+    customSpacing: Schema.Struct({
+      edgePaddingPt: Schema.Finite
+        .check(Schema.isBetween({ minimum: 0, maximum: 6 }))
+        .check(Schema.isMultipleOf(0.5)),
+      markValueGapPt: Schema.Finite
+        .check(Schema.isBetween({ minimum: 0, maximum: 8 }))
+        .check(Schema.isMultipleOf(0.5)),
+      providerGapPt: Schema.Finite
+        .check(Schema.isBetween({ minimum: 0, maximum: 16 }))
+        .check(Schema.isMultipleOf(0.5)),
+    }),
+  })),
   showMenuBarText: Schema.Boolean,
   menuBarValue: Schema.optionalKey(Schema.Literals(['usage', 'todayTokens'] as const)),
   displayMetric: Schema.Literals(['smartHeadroom', 'tightestRemaining'] as const),

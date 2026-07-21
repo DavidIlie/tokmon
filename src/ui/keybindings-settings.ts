@@ -1,5 +1,5 @@
 import { PROVIDER_ORDER } from '../providers'
-import { providerDetectionEnabled, setDetectedAccountExcluded, setProviderDetectionEnabled, toggleProviderSelection } from '../config'
+import { providerDetectionEnabled, setDetectedAccountExcluded, setProviderDetectionEnabled } from '../config'
 import { DESKTOP_FIXED_ROWS, DESKTOP_FIXED_SETTINGS, GENERAL_ROWS, GENERAL_SETTINGS, SETTINGS_TABS, THEME_ROWS, THEME_SETTINGS } from './settings'
 import type { InputKey, KeyContext } from './keybinding-context'
 
@@ -31,7 +31,7 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
     : tab === 'theme'
       ? THEME_ROWS
       : tab === 'desktop'
-        ? DESKTOP_FIXED_ROWS + PROVIDER_ORDER.length
+        ? DESKTOP_FIXED_ROWS
       : tab === 'providers'
           ? PROVIDER_ORDER.length + 1
           : trackedAccounts.length + 1
@@ -65,21 +65,7 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
     return
   }
   if (tab === 'desktop') {
-    if (cursor < DESKTOP_FIXED_ROWS) {
-      DESKTOP_FIXED_SETTINGS[cursor]?.onAdjust(input, key, ctx)
-      return
-    }
-    // Menu-bar pins: the provider rows below the fixed settings.
-    const provider = PROVIDER_ORDER[cursor - DESKTOP_FIXED_ROWS]
-    if (provider && (input === ' ' || key.leftArrow || key.rightArrow || key.return)) {
-      updateConfig(current => ({
-        ...current,
-        tray: {
-          ...current.tray,
-          pinnedProviders: toggleProviderSelection(current.tray.pinnedProviders, provider, new Set(PROVIDER_ORDER), 2),
-        },
-      }))
-    }
+    DESKTOP_FIXED_SETTINGS[cursor]?.onAdjust(input, key, ctx)
     return
   }
   if (tab === 'providers') {

@@ -1,4 +1,4 @@
-import { app, autoUpdater as nativeAutoUpdater, Menu, nativeImage, nativeTheme, shell, Tray, type MenuItemConstructorOptions } from 'electron'
+import { app, autoUpdater as nativeAutoUpdater, Menu, nativeImage, nativeTheme, screen, shell, Tray, type MenuItemConstructorOptions } from 'electron'
 import updaterPackage from 'electron-updater'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -9,7 +9,7 @@ import { usageFromHeadroom } from '../../usage-semantics'
 import { formatCompactTokens } from '../../shared/format'
 import { createDaemonRpcClient, type DaemonRpcClient } from '../../client/daemon-rpc-client'
 import { acquireOrAttachDaemon, type DaemonController } from '../../web/daemon-controller'
-import { DesktopStateStore } from './desktop-state'
+import { DesktopStateStore, trayStripPayloadMatchesState } from './desktop-state'
 import { DesktopUpdaterController, type DesktopAutoUpdater } from './desktop-updater'
 import { desktopIdentity, desktopUserDataPath, resolveDesktopChannel } from './desktop-runtime'
 import { registerDesktopIpc } from './ipc-bridge'
@@ -34,6 +34,7 @@ import {
 } from '../shared/presentation'
 import type { HeadroomView, WebAccount, WebSnapshot } from '../../web/contract'
 import type { DesktopUpdateState } from '../shared/desktop-contract'
+import { menuBarDisplayBucket } from '../shared/menu-bar-plan'
 
 /** Unified critical band (≤10%), shared by strip, gauge, tooltip and popover. */
 function isCritical(remaining: number | null): boolean {
@@ -132,7 +133,12 @@ async function bootstrap(): Promise<void> {
   // starting daemon must result in a recoverable tray state, never a vanished app.
   const initialSystemMode = effectiveSystemMode(nativeTheme.shouldUseDarkColors)
   const initialTheme = resolveTheme(DEFAULT_APPEARANCE, initialSystemMode)
-  const state = new DesktopStateStore(identity.appName, app.getVersion())
+  const state = new DesktopStateStore(
+    identity.appName,
+    app.getVersion(),
+    null,
+    screen.getPrimaryDisplay().bounds.width,
+  )
   state.update({ systemMode: initialSystemMode })
   let repaintPresentation = () => {}
   let recoverInstallFailure = () => {}
@@ -163,6 +169,29 @@ async function bootstrap(): Promise<void> {
   const popover = createPopoverWindow(tray, rendererUrl, initialTheme.tokens.chrome)
   state.addTarget(popover.window.webContents)
 
+  const currentDisplayWidth = () => {
+    const bounds = tray.getBounds()
+    if (bounds.width > 0 && bounds.height > 0) {
+      return screen.getDisplayNearestPoint({
+        x: Math.round(bounds.x + bounds.width / 2),
+        y: Math.round(bounds.y + bounds.height / 2),
+      }).bounds.width
+    }
+    return screen.getPrimaryDisplay().bounds.width
+  }
+  const updateDisplayWidth = () => {
+    const displayWidthPt = currentDisplayWidth()
+    if (state.get().displayWidthPt !== displayWidthPt) {
+      state.update({ displayWidthPt })
+      repaintPresentation()
+    }
+  }
+  const onDisplayMetricsChanged = () => updateDisplayWidth()
+  const onDisplayTopologyChanged = () => updateDisplayWidth()
+  screen.on('display-metrics-changed', onDisplayMetricsChanged)
+  screen.on('display-added', onDisplayTopologyChanged)
+  screen.on('display-removed', onDisplayTopologyChanged)
+
   const applyAppearance = (appearance = state.get().config?.appearance ?? DEFAULT_APPEARANCE) => {
     const source = electronThemeSource(appearance)
     if (nativeTheme.themeSource !== source) nativeTheme.themeSource = source
@@ -183,6 +212,9 @@ async function bootstrap(): Promise<void> {
   let unsubConfig: (() => void) | null = null
   let trayStripActive = false
   let trayStripPins = ''
+  let trayStripConfigRevision: number | null = null
+  let trayStripSnapshotGeneratedAt: number | null = null
+  let trayStripDisplayBucket: string | null = null
 
   // Provider-scoped pins (menu-bar order, ≤2), migrated from legacy account pins.
   const validPinnedProviders = (): string[] => {
@@ -202,6 +234,9 @@ async function bootstrap(): Promise<void> {
   const showDisconnectedPresentation = (error: unknown = null) => {
     trayStripActive = false
     trayStripPins = ''
+    trayStripConfigRevision = null
+    trayStripSnapshotGeneratedAt = null
+    trayStripDisplayBucket = null
     const failed = error !== null
     const ready = updateReady(state.get().update)
     tray.setImage(createTrayIcon(null, failed, ready))
@@ -236,7 +271,12 @@ async function bootstrap(): Promise<void> {
     const critical = isCritical(remaining)
     const ready = updateReady(current.update)
     const pinSignature = currentPinSignature()
-    if (pinSignature !== trayStripPins) trayStripActive = false
+    if (
+      pinSignature !== trayStripPins
+      || current.configRevision !== trayStripConfigRevision
+      || snapshot.generatedAt !== trayStripSnapshotGeneratedAt
+      || menuBarDisplayBucket(current.displayWidthPt) !== trayStripDisplayBucket
+    ) trayStripActive = false
     if (!trayStripActive) tray.setImage(createTrayIcon(usage, critical, ready))
 
     // Tooltip: one honest line per described provider (pinned first, else the promoted
@@ -436,9 +476,9 @@ async function bootstrap(): Promise<void> {
     onConfig: config => applyAppearance(config.appearance),
     onTrayStrip: payload => {
       if (process.platform !== 'darwin') return
-      if (payload.updateReady !== updateReady(state.get().update)) return
+      const current = state.get()
       const pinSignature = currentPinSignature()
-      if (!pinSignature) return
+      if (!trayStripPayloadMatchesState(payload, current, pinSignature)) return
       const decode = (dataUrl: string) => Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64')
       // Both representations so non-Retina externals get a crisp 1× rather than a downscale.
       const image = nativeImage.createEmpty()
@@ -452,6 +492,9 @@ async function bootstrap(): Promise<void> {
       tray.setImage(image)
       tray.setTitle('')
       trayStripPins = pinSignature
+      trayStripConfigRevision = payload.configRevision
+      trayStripSnapshotGeneratedAt = payload.snapshotGeneratedAt
+      trayStripDisplayBucket = menuBarDisplayBucket(payload.displayWidthPt)
       trayStripActive = true
     },
   })
@@ -460,46 +503,11 @@ async function bootstrap(): Promise<void> {
   tray.on('right-click', () => {
     const current = state.get()
     const connected = rpc !== null && daemon !== null
-    const configuredPins = new Set(validPinnedProviders())
-    // One checkbox per provider (menu-bar pins are provider-scoped, max 2).
-    const seenProviders = new Set<string>()
-    const providers = (current.snapshot?.accounts ?? [])
-      .map(account => account.providerId)
-      .filter(id => (seenProviders.has(id) ? false : (seenProviders.add(id), true)))
-    const pinItems: MenuItemConstructorOptions[] = providers.map(providerId => {
-      const name = current.snapshot?.providers.find(item => item.id === providerId)?.name ?? providerId
-      const checked = configuredPins.has(providerId)
-      return {
-        label: name,
-        type: 'checkbox' as const,
-        checked,
-        enabled: connected && (checked || configuredPins.size < 2),
-        click: () => {
-          const latest = state.get()
-          if (!rpc || !latest.snapshot || !latest.config || latest.configRevision === null) return
-          const currentPins = resolveProviderPins(latest.config, latest.snapshot)
-          const pins = currentPins.filter(id => id !== providerId)
-          if (!checked && pins.length < 2) pins.push(providerId)
-          const config = {
-            ...latest.config,
-            tray: { ...latest.config.tray, pinnedProviders: pins, pins: [], pinnedAccount: null },
-          }
-          void rpc.setConfig({ config, expectedRevision: latest.configRevision }).catch(error => {
-            state.connection('error', error)
-          })
-        },
-      }
-    })
     const template: MenuItemConstructorOptions[] = [
       { label: 'Open Tokmon', click: () => popover.show() },
       ...current.error ? [{ label: `Daemon unavailable: ${current.error}`, enabled: false }] : [],
       { label: connected ? 'Reconnect daemon' : 'Retry connection', click: () => void connectDaemon(true) },
       { label: 'Open Dashboard', enabled: connected, click: () => { if (daemon) void shell.openExternal(daemon.baseUrl) } },
-      {
-        label: 'Pin to Menu Bar',
-        enabled: pinItems.length > 0,
-        submenu: pinItems.length > 0 ? pinItems : [{ label: 'No providers available', enabled: false }],
-      },
       current.update.status === 'downloaded'
         ? {
             label: `Restart to Install ${current.update.availableVersion ?? 'Update'}`,
@@ -580,6 +588,9 @@ async function bootstrap(): Promise<void> {
   app.on('will-quit', () => {
     clearInstallTimers()
     nativeTheme.removeListener('updated', onNativeThemeUpdated)
+    screen.removeListener('display-metrics-changed', onDisplayMetricsChanged)
+    screen.removeListener('display-added', onDisplayTopologyChanged)
+    screen.removeListener('display-removed', onDisplayTopologyChanged)
     if (process.platform === 'darwin') nativeAutoUpdater.removeListener('update-downloaded', onNativeUpdateDownloaded)
     disposeIpc()
     updater.stop()

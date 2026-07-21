@@ -4,6 +4,7 @@ import type { Config } from '../../config-schema'
 import {
   DASHBOARD_PATHS,
   DESKTOP_CHANNELS,
+  isTrayStripPayload,
   type DashboardPath,
   type DesktopRefreshScope,
   type TrayStripPayload,
@@ -89,22 +90,10 @@ export function registerDesktopIpc(opts: DesktopIpcOptions): () => void {
   })
   ipcMain.handle(DESKTOP_CHANNELS.trayStrip, (event, payload: unknown) => {
     assertSender(event)
-    const strip = payload as TrayStripPayload
-    const validPng = (value: unknown): value is string =>
-      typeof value === 'string' && value.startsWith('data:image/png;base64,') && value.length <= 256_000
-    if (
-      !payload || typeof payload !== 'object'
-      || !validPng(strip.dataUrl1x)
-      || !validPng(strip.dataUrl2x)
-      || typeof strip.logicalWidth !== 'number'
-      || !Number.isFinite(strip.logicalWidth)
-      || strip.logicalWidth < 20
-      || strip.logicalWidth > 160
-      || typeof strip.updateReady !== 'boolean'
-    ) {
+    if (!isTrayStripPayload(payload)) {
       throw new Error('invalid tray strip payload')
     }
-    opts.onTrayStrip?.(strip)
+    opts.onTrayStrip?.(payload)
   })
   ipcMain.handle(DESKTOP_CHANNELS.setPopoverHeight, (event, height: unknown) => {
     assertSender(event)

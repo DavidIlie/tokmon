@@ -1,4 +1,4 @@
-import { configLocation, DESKTOP_GRAPH_RANGES, type Config } from './config'
+import { configLocation, DESKTOP_GRAPH_RANGES, setProviderTrackingEnabled, type Config } from './config'
 import { PROVIDER_IDS, type ProviderId } from './providers/types'
 import { attachOrSpawn } from './client/daemon-handle'
 import { createDaemonRpcClient, type DaemonRpcClient } from './client/daemon-rpc-client'
@@ -105,16 +105,25 @@ Usage:
 Settings:
   privacy <on|off>
   privacy-key <char>
-  menu-bar-pins <ids|none>       Comma-separated provider ids; at most 2
-  menu-bar-text <on|off>
+  menu-bar-mode <auto|custom>
+  menu-bar-elements <list>       mark,value,progress; at least one
+  menu-bar-density <comfortable|compact|tight>
+  menu-bar-edge-padding <points> 0..6 in 0.5pt increments
+  menu-bar-mark-value-gap <points> 0..8 in 0.5pt increments
+  menu-bar-provider-gap <points> 0..16 in 0.5pt increments
   menu-bar-value <usage|tokens-today>
   summary-mode <smart|tightest>
   expanded-providers <ids|none>  Comma-separated provider ids
   active-window <minutes>        1..1440
   graph-range <7|14|30>          Desktop spend graph days
+  enabled-providers <ids|none>   Providers tracked across every surface
   auto-detect <on|off>           Automatic account discovery
   auto-detect-providers <ids|none>
   launch-at-login <on|off>
+
+Compatibility:
+  menu-bar-text <on|off>         Deprecated alias for the value element
+  menu-bar-pins <ids|none>       Deprecated; pin from desktop provider cards
 
 Options:
       --json                    Emit machine-readable JSON
@@ -125,7 +134,7 @@ Options:
 Examples:
   tokmon config get
   tokmon config set privacy off
-  tokmon config set menu-bar-pins claude,codex
+  tokmon config set menu-bar-elements mark,value,progress
   tokmon config set summary-mode smart --json
 `
 
@@ -278,10 +287,17 @@ type ConfigSetting =
   | 'menu-bar-pins'
   | 'menu-bar-text'
   | 'menu-bar-value'
+  | 'menu-bar-mode'
+  | 'menu-bar-elements'
+  | 'menu-bar-density'
+  | 'menu-bar-edge-padding'
+  | 'menu-bar-mark-value-gap'
+  | 'menu-bar-provider-gap'
   | 'summary-mode'
   | 'expanded-providers'
   | 'active-window'
   | 'graph-range'
+  | 'enabled-providers'
   | 'auto-detect'
   | 'auto-detect-providers'
   | 'launch-at-login'
@@ -292,10 +308,17 @@ const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   'menu-bar-pins',
   'menu-bar-text',
   'menu-bar-value',
+  'menu-bar-mode',
+  'menu-bar-elements',
+  'menu-bar-density',
+  'menu-bar-edge-padding',
+  'menu-bar-mark-value-gap',
+  'menu-bar-provider-gap',
   'summary-mode',
   'expanded-providers',
   'active-window',
   'graph-range',
+  'enabled-providers',
   'auto-detect',
   'auto-detect-providers',
   'launch-at-login',
@@ -308,10 +331,17 @@ interface ConfigReport {
   menuBarPins: string[]
   menuBarText: 'on' | 'off'
   menuBarValue: 'usage' | 'tokens-today'
+  menuBarMode: 'auto' | 'custom'
+  menuBarElements: string[]
+  menuBarDensity: 'comfortable' | 'compact' | 'tight'
+  menuBarEdgePaddingPt: number
+  menuBarMarkValueGapPt: number
+  menuBarProviderGapPt: number
   summaryMode: 'smart' | 'tightest'
   expandedProviders: string[]
   activeWindowMinutes: number
   graphRangeDays: 7 | 14 | 30
+  enabledProviders: ProviderId[]
   autoDetect: 'on' | 'off'
   autoDetectProviders: ProviderId[]
   launchAtLogin: 'on' | 'off'
@@ -325,10 +355,21 @@ function configReport(config: Config): ConfigReport {
     menuBarPins: [...config.tray.pinnedProviders],
     menuBarText: config.tray.showMenuBarText ? 'on' : 'off',
     menuBarValue: config.tray.menuBarValue === 'todayTokens' ? 'tokens-today' : 'usage',
+    menuBarMode: config.tray.menuBar.mode,
+    menuBarElements: [
+      ...(config.tray.menuBar.elements.providerMark ? ['mark'] : []),
+      ...(config.tray.menuBar.elements.value ? ['value'] : []),
+      ...(config.tray.menuBar.elements.progress ? ['progress'] : []),
+    ],
+    menuBarDensity: config.tray.menuBar.density,
+    menuBarEdgePaddingPt: config.tray.menuBar.customSpacing.edgePaddingPt,
+    menuBarMarkValueGapPt: config.tray.menuBar.customSpacing.markValueGapPt,
+    menuBarProviderGapPt: config.tray.menuBar.customSpacing.providerGapPt,
     summaryMode: config.tray.displayMetric === 'smartHeadroom' ? 'smart' : 'tightest',
     expandedProviders: [...config.desktop.expandedProviders],
     activeWindowMinutes: config.tray.activeTimeoutMin,
     graphRangeDays: config.desktop.graphRangeDays,
+    enabledProviders: PROVIDER_IDS.filter(id => !config.disabledProviders.includes(id)),
     autoDetect: config.accountDetection.enabled ? 'on' : 'off',
     autoDetectProviders: PROVIDER_IDS.filter(id => !config.accountDetection.disabledProviders.includes(id)),
     launchAtLogin: config.tray.launchAtLogin ? 'on' : 'off',
@@ -340,13 +381,18 @@ function formatConfigReport(report: ConfigReport): string {
   return [
     `privacy             ${report.privacy}`,
     `privacy-key         ${report.privacyKey}`,
-    `menu-bar-pins       ${list(report.menuBarPins)}`,
-    `menu-bar-text       ${report.menuBarText}`,
+    `menu-bar-mode       ${report.menuBarMode}`,
+    `menu-bar-elements   ${list(report.menuBarElements)}`,
+    `menu-bar-density    ${report.menuBarDensity}`,
+    `menu-bar-edge-padding ${report.menuBarEdgePaddingPt}pt`,
+    `menu-bar-mark-value-gap ${report.menuBarMarkValueGapPt}pt`,
+    `menu-bar-provider-gap ${report.menuBarProviderGapPt}pt`,
     `menu-bar-value      ${report.menuBarValue}`,
     `summary-mode        ${report.summaryMode}`,
     `expanded-providers  ${list(report.expandedProviders)}`,
     `active-window       ${report.activeWindowMinutes}m`,
     `graph-range         ${report.graphRangeDays}d`,
+    `enabled-providers   ${list(report.enabledProviders)}`,
     `auto-detect         ${report.autoDetect}`,
     `auto-detect-providers ${list(report.autoDetectProviders)}`,
     `launch-at-login     ${report.launchAtLogin}`,
@@ -373,6 +419,29 @@ function providerList(value: string, setting: ConfigSetting, max: number = PROVI
   return unique as ProviderId[]
 }
 
+function menuBarElements(value: string): Array<'mark' | 'value' | 'progress'> {
+  if (value === 'none') throw new Error('menu-bar-elements must include at least one of mark,value,progress')
+  const raw = value.split(',').map(item => item.trim())
+  if (raw.length === 0 || raw.some(item => item.length === 0)) {
+    throw new Error('menu-bar-elements must list at least one of mark,value,progress')
+  }
+  const unique = [...new Set(raw)]
+  for (const element of unique) {
+    if (element !== 'mark' && element !== 'value' && element !== 'progress') {
+      throw new Error(`unknown menu-bar element: ${element}`)
+    }
+  }
+  return unique as Array<'mark' | 'value' | 'progress'>
+}
+
+function halfPoint(value: string, setting: ConfigSetting, max: number): number {
+  const points = Number(value)
+  if (value.trim() === '' || !Number.isFinite(points) || points < 0 || points > max || !Number.isInteger(points * 2)) {
+    throw new Error(`${setting} must be from 0 to ${max} in 0.5pt increments`)
+  }
+  return points
+}
+
 function settingMutation(setting: ConfigSetting, value: string): { mutate(config: Config): Config; display: string | number | string[] } {
   if (setting === 'privacy') {
     const enabled = onOff(value, setting)
@@ -394,12 +463,84 @@ function settingMutation(setting: ConfigSetting, value: string): { mutate(config
   }
   if (setting === 'menu-bar-text') {
     const enabled = onOff(value, setting)
-    return { mutate: config => ({ ...config, tray: { ...config.tray, showMenuBarText: enabled } }), display: value }
+    return {
+      mutate: config => ({
+        ...config,
+        tray: (() => {
+          const elements = { ...config.tray.menuBar.elements, value: enabled }
+          if (!Object.values(elements).some(Boolean)) throw new Error('menu-bar-text off would hide every menu-bar element')
+          return {
+            ...config.tray,
+            showMenuBarText: enabled,
+            menuBar: { ...config.tray.menuBar, elements },
+          }
+        })(),
+      }),
+      display: value,
+    }
   }
   if (setting === 'menu-bar-value') {
     if (value !== 'usage' && value !== 'tokens-today') throw new Error('menu-bar-value must be usage or tokens-today')
     const menuBarValue = value === 'tokens-today' ? 'todayTokens' : 'usage'
     return { mutate: config => ({ ...config, tray: { ...config.tray, menuBarValue } }), display: value }
+  }
+  if (setting === 'menu-bar-mode') {
+    if (value !== 'auto' && value !== 'custom') throw new Error('menu-bar-mode must be auto or custom')
+    return {
+      mutate: config => ({ ...config, tray: { ...config.tray, menuBar: { ...config.tray.menuBar, mode: value } } }),
+      display: value,
+    }
+  }
+  if (setting === 'menu-bar-elements') {
+    const selected = menuBarElements(value)
+    const elements = {
+      providerMark: selected.includes('mark'),
+      value: selected.includes('value'),
+      progress: selected.includes('progress'),
+    }
+    return {
+      mutate: config => ({
+        ...config,
+        tray: {
+          ...config.tray,
+          showMenuBarText: elements.value,
+          menuBar: { ...config.tray.menuBar, elements },
+        },
+      }),
+      display: selected,
+    }
+  }
+  if (setting === 'menu-bar-density') {
+    if (value !== 'comfortable' && value !== 'compact' && value !== 'tight') {
+      throw new Error('menu-bar-density must be comfortable, compact, or tight')
+    }
+    return {
+      mutate: config => ({ ...config, tray: { ...config.tray, menuBar: { ...config.tray.menuBar, density: value } } }),
+      display: value,
+    }
+  }
+  if (setting === 'menu-bar-edge-padding' || setting === 'menu-bar-mark-value-gap' || setting === 'menu-bar-provider-gap') {
+    const max = setting === 'menu-bar-edge-padding' ? 6 : setting === 'menu-bar-mark-value-gap' ? 8 : 16
+    const points = halfPoint(value, setting, max)
+    const field = setting === 'menu-bar-edge-padding'
+      ? 'edgePaddingPt'
+      : setting === 'menu-bar-mark-value-gap'
+        ? 'markValueGapPt'
+        : 'providerGapPt'
+    return {
+      mutate: config => ({
+        ...config,
+        tray: {
+          ...config.tray,
+          menuBar: {
+            ...config.tray.menuBar,
+            mode: 'custom',
+            customSpacing: { ...config.tray.menuBar.customSpacing, [field]: points },
+          },
+        },
+      }),
+      display: points,
+    }
   }
   if (setting === 'summary-mode') {
     if (value !== 'smart' && value !== 'tightest') throw new Error('summary-mode must be smart or tightest')
@@ -431,6 +572,16 @@ function settingMutation(setting: ConfigSetting, value: string): { mutate(config
     return {
       mutate: config => ({ ...config, accountDetection: { ...config.accountDetection, enabled } }),
       display: value,
+    }
+  }
+  if (setting === 'enabled-providers') {
+    const enabled = providerList(value, setting)
+    return {
+      mutate: config => PROVIDER_IDS.reduce(
+        (next, provider) => setProviderTrackingEnabled(next, provider, enabled.includes(provider)),
+        config,
+      ),
+      display: enabled,
     }
   }
   if (setting === 'auto-detect-providers') {

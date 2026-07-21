@@ -145,9 +145,9 @@ test('theme settings persist preset, appearance, and terminal policy through con
   assert.equal(config.appearance.terminal, 'dark')
 })
 
-test('desktop settings persist tray behavior and enforce the two-provider pin cap', () => {
+test('desktop settings persist the complete menu-bar builder without duplicate pin rows', () => {
   const ctx = context()
-  let config = DEFAULTS
+  let config = structuredClone(DEFAULTS)
   ctx.settings.show = true
   ctx.settings.tab = 'desktop'
   ctx.global.config = config
@@ -156,23 +156,90 @@ test('desktop settings persist tray behavior and enforce the two-provider pin ca
     ctx.global.config = config
   }
 
-  ctx.settings.cursor = DESKTOP_FIXED_SETTINGS.findIndex(row => row.key === 'menuBarValues')
-  handleKey(' ', key, ctx)
-  assert.equal(config.tray.showMenuBarText, false)
+  const adjust = (rowKey: string, input = '', inputKey: InputKey = { ...key, rightArrow: true }) => {
+    ctx.settings.cursor = DESKTOP_FIXED_SETTINGS.findIndex(row => row.key === rowKey)
+    assert.notEqual(ctx.settings.cursor, -1, `missing ${rowKey}`)
+    handleKey(input, inputKey, ctx)
+  }
 
-  ctx.settings.cursor = DESKTOP_FIXED_SETTINGS.findIndex(row => row.key === 'summary')
-  handleKey('', { ...key, rightArrow: true }, ctx)
+  adjust('menuBarMode')
+  assert.equal(config.tray.menuBar.mode, 'custom')
+
+  adjust('menuBarMark', ' ', key)
+  assert.equal(config.tray.menuBar.elements.providerMark, false)
+
+  adjust('menuBarProgress', ' ', key)
+  assert.equal(config.tray.menuBar.elements.progress, true)
+
+  adjust('menuBarValue', ' ', key)
+  assert.equal(config.tray.showMenuBarText, false)
+  assert.equal(config.tray.menuBar.elements.value, false)
+
+  adjust('menuBarContent')
+  assert.equal(config.tray.menuBarValue, 'todayTokens')
+
+  adjust('menuBarDensity')
+  assert.equal(config.tray.menuBar.density, 'compact')
+
+  adjust('menuBarEdgePadding')
+  adjust('menuBarMarkValueGap')
+  adjust('menuBarProviderGap')
+  assert.deepEqual(config.tray.menuBar.customSpacing, {
+    edgePaddingPt: 1.5,
+    markValueGapPt: 3.5,
+    providerGapPt: 8.5,
+  })
+
+  adjust('summary')
   assert.equal(config.tray.displayMetric, 'tightestRemaining')
 
-  ctx.settings.cursor = DESKTOP_FIXED_SETTINGS.findIndex(row => row.key === 'graphRange')
-  handleKey('', { ...key, rightArrow: true }, ctx)
+  adjust('graphRange')
   assert.equal(config.desktop.graphRangeDays, 30)
 
-  for (const providerIndex of [0, 1, 2]) {
-    ctx.settings.cursor = DESKTOP_FIXED_ROWS + providerIndex
-    handleKey(' ', key, ctx)
+  assert.equal(DESKTOP_FIXED_ROWS, DESKTOP_FIXED_SETTINGS.length)
+  assert.equal(DESKTOP_FIXED_SETTINGS.some(row => /pin/i.test(row.key + row.label)), false)
+})
+
+test('desktop menu-bar builder guards visibility, spacing bounds, and presentation-only reset', () => {
+  const ctx = context()
+  let config: Config = {
+    ...structuredClone(DEFAULTS),
+    tray: {
+      ...structuredClone(DEFAULTS.tray),
+      pinnedProviders: ['claude', 'codex'],
+      menuBarValue: 'todayTokens',
+      showMenuBarText: false,
+      menuBar: {
+        version: 1,
+        mode: 'custom',
+        elements: { providerMark: true, value: false, progress: false },
+        density: 'tight',
+        customSpacing: { edgePaddingPt: 6, markValueGapPt: 8, providerGapPt: 16 },
+      },
+    },
   }
+  ctx.settings.show = true
+  ctx.settings.tab = 'desktop'
+  ctx.global.config = config
+  ctx.global.updateConfig = updater => { config = updater(config); ctx.global.config = config }
+
+  ctx.settings.cursor = DESKTOP_FIXED_SETTINGS.findIndex(row => row.key === 'menuBarMark')
+  handleKey(' ', key, ctx)
+  assert.deepEqual(config.tray.menuBar.elements, { providerMark: true, value: false, progress: false })
+
+  for (const rowKey of ['menuBarEdgePadding', 'menuBarMarkValueGap', 'menuBarProviderGap']) {
+    ctx.settings.cursor = DESKTOP_FIXED_SETTINGS.findIndex(row => row.key === rowKey)
+    handleKey('', { ...key, rightArrow: true }, ctx)
+  }
+  assert.deepEqual(config.tray.menuBar.customSpacing, { edgePaddingPt: 6, markValueGapPt: 8, providerGapPt: 16 })
+
+  ctx.settings.cursor = DESKTOP_FIXED_SETTINGS.findIndex(row => row.key === 'menuBarReset')
+  handleKey('', { ...key, return: true }, ctx)
+  assert.equal(config.tray.menuBar.mode, 'auto')
+  assert.deepEqual(config.tray.menuBar.elements, { providerMark: true, value: true, progress: false })
+  assert.equal(config.tray.showMenuBarText, true)
   assert.deepEqual(config.tray.pinnedProviders, ['claude', 'codex'])
+  assert.equal(config.tray.menuBarValue, 'todayTokens')
 })
 
 test('provider settings separate tracking from global and per-provider discovery', () => {

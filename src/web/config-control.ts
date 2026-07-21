@@ -90,6 +90,18 @@ function mergeCapabilityFields(incomingConfig: Config, current: Config): Record<
       ? {
           ...current.tray,
           ...incomingTray,
+          menuBar: hasOwn(incomingTray, 'menuBar')
+            ? incomingTray.menuBar
+            : hasOwn(incomingTray, 'showMenuBarText')
+              && incomingTray.showMenuBarText !== current.tray.showMenuBarText
+              ? {
+                  ...current.tray.menuBar,
+                  elements: {
+                    ...current.tray.menuBar.elements,
+                    value: incomingTray.showMenuBarText,
+                  },
+                }
+              : current.tray.menuBar,
           pinnedProviders: hasOwn(incomingTray, 'pinnedProviders')
             ? incomingTray.pinnedProviders
             : current.tray.pinnedProviders,

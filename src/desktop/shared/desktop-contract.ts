@@ -40,6 +40,45 @@ export interface TrayStripPayload {
   logicalWidth: number
   /** Lets main reject a stale renderer image after updater state changes. */
   updateReady: boolean
+  /** CAS revision whose presentation settings produced these pixels. */
+  configRevision: number
+  /** Snapshot generation whose provider values/activity produced these pixels. */
+  snapshotGeneratedAt: number
+  /** NUL-delimited ordered provider pins; main compares without parsing image data. */
+  pinSignature: string
+  /** Display width used by the adaptive plan, in device-independent points. */
+  displayWidthPt: number
+  /** Stable signature over every render-affecting leaf. */
+  renderSignature: string
+}
+
+export function isTrayStripPayload(payload: unknown): payload is TrayStripPayload {
+  const strip = payload as TrayStripPayload
+  const validPng = (value: unknown): value is string =>
+    typeof value === 'string' && value.startsWith('data:image/png;base64,') && value.length <= 256_000
+  return Boolean(
+    payload && typeof payload === 'object'
+    && validPng(strip.dataUrl1x)
+    && validPng(strip.dataUrl2x)
+    && typeof strip.logicalWidth === 'number'
+    && Number.isFinite(strip.logicalWidth)
+    && strip.logicalWidth >= 12
+    && strip.logicalWidth <= 224
+    && typeof strip.updateReady === 'boolean'
+    && Number.isSafeInteger(strip.configRevision)
+    && strip.configRevision >= 0
+    && Number.isSafeInteger(strip.snapshotGeneratedAt)
+    && strip.snapshotGeneratedAt >= 0
+    && typeof strip.pinSignature === 'string'
+    && strip.pinSignature.length <= 256
+    && typeof strip.displayWidthPt === 'number'
+    && Number.isFinite(strip.displayWidthPt)
+    && strip.displayWidthPt >= 320
+    && strip.displayWidthPt <= 16_384
+    && typeof strip.renderSignature === 'string'
+    && strip.renderSignature.length >= 2
+    && strip.renderSignature.length <= 8_192,
+  )
 }
 
 export interface DesktopDaemonState {
@@ -62,6 +101,8 @@ export interface DesktopState {
   /** Whitelisted lock identity only; never includes URLs, paths, tokens, PIDs, or owner proofs. */
   daemon: DesktopDaemonState | null
   platform: NodeJS.Platform
+  /** Display width nearest the status item, in device-independent points. */
+  displayWidthPt: number
   /** Effective OS appearance forwarded by Electron; auto themes resolve from this live value. */
   systemMode: 'light' | 'dark'
   /** Accounts with activity inside `tray.activeTimeoutMin` — emphasis only, never reorders. */

@@ -429,8 +429,3 @@ export function usageAriaValueText(
   const spoken = reset ? `, ${reset.toLowerCase()}` : ''
   return `${subject}, ${Math.round(used)} percent used${spoken}`
 }
-
-// ── Menu-bar strip geometry ───────────────────────────────────────────────────
-// The tray/menu-bar canvas geometry lives in its own module; re-exported here so
-// the desktop-local call sites that import from this barrel keep working.
-export * from './tray-strip-geometry'

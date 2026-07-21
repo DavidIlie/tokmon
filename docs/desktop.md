@@ -5,18 +5,36 @@ and Linux. It does not create a normal dock or taskbar window.
 
 ## Menu-bar summary
 
-On macOS, pin up to two providers. Each item combines the provider mark with
-either its usage score or today's compact token total (`843`, `1.2M`, `1B`).
-Choose the value in Desktop App settings or from the CLI with
-`tokmon config set menu-bar-value usage|tokens-today`. Activity is shown
-separately and never replaces a pin or silently reorders providers.
+On macOS, pin up to two providers from their cards in the desktop overview. The
+pin control shows each provider's fixed left-to-right position; Option-clicking
+a third provider replaces position two. Activity is shown separately and never
+replaces a pin or silently reorders providers.
+
+The Menu Bar settings page is a live builder backed by the same renderer as the
+real status item. Choose provider marks, usage or today's compact token total
+(`843`, `1.2M`, `1B`), optional progress lines, and comfortable, compact, or
+tight density. Auto mode progressively simplifies the strip on smaller displays
+while keeping provider identity. Custom mode adds half-point controls for edge
+padding, mark-to-value spacing, and the gap between providers. The preview's
+width bracket shows the exact internal width; macOS owns the spacing outside it.
+
+The same options are available from the CLI, for example:
+
+```bash
+tokmon config set menu-bar-mode custom
+tokmon config set menu-bar-elements mark,value,progress
+tokmon config set menu-bar-value tokens-today
+tokmon config set menu-bar-density tight
+```
 
 Windows and Linux use a single status-aware tray icon and tooltip because their
 tray APIs do not support the same adjacent menu-bar composition.
 
 ## Popover
 
-Click the tray item to see every enabled provider and account. Provider cards
+Click the tray item to see every enabled provider and account. Disable an entire
+provider from **Providers & Accounts** without deleting its discovered accounts;
+re-enabling it restores its pin and expansion preferences. Provider cards
 show:
 
 - the same identity and usage score as the other clients;
