@@ -32,10 +32,21 @@ import {
   staleAgeLabel,
 } from '../shared/presentation'
 import type { HeadroomView, WebAccount, WebSnapshot } from '../../web/contract'
+import type { DesktopUpdateState } from '../shared/desktop-contract'
 
 /** Unified critical band (≤10%), shared by strip, gauge, tooltip and popover. */
 function isCritical(remaining: number | null): boolean {
   return severity(remaining) === 'crit'
+}
+
+function updateReady(update: DesktopUpdateState): boolean {
+  return update.status === 'downloaded'
+}
+
+function updateTooltipLine(appName: string, update: DesktopUpdateState): string | null {
+  if (!updateReady(update)) return null
+  const version = update.availableVersion ? ` ${update.availableVersion}` : ''
+  return `${appName}${version} is ready to install — right-click and choose “Restart to Install”.`
 }
 
 /** Honest per-provider tooltip line: one real window of one real account, in words. */
@@ -117,13 +128,22 @@ async function bootstrap(): Promise<void> {
   const initialTheme = resolveTheme(DEFAULT_APPEARANCE, initialSystemMode)
   const state = new DesktopStateStore(identity.appName, app.getVersion())
   state.update({ systemMode: initialSystemMode })
+  let repaintPresentation = () => {}
+  let trayUpdateReady = false
   const updater = new DesktopUpdaterController({
     enabled: app.isPackaged && channel === 'release',
+    supported: process.platform !== 'linux' || Boolean(process.env.APPIMAGE),
     updater: autoUpdater as DesktopAutoUpdater,
-    onState: update => state.updater(update),
+    onState: update => {
+      state.updater(update)
+      const ready = updateReady(update)
+      if (ready !== trayUpdateReady) {
+        trayUpdateReady = ready
+        repaintPresentation()
+      }
+    },
     logger: console,
   })
-  updater.start()
   // A dev shell may run beside the installed release app. Separate status-item
   // identities prevent macOS from assigning both processes the same saved slot.
   const tray = new Tray(createTrayIcon(null, false), channel === 'dev' ? DEV_TRAY_GUID : RELEASE_TRAY_GUID)
@@ -172,18 +192,24 @@ async function bootstrap(): Promise<void> {
     trayStripActive = false
     trayStripPins = ''
     const failed = error !== null
-    tray.setImage(createTrayIcon(null, failed))
-    tray.setToolTip(failed
+    const ready = updateReady(state.get().update)
+    tray.setImage(createTrayIcon(null, failed, ready))
+    const updateLine = updateTooltipLine(identity.appName, state.get().update)
+    const connectionLine = failed
       ? `${identity.appName} — daemon unavailable\n${error instanceof Error ? error.message : String(error)}`
-      : `${identity.appName} — connecting to daemon`)
-    if (process.platform === 'darwin') tray.setTitle(disconnectedMenuBarTitle(failed))
+      : `${identity.appName} — connecting to daemon`
+    tray.setToolTip(updateLine ? `${updateLine}\n${connectionLine}` : connectionLine)
+    if (process.platform === 'darwin') tray.setTitle(disconnectedMenuBarTitle(failed, ready))
   }
 
   const updatePresentation = () => {
     const current = state.get()
     const snapshot = current.snapshot
     const config = current.config
-    if (!snapshot || !config) return
+    if (!snapshot || !config) {
+      showDisconnectedPresentation(current.error)
+      return
+    }
     const now = Date.now()
     const selected = selectPromotedAccounts(promotionAccounts(snapshot), promotion, config.tray, now)
     promotion = selected.state
@@ -197,9 +223,10 @@ async function bootstrap(): Promise<void> {
     const remaining = providerHeadroom?.value ?? quota?.remainingPct ?? null
     const usage = usageFromHeadroom(remaining)
     const critical = isCritical(remaining)
+    const ready = updateReady(current.update)
     const pinSignature = currentPinSignature()
     if (pinSignature !== trayStripPins) trayStripActive = false
-    if (!trayStripActive) tray.setImage(createTrayIcon(usage, critical))
+    if (!trayStripActive) tray.setImage(createTrayIcon(usage, critical, ready))
 
     // Tooltip: one honest line per described provider (pinned first, else the promoted
     // providers), each naming its representative account/window/severity/reset in words.
@@ -216,7 +243,11 @@ async function bootstrap(): Promise<void> {
       const headroom = snapshot.providers.find(candidate => candidate.id === providerId)?.headroom
       return providerTooltipLine(name, accounts, config.privacyMode, snapshot, config.tray.activeTimeoutMin, now, headroom)
     })
-    tray.setToolTip(tooltipRows.length ? `${identity.appName}\n${tooltipRows.join('\n')}` : `${identity.appName} is waiting for usage data.`)
+    const updateLine = updateTooltipLine(identity.appName, current.update)
+    const usageTooltip = tooltipRows.length
+      ? `${identity.appName}\n${tooltipRows.join('\n')}`
+      : `${identity.appName} is waiting for usage data.`
+    tray.setToolTip(updateLine ? `${updateLine}\n${usageTooltip}` : usageTooltip)
     if (process.platform === 'darwin') {
       const fallbackAccounts = fallbackProvider
         ? snapshot.accounts.filter(candidate => candidate.providerId === fallbackProvider)
@@ -224,13 +255,21 @@ async function bootstrap(): Promise<void> {
       const alternate = config.tray.menuBarValue === 'todayTokens'
         ? formatCompactTokens(providerTodayTokens(fallbackAccounts))
         : undefined
-      tray.setTitle(trayStripActive ? '' : menuBarTitle(config.tray.showMenuBarText, usage, critical, alternate))
+      tray.setTitle(trayStripActive ? '' : menuBarTitle(config.tray.showMenuBarText, usage, critical, alternate, ready))
     }
     if (app.isPackaged && lastLaunchAtLogin !== config.tray.launchAtLogin) {
       app.setLoginItemSettings({ openAtLogin: config.tray.launchAtLogin, openAsHidden: true })
       lastLaunchAtLogin = config.tray.launchAtLogin
     }
   }
+
+  repaintPresentation = () => {
+    // Immediately invalidate a renderer-painted strip so stale updater state
+    // cannot hide or retain the update glyph while React produces its new PNG.
+    trayStripActive = false
+    updatePresentation()
+  }
+  updater.start()
 
   const closeDaemonSession = async () => {
     const activeRpc = rpc
@@ -241,6 +280,7 @@ async function bootstrap(): Promise<void> {
     unsubConfig?.()
     unsubSnapshot = null
     unsubConfig = null
+    state.update({ daemon: null })
     await activeRpc?.close().catch(() => {})
     await activeDaemon?.stop().catch(() => {})
   }
@@ -279,7 +319,15 @@ async function bootstrap(): Promise<void> {
           return
         }
         daemon = controller
-        state.update({ daemonRole: controller.role })
+        state.update({
+          daemon: {
+            role: controller.role,
+            version: controller.lock.version,
+            protocolVersion: controller.lock.protocolVersion,
+            ownerKind: controller.lock.ownerKind,
+            channel: controller.lock.channel,
+          },
+        })
         const client = createDaemonRpcClient(controller.baseUrl, {
           transport: 'node',
           reconnectAttempts: 8,
@@ -320,7 +368,7 @@ async function bootstrap(): Promise<void> {
           })
       } catch (error) {
         reconnectFailures += 1
-        state.update({ daemonRole: null })
+        state.update({ daemon: null })
         state.connection('error', error)
         showDisconnectedPresentation(error)
         scheduleReconnect(connectDaemon)
@@ -345,6 +393,7 @@ async function bootstrap(): Promise<void> {
     onConfig: config => applyAppearance(config.appearance),
     onTrayStrip: payload => {
       if (process.platform !== 'darwin') return
+      if (payload.updateReady !== updateReady(state.get().update)) return
       const pinSignature = currentPinSignature()
       if (!pinSignature) return
       const decode = (dataUrl: string) => Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64')
@@ -415,6 +464,8 @@ async function bootstrap(): Promise<void> {
           }
         : current.update.status === 'checking'
           ? { label: 'Checking for Updates…', enabled: false }
+          : current.update.status === 'available'
+            ? { label: `Preparing Update${current.update.availableVersion ? ` ${current.update.availableVersion}` : ''}…`, enabled: false }
           : current.update.status === 'downloading'
             ? {
                 label: `Downloading Update${current.update.progressPercent === null ? '…' : ` (${Math.round(current.update.progressPercent)}%)`}`,
@@ -422,7 +473,11 @@ async function bootstrap(): Promise<void> {
               }
             : current.update.status === 'disabled'
               ? { label: 'Updates Available in Installed App', enabled: false }
-              : { label: 'Check for Updates', click: () => void updater.checkForUpdates() },
+              : current.update.status === 'unsupported'
+                ? { label: 'Updates Managed by Package Manager', enabled: false }
+                : current.update.status === 'error'
+                  ? { label: 'Update Check Failed — Check Again', click: () => void updater.checkForUpdates() }
+                  : { label: 'Check for Updates', click: () => void updater.checkForUpdates() },
       { type: 'separator' },
       { label: 'Quit Tokmon', click: () => app.quit() },
     ]
@@ -455,7 +510,13 @@ async function bootstrap(): Promise<void> {
     clearReconnectTimer()
     nativeTheme.removeListener('updated', onNativeThemeUpdated)
     disposeIpc()
-    void closeDaemonSession().finally(() => updater.completeQuit(() => app.exit(0)))
+    void closeDaemonSession().finally(() => {
+      const outcome = updater.completeQuit(() => app.exit(0))
+      // A native installer launch can fail synchronously. At this point the
+      // app has already committed to shutdown and disposed IPC, so never leave
+      // a headless half-closed process behind.
+      if (outcome === 'error') app.exit(1)
+    })
   })
 }
 

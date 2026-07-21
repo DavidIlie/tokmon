@@ -2,8 +2,8 @@ import { severity } from '../../usage-semantics'
 
 // ── Menu-bar strip geometry (binding, measured in points; 1pt = 2px @2×) ──────
 // Every element shares one 11pt optical centreline. Twin segments stay twins: the
-// numeral slot is shared and centred. No divider and no punctuation-based alert;
-// urgency words live in the tooltip/popover where they remain unambiguous.
+// numeral slot is shared and centred. Quota urgency stays out of the strip; a
+// downloaded app update earns one separate trailing action glyph.
 export const TRAY_STRIP = {
   height: 22,
   centerY: 11,
@@ -21,6 +21,10 @@ export const TRAY_STRIP = {
   activeCenterX: 12.5,
   activeCenterY: 4.5,
   unknownAlpha: 0.45,
+  updateGap: 6,
+  updateBox: 9,
+  updateCenterY: 11,
+  updateBaselineY: 14.5,
 } as const
 
 export interface TraySegmentValue {
@@ -83,6 +87,7 @@ export interface TrayStripLayout {
   slotWidth: number
   segWidth: number
   segments: TraySegmentLayout[]
+  updateCenterX: number | null
 }
 
 /**
@@ -93,8 +98,9 @@ export interface TrayStripLayout {
 export function trayStripLayout(
   values: readonly TraySegmentValue[],
   measureText: (text: string) => number,
+  updateReady = false,
 ): TrayStripLayout {
-  const { iconBox, gapIconNum, gapSeg, edgeBleed, height } = TRAY_STRIP
+  const { iconBox, gapIconNum, gapSeg, edgeBleed, height, updateGap, updateBox } = TRAY_STRIP
   const digits = trayStripDigits(values)
   const labels = values.map(value => value.label ?? trayLabel(value.usage))
   const criticals = values.map(value => trayCritical(value.usage))
@@ -116,8 +122,12 @@ export function trayStripLayout(
       numCenterX: numLeft + slot / 2,
     }
   })
-  const width = values.length === 0
+  const providerWidth = values.length === 0
     ? 0
     : values.length * segWidth + (values.length - 1) * gapSeg + edgeBleed
-  return { width, height, digits, slotWidth: slot, segWidth, segments }
+  const updateCenterX = updateReady
+    ? providerWidth + (providerWidth > 0 ? updateGap : 0) + updateBox / 2
+    : null
+  const width = providerWidth + (updateReady ? (providerWidth > 0 ? updateGap : 0) + updateBox : 0)
+  return { width, height, digits, slotWidth: slot, segWidth, segments, updateCenterX }
 }

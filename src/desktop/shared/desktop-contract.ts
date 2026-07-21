@@ -17,7 +17,7 @@ export const DESKTOP_CHANNELS = {
 
 export type DesktopConnectionState = 'connecting' | 'live' | 'reconnecting' | 'error'
 export type DesktopRefreshScope = 'all' | 'summary' | 'table' | 'billing' | 'peak'
-export type DesktopUpdateStatus = 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
+export type DesktopUpdateStatus = 'disabled' | 'unsupported' | 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
 
 export interface DesktopUpdateState {
   status: DesktopUpdateStatus
@@ -38,6 +38,16 @@ export interface TrayStripPayload {
   dataUrl2x: string
   /** Logical (1×) width in points; main sanity-checks it against the 2× bitmap. */
   logicalWidth: number
+  /** Lets main reject a stale renderer image after updater state changes. */
+  updateReady: boolean
+}
+
+export interface DesktopDaemonState {
+  version: string
+  protocolVersion: number
+  ownerKind: 'cli' | 'desktop'
+  role: 'owner' | 'attached'
+  channel: 'release' | 'dev'
 }
 
 export interface DesktopState {
@@ -49,7 +59,8 @@ export interface DesktopState {
   config: Config | null
   configRevision: number | null
   connection: DesktopConnectionState
-  daemonRole: 'owner' | 'attached' | null
+  /** Whitelisted lock identity only; never includes URLs, paths, tokens, PIDs, or owner proofs. */
+  daemon: DesktopDaemonState | null
   platform: NodeJS.Platform
   /** Effective OS appearance forwarded by Electron; auto themes resolve from this live value. */
   systemMode: 'light' | 'dark'

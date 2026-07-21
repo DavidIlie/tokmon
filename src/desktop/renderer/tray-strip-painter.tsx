@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react'
 import type { Config, WebSnapshot } from '../../web/contract'
 import { usageFromHeadroom } from '../../usage-semantics'
 import { formatCompactTokens } from '../../shared/format'
+import type { DesktopUpdateState } from '../shared/desktop-contract'
 import { markRenderPlan, providerMark, providerMonogram } from './provider-icons'
 import {
   providerRepresentative,
@@ -15,8 +16,14 @@ function trayFont(): string {
   return `${TRAY_STRIP.fontWeight} ${TRAY_STRIP.fontPx}px -apple-system, system-ui, sans-serif`
 }
 
-function paintTrayStrip(canvas: HTMLCanvasElement, scale: number, values: readonly TraySegmentValue[], measure: (text: string) => number): number {
-  const layout = trayStripLayout(values, measure)
+function paintTrayStrip(
+  canvas: HTMLCanvasElement,
+  scale: number,
+  values: readonly TraySegmentValue[],
+  measure: (text: string) => number,
+  updateReady: boolean,
+): number {
+  const layout = trayStripLayout(values, measure, updateReady)
   canvas.width = Math.max(1, Math.round(layout.width * scale))
   canvas.height = Math.round(TRAY_STRIP.height * scale)
   const ctx = canvas.getContext('2d')
@@ -67,11 +74,25 @@ function paintTrayStrip(canvas: HTMLCanvasElement, scale: number, values: readon
       ctx.restore()
     }
   }
+
+  if (layout.updateCenterX !== null) {
+    ctx.save()
+    ctx.font = '700 11px -apple-system, system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillText('↑', layout.updateCenterX, TRAY_STRIP.updateBaselineY)
+    ctx.restore()
+  }
   return layout.width
 }
 
-export function TrayStripPainter({ snapshot, config, pins, platform, now }: {
-  snapshot: WebSnapshot | null; config: Config; pins: string[]; platform: string; now: number
+export function TrayStripPainter({ snapshot, config, pins, platform, now, update }: {
+  snapshot: WebSnapshot | null
+  config: Config
+  pins: string[]
+  platform: string
+  now: number
+  update: DesktopUpdateState
 }) {
   const canvas1x = useRef<HTMLCanvasElement>(null)
   const canvas2x = useRef<HTMLCanvasElement>(null)
@@ -105,17 +126,19 @@ export function TrayStripPainter({ snapshot, config, pins, platform, now }: {
       if (!measureContext) return
       measureContext.font = trayFont()
       const measure = (text: string) => measureContext.measureText(text).width
-      const logicalWidth = paintTrayStrip(canvas1, 1, values, measure)
-      paintTrayStrip(canvas2, 2, values, measure)
+      const updateReady = update.status === 'downloaded'
+      const logicalWidth = paintTrayStrip(canvas1, 1, values, measure, updateReady)
+      paintTrayStrip(canvas2, 2, values, measure, updateReady)
       void window.tokmon.sendTrayStrip({
         dataUrl1x: canvas1.toDataURL('image/png'),
         dataUrl2x: canvas2.toDataURL('image/png'),
         logicalWidth,
+        updateReady,
       })
     } catch {
       // The main process retains its procedural fallback icon.
     }
-  }, [snapshot, pins, platform, config.tray.activeTimeoutMin, config.tray.menuBarValue, now])
+  }, [snapshot, pins, platform, config.tray.activeTimeoutMin, config.tray.menuBarValue, now, update.status])
   return (
     <>
       <canvas ref={canvas1x} className="tray-strip-canvas" aria-hidden="true" />

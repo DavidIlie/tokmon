@@ -6,9 +6,10 @@ export interface TrayIconSpec {
   unlitOpacity: number
   critical: boolean
   available: boolean
+  updateReady: boolean
 }
 
-export function trayIconSpec(usedPct: number | null, critical: boolean): TrayIconSpec {
+export function trayIconSpec(usedPct: number | null, critical: boolean, updateReady = false): TrayIconSpec {
   const used = usedPct === null || !Number.isFinite(usedPct)
     ? null
     : Math.max(0, Math.min(100, usedPct))
@@ -20,6 +21,7 @@ export function trayIconSpec(usedPct: number | null, critical: boolean): TrayIco
     unlitOpacity: 0.45,
     critical,
     available: used !== null,
+    updateReady,
   }
 }
 
@@ -33,16 +35,18 @@ export function menuBarTitle(
   usedPct: number | null,
   _critical: boolean,
   alternate?: string,
+  updateReady = false,
 ): string {
-  if (!showText) return ''
-  if (alternate !== undefined) return alternate
-  if (usedPct === null || !Number.isFinite(usedPct)) return ''
+  const suffix = updateReady ? ' ↑' : ''
+  if (!showText) return updateReady ? '↑' : ''
+  if (alternate !== undefined) return `${alternate}${suffix}`
+  if (usedPct === null || !Number.isFinite(usedPct)) return updateReady ? '↑' : ''
   const bounded = Math.max(0, Math.min(100, usedPct))
   const used = bounded > 0 && bounded < 1 ? '<1' : String(Math.round(bounded))
-  return `${used}%`
+  return `${used}%${suffix}`
 }
 
 /** Disconnected state is conveyed by the icon's critical ring + tooltip words, not "!". */
-export function disconnectedMenuBarTitle(_error: boolean): string {
-  return ''
+export function disconnectedMenuBarTitle(_error: boolean, updateReady = false): string {
+  return updateReady ? '↑' : ''
 }

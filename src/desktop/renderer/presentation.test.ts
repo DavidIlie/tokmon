@@ -279,6 +279,23 @@ test('strip layout: shared centred numeral slot, 8pt gaps, 1pt bleed, no divider
   assert.equal(one.width, seg + TRAY_STRIP.edgeBleed)
 })
 
+test('a downloaded update adds one stable trailing action glyph after zero, one, or two pins', () => {
+  for (const values of [
+    [],
+    [{ providerId: 'claude', usage: 42, active: false }],
+    [
+      { providerId: 'claude', usage: 42, active: false },
+      { providerId: 'codex', usage: 17, active: true },
+    ],
+  ]) {
+    const ordinary = trayStripLayout(values, stubMeasure)
+    const ready = trayStripLayout(values, stubMeasure, true)
+    const gap = values.length > 0 ? TRAY_STRIP.updateGap : 0
+    assert.equal(ready.width, ordinary.width + gap + TRAY_STRIP.updateBox)
+    assert.equal(ready.updateCenterX, ordinary.width + gap + TRAY_STRIP.updateBox / 2)
+  }
+})
+
 test('severity never changes tray geometry or adds punctuation', () => {
   const mixed = trayStripLayout([
     { providerId: 'claude', usage: 95, active: false },

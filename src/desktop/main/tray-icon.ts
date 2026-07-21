@@ -6,8 +6,8 @@ function pngDataUrl(buffer: Buffer): string {
   return `data:image/png;base64,${buffer.toString('base64')}`
 }
 
-export function createTrayIcon(usedPct: number | null, critical: boolean): NativeImage {
-  const spec = trayIconSpec(usedPct, critical)
+export function createTrayIcon(usedPct: number | null, critical: boolean, updateReady = false): NativeImage {
+  const spec = trayIconSpec(usedPct, critical, updateReady)
   // NativeImage data URLs support PNG/JPEG, not SVG. Supplying an SVG here
   // creates a valid Tray with an empty bitmap: the title appears, the ring does
   // not. Build explicit PNG representations so the status item survives both

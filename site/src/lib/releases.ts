@@ -65,7 +65,7 @@ export const PLATFORM_TARGETS: PlatformTarget[] = [
     key: "win-x64",
     os: "Windows",
     label: "Windows",
-    sublabel: "x64 · signed .exe installer",
+    sublabel: "x64 · unsigned .exe installer",
     ext: "exe",
     pattern: /^tokmon-desktop-.+-win-x64\.exe$/,
   },

@@ -43,6 +43,10 @@ desktop build is still running an incompatible protocol, the CLI reports both
 protocol versions immediately and asks you to update/restart the desktop app or
 quit it; it never terminates a desktop-owned daemon behind your back.
 
+An authenticated older CLI daemon can be retired during an upgrade. A newer
+CLI daemon is never terminated by an older desktop or CLI, which prevents two
+installed versions from repeatedly replacing each other's background service.
+
 If pnpm's `minimumReleaseAge` policy intentionally holds back a just-published
 Tokmon CLI, bare `pnpm dlx tokmon` may reuse an older cached version. Keep the
 global policy and bypass it for this one trusted package invocation:
@@ -57,7 +61,10 @@ and `pnpm dev*` never share a socket or cache record.
 ## Updates
 
 Release builds check GitHub Releases after launch and every hour. An update is
-downloaded in the background, then appears as a Restart action. It also installs
-on the next clean quit. Development builds never contact the update feed.
+downloaded in the background. Once it is ready, a trailing `↑` appears in the
+menu bar and the popover offers **Restart to Install**. It also installs on the
+next clean quit. Development builds never contact the update feed.
 
-Use Check for Updates from the tray context menu to request an immediate check.
+Use **Check for Updates** in Desktop App settings or the tray context menu to
+request an immediate check. Linux AppImage builds use the same updater; deb
+packages defer updates to the system package manager.

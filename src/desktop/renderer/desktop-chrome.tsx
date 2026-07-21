@@ -49,12 +49,19 @@ function SettingsIcon() {
   return <svg viewBox="0 0 16 16" width={16} height={16} aria-hidden="true"><path d="M6.8 1.5h2.4l.35 1.45c.35.12.68.26.98.45l1.28-.77 1.7 1.7-.77 1.28c.19.3.33.63.45.98L14.5 7v2l-1.31.4c-.12.35-.26.68-.45.98l.77 1.28-1.7 1.7-1.28-.77c-.3.19-.63.33-.98.45L9.2 14.5H6.8l-.35-1.46a5 5 0 0 1-.98-.45l-1.28.77-1.7-1.7.77-1.28a5 5 0 0 1-.45-.98L1.5 9V7l1.31-.4c.12-.35.26-.68.45-.98l-.77-1.28 1.7-1.7 1.28.77c.3-.19.63-.33.98-.45L6.8 1.5Z" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" strokeWidth="1.15"/></svg>
 }
 
-export function Footer({ snapshot, refreshing, now, appName, appVersion, daemonRole, onRefresh, onSettings, onDashboard }: {
+function daemonLabel(daemon: DesktopState['daemon']): string | null {
+  if (!daemon) return null
+  const owner = daemon.role === 'owner' ? 'this app' : daemon.ownerKind === 'cli' ? 'CLI' : 'desktop app'
+  return `Background service ${daemon.version} · protocol ${daemon.protocolVersion} · ${owner}`
+}
+
+export function Footer({ snapshot, refreshing, now, appName, appVersion, daemon, onRefresh, onSettings, onDashboard }: {
   snapshot: WebSnapshot | null; refreshing: boolean; now: number
-  appName: string; appVersion: string; daemonRole: DesktopState['daemonRole']
+  appName: string; appVersion: string; daemon: DesktopState['daemon']
   onRefresh(): void; onSettings(): void; onDashboard(): void
 }) {
   const freshness = refreshing ? 'Refreshing…' : updatedLabel(snapshot, now)
+  const service = daemonLabel(daemon)
   return (
     <footer className="footer">
       <div className="footer-status">
@@ -67,10 +74,10 @@ export function Footer({ snapshot, refreshing, now, appName, appVersion, daemonR
         {appVersion && (
           <span
             className="footer-app"
-            title={daemonRole === 'attached' ? `Version ${appVersion} · Using the Tokmon CLI background service` : `Version ${appVersion}`}
-            aria-label={`${appName} version ${appVersion}${daemonRole === 'attached' ? ', using CLI background service' : ''}`}
+            title={`Version ${appVersion}${service ? ` · ${service}` : ''}`}
+            aria-label={`${appName} version ${appVersion}${service ? `, ${service}` : ''}`}
           >
-            <span aria-hidden="true">{appName} {appVersion}{daemonRole === 'attached' ? ' · CLI service' : ''}</span>
+            <span aria-hidden="true">{appName} {appVersion}{daemon?.role === 'attached' ? ' · CLI service' : ''}</span>
           </span>
         )}
       </div>
@@ -92,7 +99,7 @@ export function UpdateReady({ update, currentVersion, onInstall }: {
         <strong>Tokmon {update.availableVersion} is ready</strong>
         <small>Current version {currentVersion}</small>
       </span>
-      <button type="button" onClick={onInstall}>Restart</button>
+      <button type="button" onClick={onInstall}>Restart to Install</button>
     </aside>
   )
 }
@@ -240,6 +247,7 @@ export function ThemeSettings({ config, systemMode, onPatch, onBack, onDashboard
 
 function updateStatusCopy(update: DesktopUpdateState): string {
   if (update.status === 'disabled') return 'Automatic updates are available in the installed app'
+  if (update.status === 'unsupported') return 'Updates for this Linux package are managed by your package manager'
   if (update.status === 'checking') return 'Looking for a newer version…'
   if (update.status === 'available' || update.status === 'downloading') {
     const progress = update.progressPercent === null ? '' : ` · ${Math.round(update.progressPercent)}%`
@@ -250,11 +258,12 @@ function updateStatusCopy(update: DesktopUpdateState): string {
   return 'Checks automatically after launch and every hour'
 }
 
-export function DesktopSettings({ config, groups, update, appVersion, onPatch, onBack, onDashboard, onCheckUpdates, onQuit }: {
+export function DesktopSettings({ config, groups, update, appVersion, daemon, onPatch, onBack, onDashboard, onCheckUpdates, onQuit }: {
   config: Config
   groups: ProviderGroup[]
   update: DesktopUpdateState
   appVersion: string
+  daemon: DesktopState['daemon']
   onPatch(mutate: (config: Config) => Config): void
   onBack(): void
   onDashboard(): void
@@ -264,10 +273,13 @@ export function DesktopSettings({ config, groups, update, appVersion, onPatch, o
   const pins = config.tray.pinnedProviders
   const expandedProviders = config.desktop?.expandedProviders ?? []
   const knownProviders = new Set(groups.map(group => group.providerId))
+  const service = daemonLabel(daemon)
   const updateBusy = update.status === 'checking' || update.status === 'available' || update.status === 'downloading'
-  const updateDisabled = update.status === 'disabled' || updateBusy || update.status === 'downloaded'
+  const updateDisabled = update.status === 'disabled' || update.status === 'unsupported' || updateBusy || update.status === 'downloaded'
   const updateLabel = update.status === 'downloaded'
     ? 'Update Ready'
+    : update.status === 'unsupported'
+      ? 'Use Package Manager'
     : update.status === 'checking'
       ? 'Checking…'
       : update.status === 'available' || update.status === 'downloading'
@@ -319,6 +331,7 @@ export function DesktopSettings({ config, groups, update, appVersion, onPatch, o
           <span className="desktop-app-version">
             <b>Tokmon {appVersion}</b>
             <small>{updateStatusCopy(update)}</small>
+            {service && <small>{service}</small>}
           </span>
           <span className="desktop-action-buttons">
             <button

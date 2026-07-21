@@ -11,6 +11,11 @@ import {
   type LockfileOptions,
 } from '../web/lockfile'
 import { daemonChannelFromWire, resolveDaemonChannel, type DaemonChannel } from '../web/daemon-channel'
+import {
+  classifyDaemonCompatibility,
+  daemonConflictMessage,
+  type DaemonOwnerIdentity,
+} from '../web/daemon-compatibility'
 
 const HANDSHAKE_TIMEOUT_MS = process.platform === 'win32' ? 15_000 : 10_000
 
@@ -18,10 +23,11 @@ export type DaemonKind = 'spawned' | 'degraded'
 
 export type DaemonIssue =
   | {
-      kind: 'incompatible-desktop'
+      kind: 'incompatible-desktop' | 'incompatible-cli' | 'incompatible-owner'
       message: string
+      ownerKind: 'cli' | 'desktop' | null
       ownerVersion: string | null
-      ownerProtocolVersion: number
+      ownerProtocolVersion: number | null
       clientProtocolVersion: number
     }
   | {
@@ -102,36 +108,59 @@ async function attach(opts: LockfileOptions, protocolVersion: number): Promise<D
   return lock ? connected(lock.url) : null
 }
 
-async function incompatibleDesktopIssue(
+function incompatibleOwnerIssue(
+  owner: DaemonOwnerIdentity,
+  protocolVersion: number,
+  options: { retirementFailed?: boolean; verificationFailed?: boolean } = {},
+): DaemonIssue {
+  return {
+    kind: owner.ownerKind === 'desktop'
+      ? 'incompatible-desktop'
+      : owner.ownerKind === 'cli'
+        ? 'incompatible-cli'
+        : 'incompatible-owner',
+    message: daemonConflictMessage(owner, {
+      clientKind: 'cli',
+      clientProtocolVersion: protocolVersion,
+      ...options,
+    }),
+    ownerKind: owner.ownerKind ?? null,
+    ownerVersion: owner.version ?? null,
+    ownerProtocolVersion: owner.protocolVersion ?? null,
+    clientProtocolVersion: protocolVersion,
+  }
+}
+
+async function arbitrateIncompatibleOwner(
   opts: LockfileOptions,
   protocolVersion: number,
   timeoutMs: number,
-): Promise<DaemonIssue | null> {
+): Promise<{ retired: boolean; issue: DaemonIssue | null }> {
   const owner = readForeignLock(opts)
-  if (
-    !owner || owner.ownerKind !== 'desktop' || owner.protocolVersion === undefined ||
-    owner.protocolVersion === protocolVersion || !isAlive(owner.pid)
-  ) return null
+  if (!owner || !isAlive(owner.pid)) return { retired: false, issue: null }
+  const decision = classifyDaemonCompatibility(owner, protocolVersion)
   const verified = await probeHealth(owner.url, owner.wsToken, {
-    ownerKind: 'desktop',
     channel: owner.channel,
-    protocolVersion: owner.protocolVersion,
+    ...(owner.ownerKind ? { ownerKind: owner.ownerKind } : {}),
+    ...(owner.protocolVersion === undefined ? {} : { protocolVersion: owner.protocolVersion }),
     ...(owner.version ? { version: owner.version } : {}),
   }, Math.min(500, timeoutMs))
-  if (!verified) return null
-  const ownerIsOlder = owner.protocolVersion < protocolVersion
-  const direction = ownerIsOlder ? 'an older' : 'a newer'
-  const ownerName = owner.version ? `Tokmon Desktop ${owner.version}` : 'Tokmon Desktop'
-  const recovery = ownerIsOlder
-    ? 'Update and restart the desktop app, or quit it before running the CLI.'
-    : 'Update the CLI, or quit the desktop app before running this version. With pnpm release-age filtering, use `pnpm --config.minimum-release-age=0 dlx tokmon@latest` once.'
-  return {
-    kind: 'incompatible-desktop',
-    message: `${ownerName} is using ${direction} background service (protocol ${owner.protocolVersion}; this CLI needs ${protocolVersion}). ${recovery}`,
-    ownerVersion: owner.version ?? null,
-    ownerProtocolVersion: owner.protocolVersion,
-    clientProtocolVersion: protocolVersion,
+  if (!verified) {
+    return {
+      retired: false,
+      issue: incompatibleOwnerIssue(owner, protocolVersion, { verificationFailed: true }),
+    }
   }
+  if (decision.action !== 'retire') {
+    return { retired: false, issue: incompatibleOwnerIssue(owner, protocolVersion) }
+  }
+  const retired = await retireIncompatibleCliOwner(opts, protocolVersion, timeoutMs)
+  return retired
+    ? { retired: true, issue: null }
+    : {
+        retired: false,
+        issue: incompatibleOwnerIssue(owner, protocolVersion, { retirementFailed: true }),
+      }
 }
 
 export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<DaemonHandle> {
@@ -143,12 +172,23 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
   const existing = await attach(lockOpts, protocolVersion)
   if (existing) return existing
 
-  const desktopIssue = await incompatibleDesktopIssue(lockOpts, protocolVersion, timeoutMs)
-  if (desktopIssue) return degraded(desktopIssue)
-
-  await retireIncompatibleCliOwner(lockOpts, protocolVersion, timeoutMs)
-  const upgraded = await attach(lockOpts, protocolVersion)
-  if (upgraded) return upgraded
+  // Re-read and re-classify after retirement. A newer owner may win the lock
+  // race and must never be signalled or overwritten by this older requester.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const arbitration = await arbitrateIncompatibleOwner(lockOpts, protocolVersion, timeoutMs)
+    if (arbitration.issue) return degraded(arbitration.issue)
+    if (!arbitration.retired) break
+    const upgraded = await attach(lockOpts, protocolVersion)
+    if (upgraded) return upgraded
+  }
+  const raced = await attach(lockOpts, protocolVersion)
+  if (raced) return raced
+  const raceArbitration = await arbitrateIncompatibleOwner(lockOpts, protocolVersion, timeoutMs)
+  if (raceArbitration.issue) return degraded(raceArbitration.issue)
+  if (raceArbitration.retired) {
+    const replacement = await attach(lockOpts, protocolVersion)
+    if (replacement) return replacement
+  }
 
   const entry = opts.entry ?? process.argv[1]
   if (!entry) return degraded()

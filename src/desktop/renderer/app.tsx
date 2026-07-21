@@ -319,6 +319,7 @@ export function App() {
               config={config} groups={groups}
               update={state?.update ?? { status: 'disabled', availableVersion: null, progressPercent: null, error: null }}
               appVersion={state?.appVersion ?? ''}
+              daemon={state?.daemon ?? null}
               onPatch={mutate => { void updateConfig(mutate) }}
               onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')}
               onCheckUpdates={() => { void checkForUpdates() }}
@@ -348,7 +349,10 @@ export function App() {
                   <p className="pin-hint">Pin up to {MAX_PINS} providers to the menu bar.</p>
                 )}
               </div>
-              <TrayStripPainter snapshot={snapshot} config={config} pins={pins} platform={state?.platform ?? ''} now={now} />
+              <TrayStripPainter
+                snapshot={snapshot} config={config} pins={pins} platform={state?.platform ?? ''} now={now}
+                update={state?.update ?? { status: 'disabled', availableVersion: null, progressPercent: null, error: null }}
+              />
             </>
           )}
       <UpdateReady
@@ -358,7 +362,7 @@ export function App() {
       <Footer
         snapshot={snapshot} refreshing={refreshing} now={now}
         appName={state?.appName ?? 'Tokmon'} appVersion={state?.appVersion ?? ''}
-        daemonRole={state?.daemonRole ?? null}
+        daemon={state?.daemon ?? null}
         onRefresh={() => void refresh()} onSettings={() => setSurface('settings')} onDashboard={() => openDashboard()}
       />
       {toast && <Toast message={toast} />}

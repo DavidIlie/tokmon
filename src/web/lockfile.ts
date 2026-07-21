@@ -6,6 +6,7 @@ import {
   resolveDaemonChannel,
   type DaemonChannel,
 } from './daemon-channel'
+import { classifyDaemonCompatibility } from './daemon-compatibility'
 
 export interface DaemonLock {
   pid: number
@@ -372,10 +373,9 @@ export async function retireIncompatibleCliOwner(
   if (compatible?.protocolVersion === protocolVersion) return false
 
   const foreign = readForeignLock(opts)
-  const legacyCli = foreign?.ownerKind === undefined && foreign?.protocolVersion === undefined
+  const decision = foreign && classifyDaemonCompatibility(foreign, protocolVersion)
   if (
-    !foreign || foreign.state !== 'ready' || foreign.ownerKind === 'desktop' ||
-    (foreign.ownerKind !== 'cli' && !legacyCli) ||
+    !foreign || foreign.state !== 'ready' || decision?.action !== 'retire' ||
     foreign.pid === process.pid || !isAlive(foreign.pid)
   ) return false
 
@@ -383,7 +383,9 @@ export async function retireIncompatibleCliOwner(
   const healthChannel = daemonChannelFromWire(health?.channel)
   if (
     health?.ok !== true || health.owner !== true ||
-    (health.ownerKind !== undefined && health.ownerKind !== 'cli') ||
+    (decision.reason === 'legacy-cli'
+      ? health.ownerKind !== undefined || health.protocolVersion !== undefined
+      : health.ownerKind !== 'cli' || health.protocolVersion !== foreign.protocolVersion) ||
     healthChannel !== foreign.channel
   ) return false
 

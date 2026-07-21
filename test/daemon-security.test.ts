@@ -10,7 +10,12 @@ import { attachOrSpawn } from '../src/client/daemon-handle.ts'
 import { createDaemonRpcClient } from '../src/client/daemon-rpc-client.ts'
 import { DEFAULTS, PROVIDER_IDS, type Config } from '../src/config.ts'
 import { TOKMON_CAPABILITIES, TOKMON_PROTOCOL_VERSION } from '../src/rpc/contract.ts'
-import { acquireOrAttachDaemon, type DaemonController } from '../src/web/daemon-controller.ts'
+import {
+  acquireOrAttachDaemon,
+  DaemonOwnerUnavailableError,
+  type DaemonController,
+} from '../src/web/daemon-controller.ts'
+import { classifyDaemonCompatibility } from '../src/web/daemon-compatibility.ts'
 import {
   acquireLock,
   lockfilePath,
@@ -337,7 +342,7 @@ test('a client attaches across app-version mismatch when the daemon protocol mat
   }
 })
 
-test('a new client replaces an authenticated protocol-incompatible CLI daemon instead of degrading', { timeout: 20_000 }, async (t) => {
+test('a newer client replaces an authenticated older-protocol CLI daemon instead of degrading', { timeout: 20_000 }, async (t) => {
   if (process.platform === 'win32') {
     t.skip('signal-based upgrade assertion is POSIX-specific')
     return
@@ -346,7 +351,7 @@ test('a new client replaces an authenticated protocol-incompatible CLI daemon in
   await mkdir(join(root, 'home'), { recursive: true })
   const old = testDaemon(root, {
     version: '0.22.7',
-    protocolVersion: TOKMON_PROTOCOL_VERSION + 1,
+    protocolVersion: TOKMON_PROTOCOL_VERSION - 1,
     ownerKind: 'cli',
   })
   let replacementPid: number | null = null
@@ -381,6 +386,126 @@ test('a new client replaces an authenticated protocol-incompatible CLI daemon in
     }
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test('an older client never signals an authenticated newer-protocol CLI daemon', { timeout: 10_000 }, async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('signal assertion is POSIX-specific')
+    return
+  }
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-daemon-no-downgrade-'))
+  await mkdir(join(root, 'home'), { recursive: true })
+  const newer = testDaemon(root, {
+    version: '0.99.0',
+    protocolVersion: TOKMON_PROTOCOL_VERSION + 1,
+    ownerKind: 'cli',
+  })
+  try {
+    await newer.handshake
+    const handle = await attachOrSpawn({
+      cachePath: join(root, 'cache'),
+      entry: join(process.cwd(), 'src/cli.tsx'),
+      execArgv: ['--import', 'tsx'],
+      timeoutMs: 500,
+    })
+    assert.equal(handle.kind, 'degraded')
+    assert.deepEqual(handle.issue && {
+      kind: handle.issue.kind,
+      ownerKind: 'ownerKind' in handle.issue ? handle.issue.ownerKind : undefined,
+      ownerVersion: 'ownerVersion' in handle.issue ? handle.issue.ownerVersion : undefined,
+      ownerProtocolVersion: 'ownerProtocolVersion' in handle.issue ? handle.issue.ownerProtocolVersion : undefined,
+      clientProtocolVersion: 'clientProtocolVersion' in handle.issue ? handle.issue.clientProtocolVersion : undefined,
+    }, {
+      kind: 'incompatible-cli',
+      ownerKind: 'cli',
+      ownerVersion: '0.99.0',
+      ownerProtocolVersion: TOKMON_PROTOCOL_VERSION + 1,
+      clientProtocolVersion: TOKMON_PROTOCOL_VERSION,
+    })
+    assert.match(handle.issue?.message ?? '', /Update the CLI/)
+    assert.equal(newer.child.exitCode, null)
+    assert.equal(readLock({ cachePath: join(root, 'cache') })?.pid, newer.child.pid)
+  } finally {
+    if (newer.child.exitCode === null && newer.child.signalCode === null) newer.child.kill('SIGKILL')
+    await waitForExit(newer.child).catch(() => {})
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a newer CLI winner in the reservation race is classified and never signalled', { timeout: 10_000 }, async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('signal assertion is POSIX-specific')
+    return
+  }
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-daemon-newer-race-'))
+  await mkdir(join(root, 'home'), { recursive: true })
+  let newer: ReturnType<typeof testDaemon> | null = null
+  try {
+    await assert.rejects(
+      acquireOrAttachDaemon({
+        ownerKind: 'desktop',
+        cachePath: join(root, 'cache'),
+        port: 0,
+        config: {
+          ...DEFAULTS,
+          accounts: [],
+          disabledProviders: [...PROVIDER_IDS],
+          knownProviders: [],
+          onboarded: true,
+        },
+        ownerWaitAttempts: 1,
+        ownerWaitIntervalMs: 1,
+        beforeReserve: async () => {
+          newer = testDaemon(root, {
+            version: '0.99.0',
+            protocolVersion: TOKMON_PROTOCOL_VERSION + 1,
+            ownerKind: 'cli',
+          })
+          await newer.handshake
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof DaemonOwnerUnavailableError)
+        assert.match(error.message, /Tokmon CLI background service 0\.99\.0/)
+        assert.match(error.message, /Update Tokmon Desktop/)
+        return true
+      },
+    )
+    assert.ok(newer)
+    assert.equal(newer.child.exitCode, null)
+    assert.equal(readLock({ cachePath: join(root, 'cache') })?.pid, newer.child.pid)
+  } finally {
+    if (newer && newer.child.exitCode === null && newer.child.signalCode === null) newer.child.kill('SIGKILL')
+    if (newer) await waitForExit(newer.child).catch(() => {})
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('daemon compatibility arbitration is protocol-directional', () => {
+  assert.deepEqual(
+    classifyDaemonCompatibility({ ownerKind: 'cli', version: 'old-app', protocolVersion: 3 }, 4),
+    { action: 'retire', reason: 'older-cli' },
+  )
+  assert.deepEqual(
+    classifyDaemonCompatibility({ ownerKind: 'cli', version: 'new-app', protocolVersion: 5 }, 4),
+    { action: 'refuse', reason: 'newer-cli' },
+  )
+  assert.deepEqual(
+    classifyDaemonCompatibility({ ownerKind: 'desktop', protocolVersion: 3 }, 4),
+    { action: 'refuse', reason: 'desktop-owner' },
+  )
+  assert.deepEqual(
+    classifyDaemonCompatibility({ ownerKind: 'desktop', protocolVersion: 4 }, 4),
+    { action: 'attach', reason: 'same-protocol' },
+  )
+  assert.deepEqual(
+    classifyDaemonCompatibility({}, 4),
+    { action: 'retire', reason: 'legacy-cli' },
+  )
+  assert.deepEqual(
+    classifyDaemonCompatibility({ protocolVersion: 3 }, 4),
+    { action: 'refuse', reason: 'ambiguous-owner' },
+  )
 })
 
 test('a new client safely takes over an authenticated legacy CLI lock', { timeout: 20_000 }, async (t) => {

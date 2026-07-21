@@ -296,24 +296,28 @@ test('an uncapped spend metric renders value-only with no NaN and no meter', () 
 test('the footer exposes a refresh target and a labelled Open Dashboard action', () => {
   const html = renderToStaticMarkup(createElement(Footer, {
     snapshot: snapshot([account({})]), refreshing: false, now: Date.now(),
-    appName: 'Tokmon', appVersion: '0.28.2', daemonRole: 'owner',
+    appName: 'Tokmon', appVersion: '0.28.2', daemon: {
+      role: 'owner', ownerKind: 'desktop', version: '0.28.2', protocolVersion: 4, channel: 'release',
+    },
     onRefresh: () => {}, onSettings: () => {}, onDashboard: () => {},
   }))
   assert.match(html, /Open Dashboard/)
   assert.match(html, /Updated/)
   assert.match(html, /Tokmon 0\.28\.2/)
-  assert.match(html, /aria-label="Tokmon version 0\.28\.2"/)
+  assert.match(html, /aria-label="Tokmon version 0\.28\.2, Background service 0\.28\.2 · protocol 4 · this app"/)
 })
 
 test('the footer identifies a compatible CLI-owned background service', () => {
   const html = renderToStaticMarkup(createElement(Footer, {
     snapshot: snapshot([account({})]), refreshing: false, now: Date.now(),
-    appName: 'Tokmon', appVersion: '0.28.5', daemonRole: 'attached',
+    appName: 'Tokmon', appVersion: '0.28.5', daemon: {
+      role: 'attached', ownerKind: 'cli', version: '0.28.6', protocolVersion: 4, channel: 'release',
+    },
     onRefresh: () => {}, onSettings: () => {}, onDashboard: () => {},
   }))
 
   assert.match(html, /Tokmon 0\.28\.5 · CLI service/)
-  assert.match(html, /using CLI background service/)
+  assert.match(html, /Background service 0\.28\.6 · protocol 4 · CLI/)
 })
 
 test('a downloaded update earns one explicit restart action above the quiet version footer', () => {
@@ -324,7 +328,7 @@ test('a downloaded update earns one explicit restart action above the quiet vers
 
   assert.match(html, /Tokmon 0\.29\.0 is ready/)
   assert.match(html, /Current version 0\.28\.3/)
-  assert.match(html, />Restart</)
+  assert.match(html, />Restart to Install</)
   assert.equal(renderToStaticMarkup(createElement(UpdateReady, {
     update: { status: 'idle', availableVersion: null, progressPercent: null, error: null },
     currentVersion: '0.28.3', onInstall: () => {},
@@ -348,6 +352,9 @@ test('desktop settings exposes daemon-backed privacy, summary and provider pin c
     config: fullConfig, groups,
     update: { status: 'idle', availableVersion: null, progressPercent: null, error: null },
     appVersion: '0.28.5',
+    daemon: {
+      role: 'attached', ownerKind: 'cli', version: '0.28.7', protocolVersion: 4, channel: 'release',
+    },
     onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
     onCheckUpdates: () => {}, onQuit: () => {},
   }))
@@ -360,9 +367,23 @@ test('desktop settings exposes daemon-backed privacy, summary and provider pin c
   assert.match(html, />30d<\/button>/)
   assert.match(html, /Launch at login/)
   assert.match(html, /Tokmon 0\.28\.5/)
+  assert.match(html, /Background service 0\.28\.7 · protocol 4 · CLI/)
   assert.match(html, /Check for Updates/)
   assert.match(html, /Quit Tokmon/)
   assert.match(html, /Manage all settings/)
+})
+
+test('desktop settings is truthful when the package manager owns Linux updates', () => {
+  const snap = snapshot([account({})])
+  const html = renderToStaticMarkup(createElement(DesktopSettings, {
+    config, groups: groupByProvider(snap),
+    update: { status: 'unsupported', availableVersion: null, progressPercent: null, error: null },
+    appVersion: '0.28.7', daemon: null,
+    onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
+    onCheckUpdates: () => {}, onQuit: () => {},
+  }))
+  assert.match(html, /managed by your package manager/)
+  assert.match(html, /disabled=""[^>]*>Use Package Manager/)
 })
 
 test('desktop settings defers a downloaded update to the global restart action', () => {
@@ -371,6 +392,7 @@ test('desktop settings defers a downloaded update to the global restart action',
     config, groups: groupByProvider(snap),
     update: { status: 'downloaded', availableVersion: '0.29.0', progressPercent: 100, error: null },
     appVersion: '0.28.5',
+    daemon: null,
     onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
     onCheckUpdates: () => {}, onQuit: () => {},
   }))

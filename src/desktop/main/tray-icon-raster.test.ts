@@ -22,3 +22,10 @@ test('tray icon encoder emits RGBA PNGs with the requested dimensions', () => {
     assert.equal(png[25], 6)
   }
 })
+
+test('ready-to-install updates add a distinct lower-right action badge', () => {
+  const ordinary = rasterizeTrayIcon(trayIconSpec(58, false), 32)
+  const ready = rasterizeTrayIcon(trayIconSpec(58, false, true), 32)
+  assert.equal(trayIconSpec(58, false, true).updateReady, true)
+  assert.notDeepEqual(ready, ordinary)
+})

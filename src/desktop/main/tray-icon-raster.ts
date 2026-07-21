@@ -47,6 +47,20 @@ function sampleAlpha(spec: TrayIconSpec, x: number, y: number): number {
     alpha = Math.max(alpha, 0.45)
   }
 
+  if (spec.updateReady) {
+    // A lower-right action badge is spatially distinct from the centre `!`
+    // used for critical quota. Punch a halo first so the arrow stays legible.
+    const badgeX = x - 12.4
+    const badgeY = y - 12.2
+    const distance = Math.hypot(badgeX, badgeY)
+    if (distance <= 3.05) alpha = 0
+    if (distance >= 2.0 && distance <= 2.65) alpha = 1
+    if (
+      (Math.abs(badgeX) <= 0.45 && badgeY >= -1.35 && badgeY <= 1.45)
+      || (badgeY >= -1.55 && badgeY <= -0.75 && Math.abs(badgeX) <= 1.35 + badgeY * 0.55)
+    ) alpha = 1
+  }
+
   return alpha
 }
 

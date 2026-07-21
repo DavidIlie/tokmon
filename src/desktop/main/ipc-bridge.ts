@@ -100,6 +100,7 @@ export function registerDesktopIpc(opts: DesktopIpcOptions): () => void {
       || !Number.isFinite(strip.logicalWidth)
       || strip.logicalWidth < 20
       || strip.logicalWidth > 160
+      || typeof strip.updateReady !== 'boolean'
     ) {
       throw new Error('invalid tray strip payload')
     }

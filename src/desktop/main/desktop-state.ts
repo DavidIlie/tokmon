@@ -9,7 +9,7 @@ export class DesktopStateStore {
   private readonly targets = new Set<WebContents>()
   private value: DesktopState
 
-  constructor(appName = 'Tokmon', appVersion = '0.0.0', role: DesktopState['daemonRole'] = null) {
+  constructor(appName = 'Tokmon', appVersion = '0.0.0', daemon: DesktopState['daemon'] = null) {
     this.value = {
       appName,
       appVersion,
@@ -18,7 +18,7 @@ export class DesktopStateStore {
       config: null,
       configRevision: null,
       connection: 'connecting',
-      daemonRole: role,
+      daemon,
       platform: process.platform,
       systemMode: effectiveSystemMode(false),
       activeAccountIds: [],

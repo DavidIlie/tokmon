@@ -21,6 +21,11 @@ import {
   type LockfileOptions,
 } from './lockfile'
 import { resolveDaemonChannel } from './daemon-channel'
+import {
+  classifyDaemonCompatibility,
+  daemonConflictMessage,
+  type DaemonOwnerIdentity,
+} from './daemon-compatibility'
 
 const OWNER_WAIT_ATTEMPTS = 60
 const OWNER_WAIT_INTERVAL_MS = 50
@@ -50,6 +55,8 @@ export interface AcquireOrAttachDaemonOptions extends LockfileOptions {
   ownerWaitIntervalMs?: number
   ownerVerifyTimeoutMs?: number
   ownerTakeoverTimeoutMs?: number
+  /** Test-only synchronization hook for deterministic reservation-race coverage. */
+  beforeReserve?: () => void | Promise<void>
 }
 
 export interface DaemonController {
@@ -63,9 +70,18 @@ export interface DaemonController {
 }
 
 export class DaemonOwnerUnavailableError extends Error {
-  constructor(message: string) {
+  readonly owner: DaemonOwnerIdentity | null
+  readonly clientProtocolVersion: number | null
+
+  constructor(
+    message: string,
+    owner: DaemonOwnerIdentity | null = null,
+    clientProtocolVersion: number | null = null,
+  ) {
     super(message)
     this.name = 'DaemonOwnerUnavailableError'
+    this.owner = owner
+    this.clientProtocolVersion = clientProtocolVersion
   }
 }
 
@@ -114,11 +130,40 @@ async function waitForOwner(
   return null
 }
 
-function incompatibleOwnerError(lock: Pick<DaemonLock, 'ownerKind' | 'protocolVersion'> | null): DaemonOwnerUnavailableError {
-  if (!lock) return new DaemonOwnerUnavailableError('another legacy CLI daemon owns the lock and could not be retired safely')
+function incompatibleOwnerError(
+  owner: DaemonOwnerIdentity,
+  opts: AcquireOrAttachDaemonOptions,
+  protocolVersion: number,
+  retirementFailed = false,
+): DaemonOwnerUnavailableError {
   return new DaemonOwnerUnavailableError(
-    `another ${lock.ownerKind} daemon owns the lock but is not compatible with protocol ${lock.protocolVersion}`,
+    daemonConflictMessage(owner, {
+      clientKind: opts.ownerKind,
+      clientProtocolVersion: protocolVersion,
+      retirementFailed,
+    }),
+    owner,
+    protocolVersion,
   )
+}
+
+async function retireOrRefuseOwner(
+  owner: DaemonOwnerIdentity,
+  opts: AcquireOrAttachDaemonOptions,
+  protocolVersion: number,
+): Promise<void> {
+  const decision = classifyDaemonCompatibility(owner, protocolVersion)
+  if (decision.action !== 'retire') {
+    throw incompatibleOwnerError(owner, opts, protocolVersion)
+  }
+  const retired = await retireIncompatibleCliOwner(
+    opts,
+    protocolVersion,
+    opts.ownerTakeoverTimeoutMs ?? OWNER_TAKEOVER_TIMEOUT_MS,
+  )
+  if (!retired) {
+    throw incompatibleOwnerError(owner, opts, protocolVersion, true)
+  }
 }
 
 async function discoverOwner(
@@ -159,27 +204,14 @@ async function discoverOwner(
   }
 
   if (current && isAlive(current.pid)) {
-    const retired = await retireIncompatibleCliOwner(
-      opts,
-      protocolVersion,
-      opts.ownerTakeoverTimeoutMs ?? OWNER_TAKEOVER_TIMEOUT_MS,
-    )
-    if (retired) return null
-    throw incompatibleOwnerError(current)
+    await retireOrRefuseOwner(current, opts, protocolVersion)
+    return null
   }
   if (current) reclaimDeadLock(opts)
   const foreign = readForeignLock(opts)
   if (foreign && isAlive(foreign.pid)) {
-    if (await retireIncompatibleCliOwner(
-      opts,
-      protocolVersion,
-      opts.ownerTakeoverTimeoutMs ?? OWNER_TAKEOVER_TIMEOUT_MS,
-    )) return null
-    throw incompatibleOwnerError(
-      foreign.ownerKind && foreign.protocolVersion
-        ? { ownerKind: foreign.ownerKind, protocolVersion: foreign.protocolVersion }
-        : null,
-    )
+    await retireOrRefuseOwner(foreign, opts, protocolVersion)
+    return null
   }
   return null
 }
@@ -210,42 +242,27 @@ async function reserveOwnership(
   opts: AcquireOrAttachDaemonOptions,
   reservation: DaemonLock,
 ): Promise<DaemonLock | null> {
-  if (acquireLock(reservation, opts)) return null
-
-  const winner = await waitForOwner(opts, reservation.protocolVersion)
-  if (winner) return winner
-
-  const current = readLock(opts)
-  if (current && isAlive(current.pid)) {
-    const retired = await retireIncompatibleCliOwner(
-      opts,
-      reservation.protocolVersion,
-      opts.ownerTakeoverTimeoutMs ?? OWNER_TAKEOVER_TIMEOUT_MS,
-    )
-    if (!retired) throw incompatibleOwnerError(current)
+  // Re-classify after each lost reservation race. In particular, an older
+  // requester must never retire a newer CLI which appeared after discovery.
+  for (let attempt = 0; attempt < 3; attempt++) {
     if (acquireLock(reservation, opts)) return null
-    const successor = await waitForOwner(opts, reservation.protocolVersion)
-    if (successor) return successor
-  }
-  if (current) reclaimDeadLock(opts)
+    const winner = await waitForOwner(opts, reservation.protocolVersion)
+    if (winner) return winner
 
-  const foreign = readForeignLock(opts)
-  if (foreign && isAlive(foreign.pid)) {
-    const retired = await retireIncompatibleCliOwner(
-      opts,
-      reservation.protocolVersion,
-      opts.ownerTakeoverTimeoutMs ?? OWNER_TAKEOVER_TIMEOUT_MS,
-    )
-    if (!retired) throw incompatibleOwnerError(
-      foreign.ownerKind && foreign.protocolVersion
-        ? { ownerKind: foreign.ownerKind, protocolVersion: foreign.protocolVersion }
-        : null,
-    )
-  }
+    const current = readLock(opts)
+    if (current && isAlive(current.pid)) {
+      await retireOrRefuseOwner(current, opts, reservation.protocolVersion)
+      continue
+    }
+    if (current) reclaimDeadLock(opts)
 
-  if (acquireLock(reservation, opts)) return null
-  const successor = await waitForOwner(opts, reservation.protocolVersion)
-  if (successor) return successor
+    const foreign = readForeignLock(opts)
+    if (foreign && isAlive(foreign.pid)) {
+      await retireOrRefuseOwner(foreign, opts, reservation.protocolVersion)
+      continue
+    }
+    reclaimAbandonedLock(opts, 0)
+  }
   throw new DaemonOwnerUnavailableError('daemon startup is already in progress')
 }
 
@@ -296,6 +313,7 @@ export async function acquireOrAttachDaemon(
     protocolVersion,
     capabilities,
   )
+  await opts.beforeReserve?.()
   const winner = await reserveOwnership(opts, reservation)
   if (winner) return attached(winner)
 
