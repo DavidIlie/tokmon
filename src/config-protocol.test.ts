@@ -30,6 +30,7 @@ import {
   TOKMON_CAPABILITIES,
   TOKMON_PROTOCOL_VERSION,
   WebSnapshotSchema,
+  type ConfigState,
 } from './rpc/contract'
 import {
   applyConfigUpdate,
@@ -128,8 +129,11 @@ test('the strict RPC tray schema accepts only the normalized shape', () => {
   }))
 })
 
-test('appearance config is additive, strict, and advertised without a protocol bump', () => {
-  assert.equal(TOKMON_PROTOCOL_VERSION, 3)
+test('the desktop snapshot contract has a distinct protocol version', () => {
+  // Required snapshot fields added by the desktop contract are not wire-compatible
+  // with the pre-desktop v3 daemon. Keeping this assertion explicit prevents a
+  // packaged app from silently attaching to an older daemon and reconnect-looping.
+  assert.equal(TOKMON_PROTOCOL_VERSION, 4)
   assert.ok(TOKMON_CAPABILITIES.includes('appearance-v1'))
   assert.ok(TOKMON_CAPABILITIES.includes('theme-engine'))
   assert.doesNotThrow(() => Schema.decodeUnknownSync(AppearanceConfigSchema)(DEFAULTS.appearance))
@@ -280,7 +284,7 @@ test('the RPC config state rejects incompatible protocol versions', () => {
     config: DEFAULTS,
   }))
   assert.doesNotThrow(() => Schema.decodeUnknownSync(ConfigStateSchema)({
-    protocol: { version: 3, capabilities: ['config-cas', 'config-revision', 'allowed-hosts', 'future-addition'] },
+    protocol: { version: TOKMON_PROTOCOL_VERSION, capabilities: ['config-cas', 'config-revision', 'allowed-hosts', 'future-addition'] },
     config: DEFAULTS,
   }))
 })
@@ -550,7 +554,7 @@ test('RPC transports revisions and typed conflicts end to end', async (t) => {
       onConn: state => { connStates.push(state) },
     })
     const initial = await client.getConfig()
-    assert.equal(initial.protocol.version, 3)
+    assert.equal(initial.protocol.version, TOKMON_PROTOCOL_VERSION)
     assert.equal(initial.config.revision, 0)
 
     let resolveInitialStream!: () => void
@@ -617,7 +621,10 @@ test('reconciliation accepts the daemon acknowledgement and discards stale draft
 
 test('a recovered settings stream clears an initial-load dead end without overwriting a dirty draft', () => {
   const remote = { ...DEFAULTS, revision: 2, privacyMode: false }
-  const state = { protocol: { version: 3 as const, capabilities: ['config-cas', 'config-revision', 'allowed-hosts'] as const }, config: remote }
+  const state: ConfigState = {
+    protocol: { version: TOKMON_PROTOCOL_VERSION, capabilities: ['config-cas', 'config-revision', 'allowed-hosts'] },
+    config: remote,
+  }
   const recovered = reconcileSettingsDraft(null, null, false, state)
   assert.equal(recovered.draft, remote)
   assert.equal(recovered.revision, 2)

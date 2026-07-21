@@ -432,7 +432,7 @@ test('a new client safely takes over an authenticated legacy CLI lock', { timeou
   }
 })
 
-test('the desktop controller can own after safely retiring an authenticated legacy CLI', { timeout: 20_000 }, async (t) => {
+test('the desktop replaces an authenticated protocol-v3 CLI daemon before decoding snapshots', { timeout: 20_000 }, async (t) => {
   if (process.platform === 'win32') {
     t.skip('signal-based upgrade assertion is POSIX-specific')
     return
@@ -440,14 +440,14 @@ test('the desktop controller can own after safely retiring an authenticated lega
   const root = await mkdtemp(join(tmpdir(), 'tokmon-desktop-legacy-upgrade-'))
   await mkdir(join(root, 'home'), { recursive: true })
   const old = testDaemon(root, {
-    version: '0.28.1',
+    version: '0.28.2',
     protocolVersion: TOKMON_PROTOCOL_VERSION - 1,
     ownerKind: 'cli',
-    legacy: true,
   })
   let controller: DaemonController | null = null
   try {
-    await old.handshake
+    const oldReady = await old.handshake
+    assert.equal(oldReady.protocolVersion, 3)
     const config: Config = {
       ...DEFAULTS,
       accounts: [],

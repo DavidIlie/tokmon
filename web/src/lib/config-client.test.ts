@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { DEFAULTS, type Config, type ConfigState } from '@shared'
+import { DEFAULTS, TOKMON_PROTOCOL_VERSION, type Config, type ConfigState } from '@shared'
 import { setAppearanceMode, togglePrivacyMode } from './config-client'
 
 function state(revision: number, privacyMode: boolean, patch: Partial<Config> = {}): ConfigState {
   return {
-    protocol: { version: 3, capabilities: [] },
+    protocol: { version: TOKMON_PROTOCOL_VERSION, capabilities: [] },
     config: {
       ...DEFAULTS,
       ...patch,

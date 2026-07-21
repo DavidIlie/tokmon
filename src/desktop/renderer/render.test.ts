@@ -296,13 +296,24 @@ test('an uncapped spend metric renders value-only with no NaN and no meter', () 
 test('the footer exposes a refresh target and a labelled Open Dashboard action', () => {
   const html = renderToStaticMarkup(createElement(Footer, {
     snapshot: snapshot([account({})]), refreshing: false, now: Date.now(),
-    appName: 'Tokmon', appVersion: '0.28.2',
+    appName: 'Tokmon', appVersion: '0.28.2', daemonRole: 'owner',
     onRefresh: () => {}, onSettings: () => {}, onDashboard: () => {},
   }))
   assert.match(html, /Open Dashboard/)
   assert.match(html, /Updated/)
   assert.match(html, /Tokmon 0\.28\.2/)
   assert.match(html, /aria-label="Tokmon version 0\.28\.2"/)
+})
+
+test('the footer identifies a compatible CLI-owned background service', () => {
+  const html = renderToStaticMarkup(createElement(Footer, {
+    snapshot: snapshot([account({})]), refreshing: false, now: Date.now(),
+    appName: 'Tokmon', appVersion: '0.28.5', daemonRole: 'attached',
+    onRefresh: () => {}, onSettings: () => {}, onDashboard: () => {},
+  }))
+
+  assert.match(html, /Tokmon 0\.28\.5 · CLI service/)
+  assert.match(html, /using CLI background service/)
 })
 
 test('a downloaded update earns one explicit restart action above the quiet version footer', () => {

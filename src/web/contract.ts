@@ -53,6 +53,7 @@ export {
   moveProviderSelection,
 } from '../config-schema'
 export { describeConfigUpdateFailure, reconcileSettingsDraft } from '../config-sync'
+export { TOKMON_PROTOCOL_VERSION } from '../rpc/contract'
 export type { ConfigState } from '../rpc/contract'
 export type { PrivacyShortcutEvent } from '../privacy-shortcut'
 export { matchesPrivacyShortcut } from '../privacy-shortcut'

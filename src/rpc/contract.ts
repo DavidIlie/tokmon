@@ -8,7 +8,7 @@ import { BUILT_IN_THEME_PRESET_IDS, THEME_PRESET_IDS } from '../theme'
 export const TOKMON_WS_PATH = '/ws'
 
 /** Bump only for an incompatible wire change. Capabilities gate additive features. */
-export const TOKMON_PROTOCOL_VERSION = 3
+export const TOKMON_PROTOCOL_VERSION = 4
 export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1'] as const
 export type TokmonCapability = typeof TOKMON_CAPABILITIES[number]
 

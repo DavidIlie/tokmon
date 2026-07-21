@@ -49,9 +49,9 @@ function SettingsIcon() {
   return <svg viewBox="0 0 16 16" width={16} height={16} aria-hidden="true"><path d="M6.8 1.5h2.4l.35 1.45c.35.12.68.26.98.45l1.28-.77 1.7 1.7-.77 1.28c.19.3.33.63.45.98L14.5 7v2l-1.31.4c-.12.35-.26.68-.45.98l.77 1.28-1.7 1.7-1.28-.77c-.3.19-.63.33-.98.45L9.2 14.5H6.8l-.35-1.46a5 5 0 0 1-.98-.45l-1.28.77-1.7-1.7.77-1.28a5 5 0 0 1-.45-.98L1.5 9V7l1.31-.4c.12-.35.26-.68.45-.98l-.77-1.28 1.7-1.7 1.28.77c.3-.19.63-.33.98-.45L6.8 1.5Z" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" strokeWidth="1.15"/></svg>
 }
 
-export function Footer({ snapshot, refreshing, now, appName, appVersion, onRefresh, onSettings, onDashboard }: {
+export function Footer({ snapshot, refreshing, now, appName, appVersion, daemonRole, onRefresh, onSettings, onDashboard }: {
   snapshot: WebSnapshot | null; refreshing: boolean; now: number
-  appName: string; appVersion: string
+  appName: string; appVersion: string; daemonRole: DesktopState['daemonRole']
   onRefresh(): void; onSettings(): void; onDashboard(): void
 }) {
   const freshness = refreshing ? 'Refreshing…' : updatedLabel(snapshot, now)
@@ -65,8 +65,12 @@ export function Footer({ snapshot, refreshing, now, appName, appVersion, onRefre
           {freshness}
         </button>
         {appVersion && (
-          <span className="footer-app" title={`Version ${appVersion}`} aria-label={`${appName} version ${appVersion}`}>
-            <span aria-hidden="true">{appName} {appVersion}</span>
+          <span
+            className="footer-app"
+            title={daemonRole === 'attached' ? `Version ${appVersion} · Using the Tokmon CLI background service` : `Version ${appVersion}`}
+            aria-label={`${appName} version ${appVersion}${daemonRole === 'attached' ? ', using CLI background service' : ''}`}
+          >
+            <span aria-hidden="true">{appName} {appVersion}{daemonRole === 'attached' ? ' · CLI service' : ''}</span>
           </span>
         )}
       </div>

@@ -345,6 +345,7 @@ export function App() {
       <Footer
         snapshot={snapshot} refreshing={refreshing} now={now}
         appName={state?.appName ?? 'Tokmon'} appVersion={state?.appVersion ?? ''}
+        daemonRole={state?.daemonRole ?? null}
         onRefresh={() => void refresh()} onSettings={() => setSurface('settings')} onDashboard={() => openDashboard()}
       />
       {toast && <Toast message={toast} />}

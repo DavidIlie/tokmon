@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { parseQueryArgs, queryHelp, runQueryCommand } from './cli-command'
 import { DEFAULTS, PROVIDER_IDS, type Config } from './config'
-import type { ConfigState, ConfigUpdateRequest } from './rpc/contract'
+import { TOKMON_PROTOCOL_VERSION, type ConfigState, type ConfigUpdateRequest } from './rpc/contract'
 import type { WebSnapshot } from './web/contract'
 
 const state = (config: Config): ConfigState => ({
-  protocol: { version: 3, capabilities: [] },
+  protocol: { version: TOKMON_PROTOCOL_VERSION, capabilities: [] },
   config,
 })
 
