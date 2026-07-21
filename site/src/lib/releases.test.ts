@@ -1,15 +1,30 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import rootPackage from "../../../package.json" with { type: "json" };
 import {
   pickAsset,
   normalizeRelease,
+  normalizeCachedRelease,
   hasAnyDesktopAsset,
   PLATFORM_TARGETS,
   type PlatformKey,
   type Release,
 } from "./releases.ts";
+import { FALLBACK_VERSION } from "./site.ts";
 
 const VERSION = "0.28.2";
+
+test("the static fallback follows the repository release version", () => {
+  assert.equal(FALLBACK_VERSION, `v${rootPackage.version}`);
+});
+
+test("release cache entries expire so an open tab discovers a new release", () => {
+  const now = 1_000_000;
+  const release = { tag_name: "v0.28.5", assets: [] };
+  assert.equal(normalizeCachedRelease({ cachedAt: now - 60_000, release }, now)?.tag_name, "v0.28.5");
+  assert.equal(normalizeCachedRelease({ cachedAt: now - 10 * 60_000, release }, now), null);
+  assert.equal(normalizeCachedRelease(release, now), null);
+});
 
 // The full set of real electron-builder basenames for a given version.
 function assetsFor(version: string) {

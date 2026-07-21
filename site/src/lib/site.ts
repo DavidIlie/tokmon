@@ -1,3 +1,5 @@
+import rootPackage from "../../../package.json" with { type: "json" };
+
 // Static content model for the marketing site. Everything here is derived from
 // the real repo: provider rows mirror README.md's provider tables, vector marks
 // are the single-path monochrome marks from
@@ -15,10 +17,9 @@ export const LICENSE_URL = `${REPO_URL}/blob/master/LICENSE`;
 // Absolute without assuming which domain will eventually host the site.
 export const OG_IMAGE_URL = `https://raw.githubusercontent.com/${REPO_SLUG}/master/site/public/screenshot.png`;
 
-// The current published latest release. Zero desktop assets are attached to it
-// (verified against the GitHub API), so the desktop download surfaces render as
-// "coming soon" until artifacts appear — the release picker upgrades them live.
-export const FALLBACK_VERSION = "v0.28.2";
+// Server-rendered release copy follows the repository package version. The
+// browser release picker upgrades links and notes from the GitHub API.
+export const FALLBACK_VERSION = `v${rootPackage.version}`;
 
 export interface ProviderRow {
   id: string;

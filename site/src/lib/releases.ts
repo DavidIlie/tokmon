@@ -142,10 +142,20 @@ export function normalizeRelease(data: unknown): Release | null {
 }
 
 const LATEST_RELEASE_API = `https://api.github.com/repos/${REPO_SLUG}/releases/latest`;
-const CACHE_KEY = "tokmon:latest-release:v1";
+const CACHE_KEY = "tokmon:latest-release:v2";
+const CACHE_MAX_AGE_MS = 5 * 60_000;
+
+export function normalizeCachedRelease(data: unknown, now = Date.now()): Release | null {
+  if (!data || typeof data !== "object") return null;
+  const cached = data as { cachedAt?: unknown; release?: unknown };
+  if (typeof cached.cachedAt !== "number" || !Number.isFinite(cached.cachedAt)) return null;
+  const age = now - cached.cachedAt;
+  if (age < 0 || age > CACHE_MAX_AGE_MS) return null;
+  return normalizeRelease(cached.release);
+}
 
 /**
- * Fetch the latest release, memoised in sessionStorage for the tab's lifetime.
+ * Fetch the latest release, memoised briefly in sessionStorage.
  * Browser-only (guards `sessionStorage`/`fetch`); returns null on any failure so
  * callers keep their safe server-rendered fallback. Never throws.
  */
@@ -157,7 +167,7 @@ export async function fetchLatestRelease(): Promise<Release | null> {
     try {
       const cached = store.getItem(CACHE_KEY);
       if (cached) {
-        const parsed = normalizeRelease(JSON.parse(cached));
+        const parsed = normalizeCachedRelease(JSON.parse(cached));
         if (parsed) return parsed;
       }
     } catch {
@@ -175,7 +185,7 @@ export async function fetchLatestRelease(): Promise<Release | null> {
     const release = normalizeRelease(await res.json());
     if (release && store) {
       try {
-        store.setItem(CACHE_KEY, JSON.stringify(release));
+        store.setItem(CACHE_KEY, JSON.stringify({ cachedAt: Date.now(), release }));
       } catch {
         /* storage full / disabled — non-fatal */
       }
