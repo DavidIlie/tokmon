@@ -16,13 +16,18 @@ const HANDSHAKE_TIMEOUT_MS = process.platform === 'win32' ? 15_000 : 10_000
 
 export type DaemonKind = 'spawned' | 'degraded'
 
-export interface DaemonIssue {
-  kind: 'incompatible-desktop'
-  message: string
-  ownerVersion: string | null
-  ownerProtocolVersion: number
-  clientProtocolVersion: number
-}
+export type DaemonIssue =
+  | {
+      kind: 'incompatible-desktop'
+      message: string
+      ownerVersion: string | null
+      ownerProtocolVersion: number
+      clientProtocolVersion: number
+    }
+  | {
+      kind: 'spawn-failed' | 'startup-exit' | 'startup-timeout'
+      message: string
+    }
 
 export interface DaemonHandle {
   kind: DaemonKind
@@ -163,11 +168,20 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
         detached: process.platform !== 'win32',
         env,
       })
-    } catch { resolve(degraded()); return }
+    } catch (error) {
+      const detail = error instanceof Error && error.message ? `: ${error.message}` : ''
+      resolve(degraded({
+        kind: 'spawn-failed',
+        message: `Could not start the Tokmon background service${detail}. Check Node permissions and retry; local-only mode is active.`,
+      }))
+      return
+    }
 
     let settled = false
     let stdout = ''
     let pollTimer: ReturnType<typeof setTimeout> | null = null
+    let startupError: string | null = null
+    let startupExit: { code: number | null; signal: NodeJS.Signals | null } | null = null
     const finish = (handle: DaemonHandle) => {
       if (settled) return
       settled = true
@@ -180,7 +194,26 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
     }
     const tryAttach = (final = false) => { void attach(lockOpts, protocolVersion).then(found => {
       if (found) { finish(found); return }
-      if (final) { finish(degraded()); return }
+      if (final) {
+        if (startupError) {
+          finish(degraded({
+            kind: 'spawn-failed',
+            message: `Could not start the Tokmon background service: ${startupError}. Check Node permissions and retry; local-only mode is active.`,
+          }))
+        } else if (startupExit) {
+          const result = startupExit.signal ? `signal ${startupExit.signal}` : `exit code ${startupExit.code ?? 'unknown'}`
+          finish(degraded({
+            kind: 'startup-exit',
+            message: `The Tokmon background service exited before it was ready (${result}). Update or reinstall Tokmon, then retry; local-only mode is active.`,
+          }))
+        } else {
+          finish(degraded({
+            kind: 'startup-timeout',
+            message: `The Tokmon background service did not become ready within ${Math.ceil(timeoutMs / 1_000)}s. Quit any stuck Tokmon process and retry; local-only mode is active.`,
+          }))
+        }
+        return
+      }
       if (!settled && !pollTimer) {
         pollTimer = setTimeout(() => {
           pollTimer = null
@@ -206,8 +239,14 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
         return
       }
     })
-    child.once('error', () => tryAttach())
-    child.once('exit', () => tryAttach())
+    child.once('error', error => {
+      startupError = error.message || error.name
+      tryAttach()
+    })
+    child.once('exit', (code, signal) => {
+      startupExit = { code, signal }
+      tryAttach()
+    })
   })
 }
 

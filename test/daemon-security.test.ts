@@ -563,6 +563,39 @@ test('an incompatible CLI daemon is never signalled when owner authentication fa
   }
 })
 
+test('daemon startup failures report a concrete recovery instead of a generic unavailable state', async () => {
+  const cachePath = await mkdtemp(join(tmpdir(), 'tokmon-daemon-spawn-error-'))
+  try {
+    const handle = await attachOrSpawn({
+      cachePath,
+      execPath: join(cachePath, 'missing-node'),
+      entry: join(process.cwd(), 'src/cli.tsx'),
+      timeoutMs: 100,
+    })
+    assert.equal(handle.kind, 'degraded')
+    assert.equal(handle.issue?.kind, 'spawn-failed')
+    assert.match(handle.issue?.message ?? '', /Could not start the Tokmon background service/)
+    assert.match(handle.issue?.message ?? '', /Check Node permissions and retry/)
+  } finally {
+    await rm(cachePath, { recursive: true, force: true })
+  }
+})
+
+test('an early daemon exit reports the exit result and reinstall recovery', async () => {
+  const cachePath = await mkdtemp(join(tmpdir(), 'tokmon-daemon-early-exit-'))
+  const entry = join(cachePath, 'exit.mjs')
+  try {
+    await writeFile(entry, 'process.exit(7)\n')
+    const handle = await attachOrSpawn({ cachePath, entry, execPath: process.execPath, timeoutMs: 100 })
+    assert.equal(handle.kind, 'degraded')
+    assert.equal(handle.issue?.kind, 'startup-exit')
+    assert.match(handle.issue?.message ?? '', /exit code 7/)
+    assert.match(handle.issue?.message ?? '', /Update or reinstall Tokmon/)
+  } finally {
+    await rm(cachePath, { recursive: true, force: true })
+  }
+})
+
 function openWebSocket(port: number, host = '127.0.0.1', origin?: string): Promise<Socket> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, '127.0.0.1')
