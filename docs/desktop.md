@@ -25,6 +25,10 @@ show:
 - burn rate and cache savings;
 - a configurable 7, 14, or 30-day graph.
 
+A fixed summary above the footer combines every usage-capable provider: today's
+money and token total stays visible while scrolling, with the month total beside
+it and the week detail available to assistive technology and the native tooltip.
+
 A provider with one default account does not repeat a synthetic “account 1”
 label. Account identities appear only when they are needed to distinguish
 multiple accounts.
@@ -61,9 +65,14 @@ and `pnpm dev*` never share a socket or cache record.
 ## Updates
 
 Release builds check GitHub Releases after launch and every hour. An update is
-downloaded in the background. Once it is ready, a trailing `↑` appears in the
-menu bar and the popover offers **Restart to Install**. It also installs on the
-next clean quit. Development builds never contact the update feed.
+downloaded and natively staged by the operating system in the background; the popover shows preparing
+and download progress while that happens. Once it is genuinely ready, a trailing
+`↑` appears in the menu bar and the popover offers **Restart to Install**. The
+button switches immediately to **Restarting…**, closes the daemon connection with
+a bounded wait, and then hands off once to the native installer. Duplicate clicks
+are ignored and a failed handoff returns to an actionable error instead of leaving
+a silent process. A ready update also installs on the next clean quit. Development
+builds never contact the update feed.
 
 Use **Check for Updates** in Desktop App settings or the tray context menu to
 request an immediate check. Linux AppImage builds use the same updater; deb

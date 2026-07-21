@@ -13,6 +13,7 @@ import {
 } from '../../web/contract'
 import type { DesktopState, DesktopUpdateState } from '../shared/desktop-contract'
 import type { ProviderGroup } from './presentation'
+import { snapshotUsageTotals, totalsCopy, usageDataStatus } from '../shared/presentation'
 import {
   isBuiltInThemePreset,
   isDarkOnlyThemePreset,
@@ -89,17 +90,66 @@ export function Footer({ snapshot, refreshing, now, appName, appVersion, daemon,
   )
 }
 
-export function UpdateReady({ update, currentVersion, onInstall }: {
-  update: DesktopUpdateState; currentVersion: string; onInstall(): void
-}) {
-  if (update.status !== 'downloaded' || !update.availableVersion) return null
+export function TotalsBar({ snapshot, now }: { snapshot: WebSnapshot; now: number }) {
+  const totals = snapshotUsageTotals(snapshot)
+  if (!totals) return null
+  const status = usageDataStatus(totals.accounts, snapshot.intervalMs, now)
+  if (!totals.dashboard) {
+    return (
+      <aside className="totals" data-state="loading" role="status" aria-label="Cross-provider usage totals are loading">
+        <span className="totals-primary">Usage totals</span>
+        <span className="totals-secondary">Reading usage…</span>
+      </aside>
+    )
+  }
+  const copy = totalsCopy(totals.dashboard)
+  const detail = status ? `${copy.title}; ${status}` : copy.title
+  const warning = status?.startsWith('Partial') ? 'Partial' : status ? 'Stale' : null
+  const state = warning?.toLowerCase() ?? 'ready'
   return (
-    <aside className="update-ready" role="status" aria-label={`Tokmon ${update.availableVersion} is ready to install`}>
+    <aside className="totals" data-state={state} title={detail} aria-label={`${copy.ariaLabel}${status ? ` ${status}.` : ''}`}>
+      <span className="totals-primary">{copy.primary}</span>
+      {warning && <span className="totals-warning" aria-hidden="true">{warning}</span>}
+      <span className="totals-secondary">{copy.secondary}</span>
+    </aside>
+  )
+}
+
+export function UpdateReady({ update, currentVersion, onInstall, onCheck = () => {} }: {
+  update: DesktopUpdateState; currentVersion: string; onInstall(): void; onCheck?(): void
+}) {
+  if (update.status === 'error') {
+    return (
+      <aside className="update-ready" data-state="error" role="alert">
+        <span className="update-copy">
+          <strong>Update couldn’t finish</strong>
+          <small>{update.error ?? 'Check for updates again to retry.'}</small>
+        </span>
+        <button type="button" onClick={onCheck}>Check Again</button>
+      </aside>
+    )
+  }
+  if (!['available', 'downloading', 'downloaded', 'restarting'].includes(update.status) || !update.availableVersion) return null
+  const progress = update.progressPercent === null ? null : Math.round(update.progressPercent)
+  const content = update.status === 'available'
+    ? { title: `Preparing Tokmon ${update.availableVersion}…`, detail: 'Starting download' }
+    : update.status === 'downloading'
+      ? { title: `Downloading Tokmon ${update.availableVersion}…`, detail: progress === null ? 'Downloading…' : `${progress}%` }
+      : update.status === 'restarting'
+        ? { title: `Restarting to install Tokmon ${update.availableVersion}…`, detail: 'Closing the background service safely' }
+        : { title: `Tokmon ${update.availableVersion} is ready`, detail: `Current version ${currentVersion}` }
+  return (
+    <aside className="update-ready" data-state={update.status} role="status" aria-live="polite" aria-label={`${content.title} ${content.detail}`}>
       <span className="update-copy">
-        <strong>Tokmon {update.availableVersion} is ready</strong>
-        <small>Current version {currentVersion}</small>
+        <strong>{content.title}</strong>
+        <small>{content.detail}</small>
       </span>
-      <button type="button" onClick={onInstall}>Restart to Install</button>
+      {update.status === 'downloaded' && <button type="button" onClick={onInstall}>Restart to Install</button>}
+      {(update.status === 'available' || update.status === 'downloading') && (
+        <span className="update-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? undefined}>
+          <span style={{ width: `${progress ?? 4}%` }} />
+        </span>
+      )}
     </aside>
   )
 }
@@ -254,7 +304,8 @@ function updateStatusCopy(update: DesktopUpdateState): string {
     return `Downloading${update.availableVersion ? ` ${update.availableVersion}` : ''}${progress}`
   }
   if (update.status === 'downloaded') return `${update.availableVersion ?? 'An update'} is ready to install`
-  if (update.status === 'error') return 'The last update check failed · Try again'
+  if (update.status === 'restarting') return `Restarting to install ${update.availableVersion ?? 'the update'}…`
+  if (update.status === 'error') return update.error ?? 'The last update failed · Try again'
   return 'Checks automatically after launch and every hour'
 }
 
@@ -274,9 +325,11 @@ export function DesktopSettings({ config, groups, update, appVersion, daemon, on
   const expandedProviders = config.desktop?.expandedProviders ?? []
   const knownProviders = new Set(groups.map(group => group.providerId))
   const service = daemonLabel(daemon)
-  const updateBusy = update.status === 'checking' || update.status === 'available' || update.status === 'downloading'
+  const updateBusy = update.status === 'checking' || update.status === 'available' || update.status === 'downloading' || update.status === 'restarting'
   const updateDisabled = update.status === 'disabled' || update.status === 'unsupported' || updateBusy || update.status === 'downloaded'
-  const updateLabel = update.status === 'downloaded'
+  const updateLabel = update.status === 'restarting'
+    ? 'Restarting…'
+    : update.status === 'downloaded'
     ? 'Update Ready'
     : update.status === 'unsupported'
       ? 'Use Package Manager'

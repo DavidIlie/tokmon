@@ -10,13 +10,17 @@ import {
   togglePin,
 } from './presentation'
 import { ProviderCard } from './provider-card'
-import { ColdState, DesktopSettings, DetectionSettings, EmptyState, Footer, SettingsHub, ThemeSettings, UpdateReady } from './desktop-chrome'
+import { ColdState, DesktopSettings, DetectionSettings, EmptyState, Footer, SettingsHub, ThemeSettings, TotalsBar, UpdateReady } from './desktop-chrome'
 import { TrayStripPainter } from './tray-strip-painter'
 import { OptimisticConfigUpdates } from './config-updates'
 import { applyDesktopTheme } from './theme'
 
 function Toast({ message }: { message: string }) {
   return <div className="toast" role="status">{message}</div>
+}
+
+export function measuredPopoverHeight(contentHeight: number, chromeHeights: readonly number[]): number {
+  return Math.ceil(contentHeight + chromeHeights.reduce((total, height) => total + height, 0))
 }
 
 // ── App ──────────────────────────────────────────────────────────────────────
@@ -59,10 +63,9 @@ export function App() {
       cancelAnimationFrame(animationFrame)
       animationFrame = requestAnimationFrame(() => {
         const content = root.querySelector<HTMLElement>('.sections, .cold')
-        const footer = root.querySelector<HTMLElement>('.footer')
+        const chrome = root.querySelectorAll<HTMLElement>('.totals, .update-ready, .footer')
         const contentHeight = content?.scrollHeight ?? root.scrollHeight
-        const footerHeight = footer?.offsetHeight ?? 0
-        const height = Math.ceil(contentHeight + footerHeight)
+        const height = measuredPopoverHeight(contentHeight, [...chrome].map(element => element.offsetHeight))
         if (height === lastPopoverHeight.current) return
         lastPopoverHeight.current = height
         void window.tokmon.setPopoverHeight(height)
@@ -355,9 +358,12 @@ export function App() {
               />
             </>
           )}
+      {surface === 'usage' && snapshot && <TotalsBar snapshot={snapshot} now={now} />}
       <UpdateReady
         update={state?.update ?? { status: 'disabled', availableVersion: null, progressPercent: null, error: null }}
-        currentVersion={state?.appVersion ?? ''} onInstall={() => void window.tokmon.installUpdate()}
+        currentVersion={state?.appVersion ?? ''}
+        onInstall={() => void window.tokmon.installUpdate()}
+        onCheck={() => void window.tokmon.checkForUpdates()}
       />
       <Footer
         snapshot={snapshot} refreshing={refreshing} now={now}

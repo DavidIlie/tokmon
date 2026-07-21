@@ -17,7 +17,7 @@ export const DESKTOP_CHANNELS = {
 
 export type DesktopConnectionState = 'connecting' | 'live' | 'reconnecting' | 'error'
 export type DesktopRefreshScope = 'all' | 'summary' | 'table' | 'billing' | 'peak'
-export type DesktopUpdateStatus = 'disabled' | 'unsupported' | 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error'
+export type DesktopUpdateStatus = 'disabled' | 'unsupported' | 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'restarting' | 'error'
 
 export interface DesktopUpdateState {
   status: DesktopUpdateStatus
@@ -79,7 +79,7 @@ export interface DesktopApi {
   retryConnection(): Promise<void>
   openDashboard(path?: DashboardPath): Promise<void>
   checkForUpdates(): Promise<void>
-  installUpdate(): Promise<void>
+  installUpdate(): Promise<boolean>
   setPopoverHeight(height: number): Promise<void>
   /** Push the composed menu-bar strip (macOS). No-op on platforms without `setTitle`. */
   sendTrayStrip(payload: TrayStripPayload): Promise<void>

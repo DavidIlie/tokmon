@@ -1,8 +1,9 @@
-import { app, Menu, nativeImage, nativeTheme, shell, Tray, type MenuItemConstructorOptions } from 'electron'
+import { app, autoUpdater as nativeAutoUpdater, Menu, nativeImage, nativeTheme, shell, Tray, type MenuItemConstructorOptions } from 'electron'
 import updaterPackage from 'electron-updater'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { writeFile } from 'node:fs/promises'
+import { withTimeout } from '../../async'
 import { DEFAULT_APPEARANCE, resolveTheme } from '../../theme'
 import { usageFromHeadroom } from '../../usage-semantics'
 import { formatCompactTokens } from '../../shared/format'
@@ -44,6 +45,10 @@ function updateReady(update: DesktopUpdateState): boolean {
 }
 
 function updateTooltipLine(appName: string, update: DesktopUpdateState): string | null {
+  if (update.status === 'restarting') {
+    const version = update.availableVersion ? ` ${update.availableVersion}` : ''
+    return `${appName} is restarting to install${version}…`
+  }
   if (!updateReady(update)) return null
   const version = update.availableVersion ? ` ${update.availableVersion}` : ''
   return `${appName}${version} is ready to install — right-click and choose “Restart to Install”.`
@@ -88,6 +93,7 @@ function providerTooltipLine(
 let daemon: DaemonController | null = null
 let rpc: DaemonRpcClient | null = null
 let closing = false
+let nativeUpdateQuitAllowed = false
 const runtimeDir = path.dirname(fileURLToPath(import.meta.url))
 const { autoUpdater } = updaterPackage
 // Stable macOS/Windows identity keeps the user's chosen status-item position
@@ -129,13 +135,18 @@ async function bootstrap(): Promise<void> {
   const state = new DesktopStateStore(identity.appName, app.getVersion())
   state.update({ systemMode: initialSystemMode })
   let repaintPresentation = () => {}
+  let recoverInstallFailure = () => {}
   let trayUpdateReady = false
   const updater = new DesktopUpdaterController({
     enabled: app.isPackaged && channel === 'release',
     supported: process.platform !== 'linux' || Boolean(process.env.APPIMAGE),
+    requireNativeReady: process.platform === 'darwin',
     updater: autoUpdater as DesktopAutoUpdater,
     onState: update => {
       state.updater(update)
+      if (update.status === 'error' && closing && nativeUpdateQuitAllowed) {
+        queueMicrotask(() => recoverInstallFailure())
+      }
       const ready = updateReady(update)
       if (ready !== trayUpdateReady) {
         trayUpdateReady = ready
@@ -269,7 +280,28 @@ async function bootstrap(): Promise<void> {
     trayStripActive = false
     updatePresentation()
   }
+  const onNativeUpdateDownloaded = () => updater.markNativeReady()
+  if (process.platform === 'darwin') nativeAutoUpdater.on('update-downloaded', onNativeUpdateDownloaded)
   updater.start()
+
+  let installQuitTimer: ReturnType<typeof setTimeout> | null = null
+  let installHandoffTimer: ReturnType<typeof setTimeout> | null = null
+  const clearInstallTimers = () => {
+    if (installQuitTimer) clearTimeout(installQuitTimer)
+    if (installHandoffTimer) clearTimeout(installHandoffTimer)
+    installQuitTimer = null
+    installHandoffTimer = null
+  }
+  const requestUpdateInstall = (): boolean => {
+    if (!updater.requestInstall()) return false
+    // Give the renderer one calm paint of “Restarting…” before app.quit begins.
+    installQuitTimer = setTimeout(() => {
+      installQuitTimer = null
+      app.quit()
+    }, 120)
+    installQuitTimer.unref?.()
+    return true
+  }
 
   const closeDaemonSession = async () => {
     const activeRpc = rpc
@@ -281,8 +313,10 @@ async function bootstrap(): Promise<void> {
     unsubSnapshot = null
     unsubConfig = null
     state.update({ daemon: null })
-    await activeRpc?.close().catch(() => {})
-    await activeDaemon?.stop().catch(() => {})
+    await withTimeout((async () => {
+      await activeRpc?.close().catch(() => {})
+      await activeDaemon?.stop().catch(() => {})
+    })(), 4_000).catch(error => console.warn('[tokmon] background service cleanup timed out', error))
   }
 
   const scheduleReconnect = (connect: (replace?: boolean) => Promise<void>) => {
@@ -381,6 +415,15 @@ async function bootstrap(): Promise<void> {
     return connectAttempt
   }
 
+  recoverInstallFailure = () => {
+    if (!closing) return
+    clearInstallTimers()
+    nativeUpdateQuitAllowed = false
+    closing = false
+    ;(globalThis as { __tokmonQuitting?: boolean }).__tokmonQuitting = false
+    void connectDaemon(true)
+  }
+
   const disposeIpc = registerDesktopIpc({
     renderer: popover.window.webContents,
     state,
@@ -388,7 +431,7 @@ async function bootstrap(): Promise<void> {
     getDashboardUrl: () => daemon?.baseUrl ?? null,
     retryConnection: () => connectDaemon(true),
     checkForUpdates: () => updater.checkForUpdates(),
-    installUpdate: () => { updater.installUpdate() },
+    installUpdate: requestUpdateInstall,
     setPopoverHeight: height => popover.setHeight(height),
     onConfig: config => applyAppearance(config.appearance),
     onTrayStrip: payload => {
@@ -460,8 +503,10 @@ async function bootstrap(): Promise<void> {
       current.update.status === 'downloaded'
         ? {
             label: `Restart to Install ${current.update.availableVersion ?? 'Update'}`,
-            click: () => { updater.installUpdate() },
+            click: () => { requestUpdateInstall() },
           }
+        : current.update.status === 'restarting'
+          ? { label: 'Restarting to Install…', enabled: false }
         : current.update.status === 'checking'
           ? { label: 'Checking for Updates…', enabled: false }
           : current.update.status === 'available'
@@ -476,7 +521,7 @@ async function bootstrap(): Promise<void> {
               : current.update.status === 'unsupported'
                 ? { label: 'Updates Managed by Package Manager', enabled: false }
                 : current.update.status === 'error'
-                  ? { label: 'Update Check Failed — Check Again', click: () => void updater.checkForUpdates() }
+                  ? { label: 'Update Failed — Check Again', click: () => void updater.checkForUpdates() }
                   : { label: 'Check for Updates', click: () => void updater.checkForUpdates() },
       { type: 'separator' },
       { label: 'Quit Tokmon', click: () => app.quit() },
@@ -503,20 +548,41 @@ async function bootstrap(): Promise<void> {
 
   app.on('second-instance', () => popover.show())
   app.on('before-quit', event => {
-    if (closing) return
+    if (nativeUpdateQuitAllowed) return
     event.preventDefault()
+    if (closing) return
     closing = true
     ;(globalThis as { __tokmonQuitting?: boolean }).__tokmonQuitting = true
+    if (state.get().update.status === 'downloaded') updater.requestInstall()
     clearReconnectTimer()
-    nativeTheme.removeListener('updated', onNativeThemeUpdated)
-    disposeIpc()
+    if (installQuitTimer) {
+      clearTimeout(installQuitTimer)
+      installQuitTimer = null
+    }
     void closeDaemonSession().finally(() => {
+      // Native readiness can arrive while daemon cleanup is in flight. Promote
+      // that newly downloaded update before allowing quitAndInstall's app.quit.
+      if (updater.state.status === 'downloaded') updater.requestInstall()
+      if (updater.state.status === 'restarting') nativeUpdateQuitAllowed = true
       const outcome = updater.completeQuit(() => app.exit(0))
-      // A native installer launch can fail synchronously. At this point the
-      // app has already committed to shutdown and disposed IPC, so never leave
-      // a headless half-closed process behind.
-      if (outcome === 'error') app.exit(1)
+      if (outcome === 'install') {
+        installHandoffTimer = setTimeout(() => {
+          installHandoffTimer = null
+          updater.failInstallHandoff('Tokmon could not hand off to the installer within 10 seconds. Choose Check for Updates to retry.')
+        }, 10_000)
+        installHandoffTimer.unref?.()
+        return
+      }
+      nativeUpdateQuitAllowed = false
+      if (outcome === 'error') recoverInstallFailure()
     })
+  })
+  app.on('will-quit', () => {
+    clearInstallTimers()
+    nativeTheme.removeListener('updated', onNativeThemeUpdated)
+    if (process.platform === 'darwin') nativeAutoUpdater.removeListener('update-downloaded', onNativeUpdateDownloaded)
+    disposeIpc()
+    updater.stop()
   })
 }
 

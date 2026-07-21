@@ -18,6 +18,7 @@ import {
   resolveProviderPins,
   severity,
   severityTag,
+  snapshotUsageTotals,
   staleAgeLabel,
   tightestQuota,
   togglePin,
@@ -25,6 +26,8 @@ import {
   trayLabel,
   trayStripDigits,
   trayStripLayout,
+  totalsCopy,
+  usageDataStatus,
   usageNumberText,
 } from './presentation'
 import { deriveQuotaViews } from '../../usage-semantics'
@@ -324,4 +327,22 @@ test('token labels share a stable menu-bar slot and daily totals sum across acco
   assert.equal(layout.segments[0]?.label, '1.2M')
   assert.equal(layout.segments[1]?.label, '1B')
   assert.ok(layout.slotWidth >= stubMeasure('999M'))
+})
+
+test('cross-provider totals use canonical dashboard aggregation and shared freshness', () => {
+  const usage = (cost: number, tokens: number) => ({ cost, tokens, input: 0, cacheRead: 0, cacheSavings: 0 })
+  const dashboard = (cost: number, tokens: number) => ({
+    today: usage(cost, tokens), week: usage(cost * 2, tokens * 2), month: usage(cost * 3, tokens * 3),
+    burnRate: 0, series: [], lastActivityAt: null,
+  })
+  const first = account({ dashboard: dashboard(1, 2) })
+  const second = account({ id: 'b', providerId: 'codex', dashboard: dashboard(10, 20) })
+  const identityOnly = account({ id: 'c', hasUsage: false, dashboard: dashboard(100, 200) })
+  const totals = snapshotUsageTotals(snapshot([first, second, identityOnly]))
+  assert.equal(totals?.dashboard?.today.cost, 11)
+  assert.equal(totals?.dashboard?.today.tokens, 22)
+  assert.equal(totals?.accounts.length, 2)
+  assert.match(totalsCopy(totals!.dashboard!).primary, /Total today \$11\.00 · 22 tokens/)
+  assert.equal(usageDataStatus([first, second], 1_000, NOW), null)
+  assert.equal(usageDataStatus([first, account({ id: 'missing', dashboard: null })], 1_000, NOW), 'Partial usage data')
 })

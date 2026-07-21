@@ -58,6 +58,8 @@ export interface DesktopUpdaterControllerOptions {
   enabled: boolean
   /** Platform/provider capability. Unsupported release builds remain distinct from disabled dev builds. */
   supported?: boolean
+  /** macOS must also confirm Squirrel's native staging before Restart is offered. */
+  requireNativeReady?: boolean
   updater: DesktopAutoUpdater
   onState(state: DesktopUpdateState): void
   scheduler?: DesktopUpdaterScheduler
@@ -81,12 +83,17 @@ export class DesktopUpdaterController {
   private started = false
   private generation = 0
   private checkAttempt = 0
+  private deferredDownloadAttempt: number | null = null
+  private deferredDownloadedInfo: { version?: unknown } | null = null
+  private deferredDownloadSettled = false
+  private deferredNativeReady = false
 
   constructor(private readonly options: DesktopUpdaterControllerOptions) {
     this.scheduler = options.scheduler ?? systemScheduler
     this.initialDelayMs = options.initialDelayMs ?? INITIAL_UPDATE_DELAY_MS
     this.intervalMs = options.intervalMs ?? UPDATE_CHECK_INTERVAL_MS
     this.downloadWatchdogMs = options.downloadWatchdogMs ?? UPDATE_DOWNLOAD_WATCHDOG_MS
+    this.deferredNativeReady = !options.requireNativeReady
     this.stateValue = !options.enabled
       ? disabledUpdateState()
       : this.supported
@@ -102,18 +109,22 @@ export class DesktopUpdaterController {
           error: null,
         })
       }],
-      ['update-not-available', () => this.publish(idleUpdateState())],
+      ['update-not-available', () => {
+        this.abandonCheck()
+        this.publish(idleUpdateState())
+      }],
       ['download-progress', (progress: { percent?: unknown }) => this.publish({
         status: 'downloading',
         progressPercent: progressPercentOf(progress),
         error: null,
       })],
-      ['update-downloaded', (info: { version?: unknown }) => this.publish({
-        status: 'downloaded',
-        availableVersion: versionOf(info) ?? this.stateValue.availableVersion,
-        progressPercent: 100,
-        error: null,
-      })],
+      ['update-downloaded', (info: { version?: unknown }) => {
+        // MacUpdater emits this public event before its nested downloadPromise
+        // and native Squirrel staging finish. Readiness requires every signal.
+        if (this.deferredDownloadAttempt === null) this.deferredDownloadSettled = true
+        this.deferredDownloadedInfo = info
+        this.publishDownloadedIfReady()
+      }],
       ['error', (error: unknown) => {
         this.abandonCheck()
         this.fail(error)
@@ -152,37 +163,71 @@ export class DesktopUpdaterController {
     if (!this.supported) throw new Error('Updates are unsupported on this platform')
     // Preserve the actionable ready-to-install state and never start a second
     // network cycle while the current update is still downloading.
-    if (this.stateValue.status === 'available' || this.stateValue.status === 'downloading' || this.stateValue.status === 'downloaded') return
+    if (this.stateValue.status === 'available' || this.stateValue.status === 'downloading' || this.stateValue.status === 'downloaded' || this.stateValue.status === 'restarting') return
     if (this.inFlight) return this.inFlight
     const generation = this.generation
     const attempt = ++this.checkAttempt
+    this.deferredDownloadAttempt = attempt
+    this.deferredDownloadedInfo = null
+    this.deferredDownloadSettled = false
+    this.deferredNativeReady = !this.options.requireNativeReady
     this.publish({ status: 'checking', progressPercent: null, error: null })
     const check = (async () => {
       try {
         const result = await this.options.updater.checkForUpdates()
         const downloadPromise = downloadPromiseOf(result)
         if (downloadPromise) await downloadPromise
+        if (this.isCurrentCheck(generation, attempt)) {
+          this.deferredDownloadSettled = true
+          this.publishDownloadedIfReady()
+        }
         if (this.isCurrentCheck(generation, attempt) && this.stateValue.status === 'checking') {
           this.publish(idleUpdateState())
+          this.clearDeferredDownload(attempt)
         }
       } catch (error) {
-        if (this.isCurrentCheck(generation, attempt)) this.fail(error)
+        if (this.isCurrentCheck(generation, attempt)) {
+          this.clearDeferredDownload(attempt)
+          this.fail(error)
+        }
       } finally {
-        if (this.isCurrentCheck(generation, attempt)) this.inFlight = null
+        if (this.isCurrentCheck(generation, attempt)) {
+          this.inFlight = null
+        }
       }
     })()
     if (this.isCurrentCheck(generation, attempt)) this.inFlight = check
     return check
   }
 
-  installUpdate(): boolean {
+  /** Electron's native macOS updater has fully staged the archive. */
+  markNativeReady(): void {
+    if (!this.started || !this.active || !this.options.requireNativeReady) return
+    this.deferredNativeReady = true
+    this.publishDownloadedIfReady()
+  }
+
+  /** Stage one visible, idempotent restart request. Main owns cleanup and app.quit(). */
+  requestInstall(): boolean {
     if (!this.started || !this.active || this.stateValue.status !== 'downloaded') return false
+    this.publish({ status: 'restarting', progressPercent: 100, error: null })
+    return true
+  }
+
+  /** Report a native handoff that never reached will-quit so the app can recover. */
+  failInstallHandoff(message: string): void {
+    if (!this.started || this.stateValue.status !== 'restarting') return
+    this.fail(new Error(message))
+  }
+
+  private commitInstall(): boolean {
+    if (!this.started || !this.active || this.stateValue.status !== 'restarting') return false
     try {
-      // Keep listeners and retry timers alive until Electron accepts the install. A
-      // synchronous failure must leave the controller usable instead of half-stopped.
+      // Keep listeners alive until will-quit. electron-updater can emit an error
+      // synchronously instead of throwing, and asynchronous native failures must
+      // remain observable while the app is still alive.
       this.options.updater.quitAndInstall(false, true)
-      this.stop()
-      return true
+      return this.stateValue.status === 'restarting'
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       this.fail(new Error(`Could not restart to install the update: ${detail}. Check for updates again, or quit Tokmon and reopen it.`))
@@ -192,8 +237,9 @@ export class DesktopUpdaterController {
 
   /** Complete Tokmon's intercepted quit after daemon cleanup has finished. */
   completeQuit(exitWithoutUpdate: () => void): 'install' | 'exit' | 'error' {
-    const wasReadyToInstall = this.stateValue.status === 'downloaded'
-    if (this.installUpdate()) return 'install'
+    const wasReadyToInstall = this.stateValue.status === 'downloaded' || this.stateValue.status === 'restarting'
+    if (this.stateValue.status === 'downloaded') this.requestInstall()
+    if (this.commitInstall()) return 'install'
     if (wasReadyToInstall && this.stateValue.status === 'error') return 'error'
     this.stop()
     exitWithoutUpdate()
@@ -211,6 +257,10 @@ export class DesktopUpdaterController {
     this.initialTimer = null
     this.intervalTimer = null
     this.inFlight = null
+    this.deferredDownloadAttempt = null
+    this.deferredDownloadedInfo = null
+    this.deferredDownloadSettled = false
+    this.deferredNativeReady = !this.options.requireNativeReady
     if (this.active) {
       for (const [event, listener] of this.listeners) this.options.updater.removeListener(event, listener)
     }
@@ -248,6 +298,33 @@ export class DesktopUpdaterController {
   private abandonCheck(): void {
     this.checkAttempt += 1
     this.inFlight = null
+    this.deferredDownloadAttempt = null
+    this.deferredDownloadedInfo = null
+    this.deferredDownloadSettled = false
+    this.deferredNativeReady = !this.options.requireNativeReady
+  }
+
+  private publishDownloadedIfReady(): void {
+    const info = this.deferredDownloadedInfo
+    if (!info || !this.deferredDownloadSettled || !this.deferredNativeReady) return
+    this.deferredDownloadAttempt = null
+    this.deferredDownloadedInfo = null
+    this.deferredDownloadSettled = false
+    this.deferredNativeReady = !this.options.requireNativeReady
+    this.publish({
+      status: 'downloaded',
+      availableVersion: versionOf(info) ?? this.stateValue.availableVersion,
+      progressPercent: 100,
+      error: null,
+    })
+  }
+
+  private clearDeferredDownload(attempt: number): void {
+    if (this.deferredDownloadAttempt !== attempt) return
+    this.deferredDownloadAttempt = null
+    this.deferredDownloadedInfo = null
+    this.deferredDownloadSettled = false
+    this.deferredNativeReady = !this.options.requireNativeReady
   }
 
   private isCurrentCheck(generation: number, attempt: number): boolean {

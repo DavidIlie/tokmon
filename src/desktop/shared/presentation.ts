@@ -1,7 +1,9 @@
 import type { Config, Metric, WebAccount, WebSnapshot } from '../../web/contract'
 import { MAX_PINNED_PROVIDERS, PROVIDER_ORDER } from '../../web/contract'
+import { aggregateDashboardData } from '../../dashboard-data'
+import { formatCurrency, formatTokens, resetParts } from '../../shared/format'
+import type { DashboardData } from '../../types'
 import { deriveQuotaView, resolveQuotaViews, type QuotaView } from '../../usage-semantics'
-import { resetParts } from '../../shared/format'
 
 // ── Severity ─────────────────────────────────────────────────────────────────
 // The availability band + text tag are single-sourced in usage-semantics so the
@@ -81,6 +83,51 @@ export function accountFloor(account: WebAccount): Quota | null {
 export function providerTodayTokens(accounts: readonly WebAccount[]): number | null {
   const values = accounts.map(account => account.dashboard?.today.tokens).filter((value): value is number => value != null && Number.isFinite(value))
   return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) : null
+}
+
+export interface SnapshotUsageTotals {
+  dashboard: DashboardData | null
+  accounts: WebAccount[]
+}
+
+/** Cross-provider usage totals from the daemon's canonical account summaries. */
+export function snapshotUsageTotals(snapshot: WebSnapshot): SnapshotUsageTotals | null {
+  const accounts = snapshot.accounts.filter(account => account.hasUsage)
+  if (accounts.length === 0) return null
+  return { accounts, dashboard: aggregateDashboardData(accounts.map(account => account.dashboard)) }
+}
+
+export interface TotalsCopy {
+  primary: string
+  secondary: string
+  title: string
+  ariaLabel: string
+}
+
+export function totalsCopy(dashboard: DashboardData): TotalsCopy {
+  const today = `${formatCurrency(dashboard.today.cost)} · ${formatTokens(dashboard.today.tokens)} tokens`
+  const week = `${formatCurrency(dashboard.week.cost)} · ${formatTokens(dashboard.week.tokens)} tokens`
+  const month = `${formatCurrency(dashboard.month.cost)} · ${formatTokens(dashboard.month.tokens)} tokens`
+  return {
+    primary: `Total today ${today}`,
+    secondary: `Month ${formatCurrency(dashboard.month.cost)}`,
+    title: `Today ${today}; This week ${week}; This month ${month}`,
+    ariaLabel: `Cross-provider usage totals. Today ${today}. This week ${week}. This month ${month}.`,
+  }
+}
+
+/** Shared honest usage freshness copy for provider cards and cross-provider totals. */
+export function usageDataStatus(accounts: readonly WebAccount[], intervalMs: number, now: number): string | null {
+  const usageAccounts = accounts.filter(account => account.hasUsage)
+  const missing = usageAccounts.some(account => account.dashboard === null)
+  const failed = usageAccounts.some(account => account.summaryState === 'error')
+  const staleAfterMs = Math.max(300_000, intervalMs * 2)
+  const stale = usageAccounts.some(account => account.dashboard !== null
+    && account.summaryUpdatedAt !== null
+    && now - account.summaryUpdatedAt > staleAfterMs)
+  if (missing) return failed ? 'Partial usage data · refresh failed' : 'Partial usage data'
+  if (failed || stale) return 'Usage data may be outdated'
+  return null
 }
 
 export type RepresentativeBasis = 'active-floor' | 'idle-runway' | 'none'

@@ -22,6 +22,7 @@ class FakeUpdater extends EventEmitter implements DesktopAutoUpdater {
   nextResult: unknown = null
   installError: Error | null = null
   onCheck: (() => void) | null = null
+  onInstall: (() => void) | null = null
 
   async checkForUpdates(): Promise<unknown> {
     this.checks += 1
@@ -34,6 +35,7 @@ class FakeUpdater extends EventEmitter implements DesktopAutoUpdater {
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void {
     if (this.installError) throw this.installError
     this.installs.push([isSilent, isForceRunAfter])
+    this.onInstall?.()
   }
 }
 
@@ -64,7 +66,7 @@ function fakeHandle(): ReturnType<typeof setTimeout> {
   return { unref() { return this } } as unknown as ReturnType<typeof setTimeout>
 }
 
-function setup(enabled = true, supported = true) {
+function setup(enabled = true, supported = true, requireNativeReady = false) {
   const updater = new FakeUpdater()
   const scheduler = new FakeScheduler()
   const states: DesktopUpdateState[] = []
@@ -72,6 +74,7 @@ function setup(enabled = true, supported = true) {
   const controller = new DesktopUpdaterController({
     enabled,
     supported,
+    requireNativeReady,
     updater,
     scheduler,
     onState: state => states.push({ ...state }),
@@ -106,11 +109,11 @@ test('release updater configures automatic install and schedules launch plus hou
   assert.equal(states.at(-1)?.status, 'idle')
 })
 
-test('updater publishes availability, progress, completion and installs only downloaded updates', () => {
+test('updater publishes availability, progress, completion and stages only downloaded updates', () => {
   const { controller, updater, scheduler, states } = setup()
   controller.start()
 
-  assert.equal(controller.installUpdate(), false)
+  assert.equal(controller.requestInstall(), false)
   updater.emit('update-available', { version: '1.2.3' })
   assert.deepEqual(states.at(-1), {
     status: 'available', availableVersion: '1.2.3', progressPercent: null, error: null,
@@ -126,9 +129,17 @@ test('updater publishes availability, progress, completion and installs only dow
   void controller.checkForUpdates()
   assert.equal(updater.checks, 0)
 
-  assert.equal(controller.installUpdate(), true)
+  assert.equal(controller.requestInstall(), true)
+  assert.deepEqual(states.at(-1), {
+    status: 'restarting', availableVersion: '1.2.3', progressPercent: 100, error: null,
+  })
+  assert.equal(controller.requestInstall(), false)
+  assert.deepEqual(updater.installs, [])
+
+  let exited = false
+  assert.equal(controller.completeQuit(() => { exited = true }), 'install')
+  assert.equal(exited, false)
   assert.deepEqual(updater.installs, [[false, true]])
-  assert.equal(updater.listenerCount('update-available'), 0)
 
   // Native quit/install owns the controller after this point; use a new session
   // to verify the no-update transition below.
@@ -147,7 +158,7 @@ test('graceful shutdown installs a downloaded update after cleanup and otherwise
   assert.equal(downloaded.controller.completeQuit(() => { downloadedExit = true }), 'install')
   assert.equal(downloadedExit, false)
   assert.deepEqual(downloaded.updater.installs, [[false, true]])
-  assert.equal(downloaded.updater.listenerCount('update-downloaded'), 0)
+  assert.equal(downloaded.updater.listenerCount('update-downloaded'), 1)
 
   const idle = setup()
   idle.controller.start()
@@ -194,6 +205,64 @@ test('awaits the updater download promise and exposes nested download failures',
 
   assert.equal(states.at(-1)?.status, 'error')
   assert.equal(states.at(-1)?.error, 'artifact download failed')
+})
+
+test('does not publish downloaded until the nested updater download promise settles', async () => {
+  const { controller, updater, states } = setup()
+  let finishStaging!: () => void
+  updater.nextResult = { downloadPromise: new Promise<void>(resolve => { finishStaging = resolve }) }
+  updater.onCheck = () => {
+    updater.emit('update-available', { version: '3.1.0' })
+    updater.emit('update-downloaded', { version: '3.1.0' })
+  }
+  controller.start()
+
+  const check = controller.checkForUpdates()
+  await Promise.resolve()
+  assert.equal(states.at(-1)?.status, 'available')
+  assert.equal(controller.requestInstall(), false)
+
+  finishStaging()
+  await check
+  assert.equal(states.at(-1)?.status, 'downloaded')
+  assert.equal(controller.requestInstall(), true)
+})
+
+test('macOS readiness waits for both the updater promise and native staging in either order', async () => {
+  const nativeLast = setup(true, true, true)
+  let finishDownload!: () => void
+  nativeLast.updater.nextResult = { downloadPromise: new Promise<void>(resolve => { finishDownload = resolve }) }
+  nativeLast.updater.onCheck = () => {
+    nativeLast.updater.emit('update-available', { version: '3.2.0' })
+    nativeLast.updater.emit('update-downloaded', { version: '3.2.0' })
+  }
+  nativeLast.controller.start()
+
+  const firstCheck = nativeLast.controller.checkForUpdates()
+  await Promise.resolve()
+  finishDownload()
+  await firstCheck
+  assert.notEqual(nativeLast.states.at(-1)?.status, 'downloaded')
+  assert.equal(nativeLast.controller.requestInstall(), false)
+  nativeLast.controller.markNativeReady()
+  assert.equal(nativeLast.states.at(-1)?.status, 'downloaded')
+
+  const nativeFirst = setup(true, true, true)
+  let finishStagingDownload!: () => void
+  nativeFirst.updater.nextResult = { downloadPromise: new Promise<void>(resolve => { finishStagingDownload = resolve }) }
+  nativeFirst.updater.onCheck = () => {
+    nativeFirst.updater.emit('update-available', { version: '3.3.0' })
+    nativeFirst.updater.emit('update-downloaded', { version: '3.3.0' })
+  }
+  nativeFirst.controller.start()
+
+  const secondCheck = nativeFirst.controller.checkForUpdates()
+  await Promise.resolve()
+  nativeFirst.controller.markNativeReady()
+  assert.notEqual(nativeFirst.states.at(-1)?.status, 'downloaded')
+  finishStagingDownload()
+  await secondCheck
+  assert.equal(nativeFirst.states.at(-1)?.status, 'downloaded')
 })
 
 test('available and downloading states block duplicate checks until progress completes or errors', async () => {
@@ -282,7 +351,8 @@ test('synchronous install failure stays operational and publishes an actionable 
   updater.emit('update-downloaded', { version: '5.0.0' })
   updater.installError = new Error('installer busy')
 
-  assert.equal(controller.installUpdate(), false)
+  assert.equal(controller.requestInstall(), true)
+  assert.equal(controller.completeQuit(() => {}), 'error')
   assert.equal(states.at(-1)?.status, 'error')
   assert.match(states.at(-1)?.error ?? '', /Could not restart.*installer busy.*Check for updates again/)
   assert.equal(updater.listenerCount('update-downloaded'), 1)
@@ -290,6 +360,24 @@ test('synchronous install failure stays operational and publishes an actionable 
   updater.installError = null
   await controller.checkForUpdates()
   assert.equal(states.at(-1)?.status, 'idle')
+})
+
+test('updater errors emitted during or after native handoff remain observable', () => {
+  const synchronous = setup()
+  synchronous.controller.start()
+  synchronous.updater.emit('update-downloaded', { version: '5.1.0' })
+  synchronous.updater.onInstall = () => synchronous.updater.emit('error', new Error('native handoff rejected'))
+  assert.equal(synchronous.controller.requestInstall(), true)
+  assert.equal(synchronous.controller.completeQuit(() => {}), 'error')
+  assert.equal(synchronous.states.at(-1)?.status, 'error')
+
+  const asynchronous = setup()
+  asynchronous.controller.start()
+  asynchronous.updater.emit('update-downloaded', { version: '5.2.0' })
+  assert.equal(asynchronous.controller.requestInstall(), true)
+  assert.equal(asynchronous.controller.completeQuit(() => {}), 'install')
+  asynchronous.updater.emit('error', new Error('native handoff stalled'))
+  assert.equal(asynchronous.states.at(-1)?.status, 'error')
 })
 
 test('graceful update quit remains operational when native install throws', () => {

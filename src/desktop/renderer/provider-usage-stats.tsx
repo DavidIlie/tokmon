@@ -3,6 +3,7 @@ import { aggregateDashboardData, cachedTokenPercentage } from '../../dashboard-d
 import { formatCurrency, formatTokens } from '../../shared/format'
 import type { UsageSummary } from '../../types'
 import type { DesktopGraphRange, WebAccount } from '../../web/contract'
+import { usageDataStatus } from '../shared/presentation'
 
 interface ProviderUsageStatsProps {
   accounts: readonly WebAccount[]
@@ -34,19 +35,6 @@ function sparkPoints(values: readonly number[], width: number, height: number): 
   }).join(' ')
 }
 
-function dataStatus(accounts: readonly WebAccount[], intervalMs: number, now: number): string | null {
-  const usageAccounts = accounts.filter(account => account.hasUsage)
-  const missing = usageAccounts.some(account => account.dashboard === null)
-  const failed = usageAccounts.some(account => account.summaryState === 'error')
-  const staleAfterMs = Math.max(300_000, intervalMs * 2)
-  const stale = usageAccounts.some(account => account.dashboard !== null
-    && account.summaryUpdatedAt !== null
-    && now - account.summaryUpdatedAt > staleAfterMs)
-  if (missing) return failed ? 'Partial usage data · refresh failed' : 'Partial usage data'
-  if (failed || stale) return 'Usage data may be outdated'
-  return null
-}
-
 export const ProviderUsageStats = memo(function ProviderUsageStats({ accounts, providerName, intervalMs, rangeDays, now }: ProviderUsageStatsProps) {
   const dashboard = useMemo(
     () => aggregateDashboardData(accounts.map(account => account.dashboard)),
@@ -56,7 +44,7 @@ export const ProviderUsageStats = memo(function ProviderUsageStats({ accounts, p
   const graphSeries = dashboard.series.slice(-rangeDays)
   if (!PERIODS.some(([key]) => hasUsage(dashboard[key])) && !graphSeries.some(value => value > 0)) return null
 
-  const status = dataStatus(accounts, intervalMs, now)
+  const status = usageDataStatus(accounts, intervalMs, now)
   const showBurn = dashboard.burnRate > 0
   const showSavings = dashboard.month.cacheSavings > 0
   const coverageDays = Math.min(rangeDays, dashboard.series.length)

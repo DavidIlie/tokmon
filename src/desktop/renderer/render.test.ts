@@ -3,10 +3,11 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { DEFAULTS, type Config, type DashboardData, type Metric, type UsageSummary, type WebAccount, type WebSnapshot } from '../../web/contract'
-import { DesktopSettings, DetectionSettings, Footer, SettingsHub, ThemeSettings, UpdateReady } from './desktop-chrome'
+import { DesktopSettings, DetectionSettings, Footer, SettingsHub, ThemeSettings, TotalsBar, UpdateReady } from './desktop-chrome'
 import { ProviderCard } from './provider-card'
 import { groupByProvider } from './presentation'
 import { providerMark } from './provider-icons'
+import { measuredPopoverHeight } from './app'
 
 // Server-render the components (no window, no effects) to catch runtime crashes in the
 // provider-disclosure UI that pure-function unit tests can't reach.
@@ -333,6 +334,74 @@ test('a downloaded update earns one explicit restart action above the quiet vers
     update: { status: 'idle', availableVersion: null, progressPercent: null, error: null },
     currentVersion: '0.28.3', onInstall: () => {},
   })), '')
+})
+
+test('update chrome communicates download progress and disables duplicate restart clicks', () => {
+  const downloading = renderToStaticMarkup(createElement(UpdateReady, {
+    update: { status: 'downloading', availableVersion: '0.29.0', progressPercent: 42, error: null },
+    currentVersion: '0.28.7', onInstall: () => {},
+  }))
+  assert.match(downloading, /Downloading Tokmon 0\.29\.0/)
+  assert.match(downloading, /42%/)
+  assert.match(downloading, /role="progressbar"/)
+  assert.doesNotMatch(downloading, /Restart to Install/)
+
+  const restarting = renderToStaticMarkup(createElement(UpdateReady, {
+    update: { status: 'restarting', availableVersion: '0.29.0', progressPercent: 100, error: null },
+    currentVersion: '0.28.7', onInstall: () => {},
+  }))
+  assert.match(restarting, /Restarting to install Tokmon 0\.29\.0/)
+  assert.match(restarting, /Closing the background service safely/)
+  assert.doesNotMatch(restarting, /<button/)
+
+  const failed = renderToStaticMarkup(createElement(UpdateReady, {
+    update: { status: 'error', availableVersion: '0.29.0', progressPercent: null, error: 'Native installer rejected the update' },
+    currentVersion: '0.28.7', onInstall: () => {}, onCheck: () => {},
+  }))
+  assert.match(failed, /Update couldn’t finish/)
+  assert.match(failed, /Native installer rejected the update/)
+  assert.match(failed, /Check Again/)
+  assert.match(failed, /role="alert"/)
+})
+
+test('cross-provider totals render one quiet canonical strip with honest partial state', () => {
+  const now = Date.now()
+  const html = renderToStaticMarkup(createElement(TotalsBar, {
+    snapshot: snapshot([
+      account({
+        id: 'one', dashboard: dashboard({
+          today: usage({ cost: 400, tokens: 500_000_000 }),
+          week: usage({ cost: 1_000, tokens: 1_500_000_000 }),
+          month: usage({ cost: 7_000, tokens: 10_000_000_000 }),
+        }),
+      }),
+      account({
+        id: 'two', providerId: 'codex', dashboard: dashboard({
+          today: usage({ cost: 24.76, tokens: 82_330_000 }),
+          week: usage({ cost: 304.74, tokens: 320_000_000 }),
+          month: usage({ cost: 1_930.28, tokens: 2_250_000_000 }),
+        }),
+      }),
+    ]),
+    now,
+  }))
+  assert.match(html, /Total today \$424\.76 · 582\.33M tokens/)
+  assert.match(html, /Month \$8,930\.28/)
+  assert.match(html, /This week \$1,304\.74 · 1\.82B tokens/)
+
+  const partial = renderToStaticMarkup(createElement(TotalsBar, {
+    snapshot: snapshot([
+      account({ dashboard: dashboard({ today: usage({ cost: 1, tokens: 2 }) }) }),
+      account({ id: 'missing', providerId: 'codex', dashboard: null }),
+    ]),
+    now,
+  }))
+  assert.match(partial, /data-state="partial"/)
+  assert.match(partial, />Partial</)
+})
+
+test('popover measurement includes totals, update state and footer chrome', () => {
+  assert.equal(measuredPopoverHeight(480.2, [28, 52, 58]), 619)
 })
 
 test('desktop settings exposes daemon-backed privacy, summary and provider pin controls', () => {
