@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   EXPANDED_PROVIDERS_KEY,
+  initialExpandedProviders,
   readExpandedProviders,
   writeExpandedProviders,
   type DisclosureStorage,
@@ -29,4 +30,15 @@ test('malformed local disclosure state fails closed without poisoning provider c
   const known = new Set(['claude'])
   assert.deepEqual(readExpandedProviders(memoryStorage('{broken'), known, ['claude']), ['claude'])
   assert.deepEqual(readExpandedProviders(memoryStorage('{}'), known, ['claude']), [])
+})
+
+test('an explicitly collapsed local state overrides a legacy daemon seed', () => {
+  const known = new Set(['claude'])
+  assert.deepEqual(readExpandedProviders(memoryStorage('[]'), known, ['claude']), [])
+})
+
+test('a lone provider expands only on first run and respects a stored collapse', () => {
+  const known = new Set(['claude'])
+  assert.deepEqual(initialExpandedProviders(memoryStorage(), known, [], 'claude'), ['claude'])
+  assert.deepEqual(initialExpandedProviders(memoryStorage('[]'), known, [], 'claude'), [])
 })

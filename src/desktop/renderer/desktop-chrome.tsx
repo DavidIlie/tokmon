@@ -8,13 +8,11 @@ import {
   setDetectedAccountExcluded,
   setProviderDetectionEnabled,
   setProviderTrackingEnabled,
-  toggleProviderSelection,
   type Config,
   type MenuBarDensity,
   type WebSnapshot,
 } from '../../web/contract'
 import type { DesktopState, DesktopUpdateState } from '../shared/desktop-contract'
-import type { ProviderGroup } from './presentation'
 import { snapshotUsageTotals, totalsCopy, usageDataStatus } from '../shared/presentation'
 import {
   isBuiltInThemePreset,
@@ -540,9 +538,8 @@ function updateStatusCopy(update: DesktopUpdateState): string {
   return 'Checks automatically after launch and every hour'
 }
 
-export function DesktopSettings({ config, groups, update, appVersion, daemon, onPatch, onBack, onDashboard, onCheckUpdates, onQuit }: {
+export function DesktopSettings({ config, update, appVersion, daemon, onPatch, onBack, onDashboard, onCheckUpdates, onQuit }: {
   config: Config
-  groups: ProviderGroup[]
   update: DesktopUpdateState
   appVersion: string
   daemon: DesktopState['daemon']
@@ -552,8 +549,6 @@ export function DesktopSettings({ config, groups, update, appVersion, daemon, on
   onCheckUpdates(): void
   onQuit(): void
 }) {
-  const expandedProviders = config.desktop?.expandedProviders ?? []
-  const knownProviders = new Set(groups.map(group => group.providerId))
   const service = daemonLabel(daemon)
   const updateBusy = update.status === 'checking' || update.status === 'available' || update.status === 'downloading' || update.status === 'restarting'
   const updateDisabled = update.status === 'disabled' || update.status === 'unsupported' || updateBusy || update.status === 'downloaded'
@@ -580,9 +575,6 @@ export function DesktopSettings({ config, groups, update, appVersion, daemon, on
             <button type="button" role="radio" aria-checked={config.tray.displayMetric === 'smartHeadroom'} data-active={config.tray.displayMetric === 'smartHeadroom'} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, displayMetric: 'smartHeadroom' } }))}>Smart</button>
             <button type="button" role="radio" aria-checked={config.tray.displayMetric === 'tightestRemaining'} data-active={config.tray.displayMetric === 'tightestRemaining'} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, displayMetric: 'tightestRemaining' } }))}>Highest usage</button>
           </span>
-        </SettingsRow>
-        <SettingsRow label="Expanded by default" hint="Synced through the daemon">
-          <span className="provider-chips" role="group" aria-label="Providers expanded by default">{groups.map(group => <button key={group.providerId} type="button" aria-pressed={expandedProviders.includes(group.providerId)} data-active={expandedProviders.includes(group.providerId)} onClick={() => onPatch(next => ({ ...next, desktop: { ...next.desktop, expandedProviders: toggleProviderSelection(next.desktop.expandedProviders, group.providerId, knownProviders) } }))}>{group.name}</button>)}</span>
         </SettingsRow>
         <SettingsRow label="Graph range" hint="Trailing spend activity">
           <span className="segmented" role="radiogroup" aria-label="Graph range">

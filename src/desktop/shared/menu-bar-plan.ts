@@ -12,6 +12,55 @@ export interface MenuBarSegmentValue {
   active: boolean
 }
 
+export interface RetainedMenuBarValue {
+  value: MenuBarSegmentValue
+  usageObservedAt: number | null
+  labelObservedAt: number | null
+  mode: 'usage' | 'todayTokens'
+}
+
+/**
+ * Preserve a provider's last-known display value through a transient empty
+ * refresh. Expired or genuinely never-observed providers resolve to unknown.
+ */
+export function retainMenuBarValues(
+  previous: ReadonlyMap<string, RetainedMenuBarValue>,
+  next: readonly MenuBarSegmentValue[],
+  now: number,
+  retainForMs: number,
+  mode: 'usage' | 'todayTokens',
+): { values: MenuBarSegmentValue[]; memory: Map<string, RetainedMenuBarValue> } {
+  const memory = new Map<string, RetainedMenuBarValue>()
+  const values = next.map(value => {
+    const retained = previous.get(value.providerId)
+    const compatible = retained?.mode === mode ? retained : null
+    const usageKnown = finiteUsage(value.usage) !== null
+    const retainedUsageFresh = compatible?.usageObservedAt !== null
+      && compatible?.usageObservedAt !== undefined
+      && now - compatible.usageObservedAt <= retainForMs
+    const resolvedUsage = usageKnown
+      ? value.usage
+      : retainedUsageFresh ? compatible.value.usage : value.usage
+
+    const labelKnown = mode === 'todayTokens' && value.label !== undefined && value.label !== '–'
+    const retainedLabelFresh = compatible?.labelObservedAt !== null
+      && compatible?.labelObservedAt !== undefined
+      && now - compatible.labelObservedAt <= retainForMs
+    const resolvedLabel = mode === 'todayTokens'
+      ? labelKnown ? value.label : retainedLabelFresh ? compatible.value.label : value.label
+      : value.label
+
+    const resolved = { ...value, usage: resolvedUsage, ...(resolvedLabel === undefined ? {} : { label: resolvedLabel }) }
+    const usageObservedAt = usageKnown ? now : retainedUsageFresh ? compatible.usageObservedAt : null
+    const labelObservedAt = labelKnown ? now : retainedLabelFresh ? compatible.labelObservedAt : null
+    if (usageObservedAt !== null || labelObservedAt !== null) {
+      memory.set(value.providerId, { value: resolved, usageObservedAt, labelObservedAt, mode })
+    }
+    return resolved
+  })
+  return { values, memory }
+}
+
 export interface MenuBarDensityTokens {
   height: number
   edgePadding: number
@@ -62,6 +111,10 @@ export interface MenuBarPlan {
   tokens: MenuBarDensityTokens
   segments: MenuBarSegmentPlan[]
   valueSlotWidth: number
+  /** Stable width reserved outside provider boundaries to prevent native reflow. */
+  reservedSlack: number
+  /** Offset applied to the literal provider geometry within the stable image. */
+  contentOffsetX: number
   updateCenterX: number | null
   /** The heuristic budget used by auto mode. Null means custom mode is literal. */
   budget: number | null
@@ -248,11 +301,10 @@ function createPlan(
     .filter(item => item.visibility.present && (item.visibility.mark || item.visibility.value || item.visibility.progress))
   const labels = visibleValues.map(({ value }) => value.label ?? menuBarLabel(value.usage))
   const hasAlternate = visibleValues.some(({ value }) => value.label !== undefined)
-  const threeDigits = visibleValues.some(({ value }) => {
-    const usage = finiteUsage(value.usage)
-    return usage !== null && Math.round(usage) >= 98
-  })
-  const stableLabel = hasAlternate ? '999M' : threeDigits ? '000%' : '00%'
+  // Native image width stays invariant across every legal value. Actual labels
+  // still own their literal geometry; unused stability width is moved outside
+  // provider boundaries instead of becoming invisible inter-provider padding.
+  const stableLabel = hasAlternate ? '999M' : '100%'
   const valueSlotWidth = half(Math.max(0, measureText(stableLabel, font), ...labels.map(label => measureText(label, font))))
 
   let cursor = tokens.edgePadding
@@ -268,20 +320,21 @@ function createPlan(
       contentWidth += tokens.iconBox
       cursor += tokens.iconBox
     }
+    const label = value.label ?? menuBarLabel(value.usage)
+    const labelWidth = half(measureText(label, font))
     if (show.value) {
       if (show.mark) {
         cursor += tokens.markValueGap
         contentWidth += tokens.markValueGap
       }
       valueLeft = cursor
-      contentWidth += valueSlotWidth
-      cursor += valueSlotWidth
+      contentWidth += labelWidth
+      cursor += labelWidth
     }
     const width = Math.max(contentWidth, show.progress ? tokens.progressWidth : 0)
     // Centre a progress-only or wider progress element below the content without
     // changing the mark/value optical relationship.
     if (width > contentWidth) cursor += width - contentWidth
-    const label = value.label ?? menuBarLabel(value.usage)
     segments.push({
       ...value,
       label,
@@ -293,14 +346,37 @@ function createPlan(
       width,
       iconX,
       valueLeft,
-      valueCenterX: valueLeft === null ? null : valueLeft + valueSlotWidth / 2,
+      valueCenterX: valueLeft === null ? null : valueLeft + labelWidth / 2,
       progressX: show.progress ? x + (width - tokens.progressWidth) / 2 : null,
       progressY: show.progress ? tokens.height - tokens.progressHeight - 1 : null,
       progressFraction: finiteUsage(value.usage) === null ? null : finiteUsage(value.usage)! / 100,
     })
   })
 
-  const providerWidth = segments.length === 0 ? 0 : cursor + tokens.edgePadding
+  const actualProviderWidth = segments.length === 0 ? 0 : cursor + tokens.edgePadding
+  const stableSegmentWidth = (show: Visibility): number => {
+    let content = 0
+    if (show.mark) content += tokens.iconBox
+    if (show.value) content += (show.mark ? tokens.markValueGap : 0) + valueSlotWidth
+    return Math.max(content, show.progress ? tokens.progressWidth : 0)
+  }
+  const stableProviderWidth = visibleValues.length === 0
+    ? 0
+    : tokens.edgePadding * 2
+      + visibleValues.reduce((sum, { visibility }) => sum + stableSegmentWidth(visibility), 0)
+      + Math.max(0, visibleValues.length - 1) * tokens.providerGap
+  const reservedSlack = Math.max(0, stableProviderWidth - actualProviderWidth)
+  const contentOffsetX = reservedSlack / 2
+  if (contentOffsetX > 0) {
+    for (const segment of segments) {
+      segment.x += contentOffsetX
+      if (segment.iconX !== null) segment.iconX += contentOffsetX
+      if (segment.valueLeft !== null) segment.valueLeft += contentOffsetX
+      if (segment.valueCenterX !== null) segment.valueCenterX += contentOffsetX
+      if (segment.progressX !== null) segment.progressX += contentOffsetX
+    }
+  }
+  const providerWidth = stableProviderWidth
   // Keep every valid plan inside the native IPC contract. Tight mark-only and
   // progress-only layouts are 11pt intrinsically, but Electron status items
   // need the same 12pt discoverable floor as the procedural fallback icon.
@@ -311,7 +387,10 @@ function createPlan(
       ? providerWidth + UPDATE_GAP + UPDATE_BOX / 2
       : width / 2
     : null
-  return { width, height: tokens.height, density, tokens, segments, valueSlotWidth, updateCenterX, budget, collapsed }
+  return {
+    width, height: tokens.height, density, tokens, segments, valueSlotWidth,
+    reservedSlack, contentOffsetX, updateCenterX, budget, collapsed,
+  }
 }
 
 /**

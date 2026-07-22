@@ -7,6 +7,7 @@ import {
   MENU_BAR_DENSITIES,
   menuBarDisplayBucket,
   menuBarRenderSignature,
+  retainMenuBarValues,
   type MenuBarSegmentValue,
 } from './menu-bar-plan'
 
@@ -34,13 +35,15 @@ test('comfortable production geometry is exact and keeps migrated default propor
     measureText: measure,
   })
   assert.deepEqual(plan.tokens, MENU_BAR_DENSITIES.comfortable)
-  assert.equal(plan.valueSlotWidth, 18)
-  assert.equal(plan.segments[0]?.x, 1)
+  assert.equal(plan.valueSlotWidth, 24)
+  assert.equal(plan.reservedSlack, 12)
+  assert.equal(plan.contentOffsetX, 6)
+  assert.equal(plan.segments[0]?.x, 7)
   assert.equal(plan.segments[0]?.width, 34)
-  assert.equal(plan.segments[1]?.x, 43)
-  assert.equal(plan.width, 93) // 1 + 34 + 8 + 34 + 1 + 6 + 9
+  assert.equal(plan.segments[1]?.x, 49)
+  assert.equal(plan.width, 105) // stable 100% slots + update affordance
   assert.equal(plan.height, 22)
-  assert.equal(plan.updateCenterX, 88.5)
+  assert.equal(plan.updateCenterX, 100.5)
 })
 
 test('visibility combinations recover an all-hidden strip to provider marks', () => {
@@ -100,7 +103,7 @@ test('auto density is monotonic and collapses secondary content first without ch
     values,
     config: config({ elements: { providerMark: true, value: true, progress: true } }),
     displayWidthPt: 1600,
-    availableWidthPt: 70,
+    availableWidthPt: 80,
     measureText: measure,
   })
   assert.equal(densityOnly.density, 'tight')
@@ -112,7 +115,7 @@ test('auto density is monotonic and collapses secondary content first without ch
     values,
     config: config({ elements: { providerMark: true, value: true, progress: true } }),
     displayWidthPt: 1600,
-    availableWidthPt: 50,
+    availableWidthPt: 55,
     measureText: measure,
   })
   assert.deepEqual(constrained.segments.map(segment => segment.providerId), ['claude', 'codex'])
@@ -160,6 +163,106 @@ test('custom mode uses literal spacing and never auto-collapses', () => {
   assert.equal(custom.tokens.providerGap, 7)
   assert.equal(custom.segments.length, 2)
   assert.equal(custom.collapsed, false)
+})
+
+test('custom zero provider gap is optically literal while native width stays stable', () => {
+  const zeroGapConfig = config({
+    mode: 'custom', density: 'tight',
+    customSpacing: { edgePaddingPt: 0, markValueGapPt: 0, providerGapPt: 0 },
+  })
+  const plan = buildMenuBarPlan({
+    values: [
+      { providerId: 'claude', usage: 42, label: '38M', active: false },
+      { providerId: 'codex', usage: 17, label: '69M', active: false },
+    ],
+    config: zeroGapConfig,
+    displayWidthPt: 1440,
+    measureText: measure,
+  })
+  assert.equal(plan.segments[1]!.x, plan.segments[0]!.x + plan.segments[0]!.width)
+  assert.ok(plan.reservedSlack > 0)
+})
+
+test('native width is invariant across usage digits and compact token units', () => {
+  const usageWidths = [null, 0, 0.4, 9, 10, 97, 98, 100].map(usage => buildMenuBarPlan({
+    values: [{ providerId: 'claude', usage, active: false }],
+    config: config({ mode: 'custom' }),
+    displayWidthPt: 1440,
+    measureText: measure,
+  }).width)
+  assert.equal(new Set(usageWidths).size, 1)
+
+  const tokenWidths = ['0', '999', '1K', '1.3K', '1M', '1.2M', '1B'].map(label => buildMenuBarPlan({
+    values: [{ providerId: 'claude', usage: null, label, active: false }],
+    config: config({ mode: 'custom' }),
+    displayWidthPt: 1440,
+    measureText: measure,
+  }).width)
+  assert.equal(new Set(tokenWidths).size, 1)
+})
+
+test('transient unknown values retain the last-known provider value until stale', () => {
+  const known: MenuBarSegmentValue = { providerId: 'claude', usage: 42, active: true }
+  const first = retainMenuBarValues(new Map(), [known], 1_000, 300_000, 'usage')
+  assert.deepEqual(first.values, [known])
+
+  const transient = retainMenuBarValues(
+    first.memory,
+    [{ providerId: 'claude', usage: null, active: false }],
+    2_000,
+    300_000,
+    'usage',
+  )
+  assert.deepEqual(transient.values, [{ ...known, active: false }])
+
+  const stale = retainMenuBarValues(
+    transient.memory,
+    [{ providerId: 'claude', usage: null, active: false }],
+    302_000,
+    300_000,
+    'usage',
+  )
+  assert.deepEqual(stale.values, [{ providerId: 'claude', usage: null, active: false }])
+})
+
+test('token mode treats an en dash as unknown but zero tokens as observed', () => {
+  const known: MenuBarSegmentValue = { providerId: 'codex', usage: 42, label: '0', active: false }
+  const first = retainMenuBarValues(new Map(), [known], 1_000, 300_000, 'todayTokens')
+  const retained = retainMenuBarValues(
+    first.memory,
+    [{ providerId: 'codex', usage: 80, label: '–', active: true }],
+    2_000,
+    300_000,
+    'todayTokens',
+  )
+  assert.deepEqual(retained.values, [{ ...known, usage: 80, active: true }])
+
+  const missingQuota = retainMenuBarValues(
+    first.memory,
+    [{ providerId: 'codex', usage: null, label: '12M', active: true }],
+    2_000,
+    300_000,
+    'todayTokens',
+  )
+  assert.deepEqual(missingQuota.values, [{ providerId: 'codex', usage: 42, label: '12M', active: true }])
+})
+
+test('last-known values never cross the usage and token display modes', () => {
+  const usage: MenuBarSegmentValue = { providerId: 'claude', usage: 42, active: false }
+  const usageMemory = retainMenuBarValues(new Map(), [usage], 1_000, 300_000, 'usage').memory
+  const missingTokens: MenuBarSegmentValue = { providerId: 'claude', usage: 42, label: '–', active: false }
+  assert.deepEqual(
+    retainMenuBarValues(usageMemory, [missingTokens], 2_000, 300_000, 'todayTokens').values,
+    [missingTokens],
+  )
+
+  const tokens: MenuBarSegmentValue = { providerId: 'claude', usage: 42, label: '38M', active: false }
+  const tokenMemory = retainMenuBarValues(new Map(), [tokens], 1_000, 300_000, 'todayTokens').memory
+  const missingUsage: MenuBarSegmentValue = { providerId: 'claude', usage: null, active: false }
+  assert.deepEqual(
+    retainMenuBarValues(tokenMemory, [missingUsage], 2_000, 300_000, 'usage').values,
+    [missingUsage],
+  )
 })
 
 test('progress plan distinguishes zero, sub-one, half, full, and unknown without geometry shifts', () => {

@@ -420,7 +420,6 @@ test('popover measurement includes totals, update state and footer chrome', () =
 
 test('desktop settings keeps app behavior while menu bar composition lives elsewhere', () => {
   const snap = snapshot([account({})])
-  const groups = groupByProvider(snap)
   const fullConfig = {
     ...config,
     privacyToggleKey: 'p',
@@ -432,7 +431,7 @@ test('desktop settings keeps app behavior while menu bar composition lives elsew
     desktop: { ...config.desktop, expandedProviders: ['claude'] },
   } as Config
   const html = renderToStaticMarkup(createElement(DesktopSettings, {
-    config: fullConfig, groups,
+    config: fullConfig,
     update: { status: 'idle', availableVersion: null, progressPercent: null, error: null },
     appVersion: '0.28.5',
     daemon: {
@@ -444,7 +443,7 @@ test('desktop settings keeps app behavior while menu bar composition lives elsew
   assert.match(html, /Privacy mode/)
   assert.match(html, /Provider summary/)
   assert.match(html, /role="radiogroup" aria-label="Provider summary"/)
-  assert.match(html, /role="group" aria-label="Providers expanded by default"/)
+  assert.doesNotMatch(html, /Expanded by default|Providers expanded by default/)
   assert.doesNotMatch(html, /Pinned providers|Menu bar text|Menu bar value/)
   assert.match(html, /Graph range/)
   assert.match(html, />7d<\/button>/)
@@ -461,7 +460,7 @@ test('desktop settings keeps app behavior while menu bar composition lives elsew
 test('desktop settings is truthful when the package manager owns Linux updates', () => {
   const snap = snapshot([account({})])
   const html = renderToStaticMarkup(createElement(DesktopSettings, {
-    config, groups: groupByProvider(snap),
+    config,
     update: { status: 'unsupported', availableVersion: null, progressPercent: null, error: null },
     appVersion: '0.28.7', daemon: null,
     onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
@@ -474,7 +473,7 @@ test('desktop settings is truthful when the package manager owns Linux updates',
 test('desktop settings defers a downloaded update to the global restart action', () => {
   const snap = snapshot([account({})])
   const html = renderToStaticMarkup(createElement(DesktopSettings, {
-    config, groups: groupByProvider(snap),
+    config,
     update: { status: 'downloaded', availableVersion: '0.29.0', progressPercent: 100, error: null },
     appVersion: '0.28.5',
     daemon: null,

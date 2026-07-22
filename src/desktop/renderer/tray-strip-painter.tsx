@@ -5,9 +5,12 @@ import {
   buildMenuBarPlan,
   menuBarValuesFromSnapshot,
   menuBarRenderSignature,
+  retainMenuBarValues,
   type MenuBarPlan,
   type MenuBarSegmentValue,
+  type RetainedMenuBarValue,
 } from '../shared/menu-bar-plan'
+import { billingStaleAfterMs } from '../shared/presentation'
 import { markRenderPlan, providerMark, providerMonogram } from './provider-icons'
 
 function menuBarFont(plan: MenuBarPlan): string {
@@ -182,6 +185,7 @@ export function TrayStripPainter({ snapshot, config, pins, platform, update, dis
 }) {
   const canvas1x = useRef<HTMLCanvasElement>(null)
   const canvas2x = useRef<HTMLCanvasElement>(null)
+  const valueMemory = useRef<Map<string, RetainedMenuBarValue>>(new Map())
   const menuBarDependency = JSON.stringify(config.tray.menuBar)
   const effectiveDisplayWidth = displayWidthPt ?? window.screen.availWidth
   useEffect(() => {
@@ -190,7 +194,16 @@ export function TrayStripPainter({ snapshot, config, pins, platform, update, dis
     const canvas2 = canvas2x.current
     if (!canvas1 || !canvas2) return
     try {
-      const values = menuBarValues(snapshot, config, pins)
+      const rawValues = menuBarValues(snapshot, config, pins)
+      const retained = retainMenuBarValues(
+        valueMemory.current,
+        rawValues,
+        snapshot.generatedAt,
+        billingStaleAfterMs(snapshot),
+        config.tray.menuBarValue,
+      )
+      valueMemory.current = retained.memory
+      const values = retained.values
       const updateReady = update.status === 'downloaded'
       const plan = measuredPlan(values, config.tray.menuBar, effectiveDisplayWidth, updateReady)
       if (!plan) return
@@ -208,7 +221,9 @@ export function TrayStripPainter({ snapshot, config, pins, platform, update, dis
         renderSignature: menuBarRenderSignature({
           configRevision: config.revision,
           snapshotGeneratedAt: snapshot.generatedAt,
-          values,
+          // Validate this payload against the current daemon state even when
+          // its pixels intentionally retain a recent last-known display value.
+          values: rawValues,
           config: config.tray.menuBar,
           valueMode: config.tray.menuBarValue,
           displayWidthPt: effectiveDisplayWidth,

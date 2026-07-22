@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import type { Config } from '../../web/contract'
 import type { DashboardPath, DesktopState } from '../shared/desktop-contract'
 import { matchesPrivacyShortcut } from './privacy'
-import { readExpandedProviders, writeExpandedProviders } from './disclosure-state'
+import { initialExpandedProviders, writeExpandedProviders } from './disclosure-state'
 import {
   groupByProvider,
   MAX_PINS,
@@ -15,6 +15,7 @@ import { ColdState, DesktopSettings, EmptyState, Footer, MenuBarSettings, Provid
 import { TrayStripPainter } from './tray-strip-painter'
 import { OptimisticConfigUpdates } from './config-updates'
 import { applyDesktopTheme } from './theme'
+import { releasePopoverFocus } from './popover-focus'
 
 function Toast({ message }: { message: string }) {
   return <div className="toast" role="status">{message}</div>
@@ -62,7 +63,6 @@ export function App() {
   const scrollAnchor = useRef<{ providerId: string; top: number } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const denyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const persistTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const lastPopoverHeight = useRef<number | null>(null)
   const seeded = useRef(false)
   const configQueue = useRef<Promise<void>>(Promise.resolve())
@@ -75,6 +75,7 @@ export function App() {
   }, [])
 
   useEffect(() => window.tokmon.subscribePopoverHidden(() => {
+    releasePopoverFocus(document.activeElement)
     setSurface('usage')
     setScrollEdges({ up: false, down: false })
   }), [])
@@ -173,38 +174,29 @@ export function App() {
     return enqueued.state?.config ?? null
   }, [flashToast])
 
-  // The daemon is authoritative. localStorage is only a one-time upgrade fallback
-  // and a fast paint cache while an older daemon is attached.
+  // Accordion disclosure is local UI state. The daemon field is read only as a
+  // one-time compatibility seed for users upgrading from older desktop builds.
   useEffect(() => {
     if (seeded.current || !config || !snapshot || groups.length === 0) return
     seeded.current = true
     const providerIds = new Set(groups.map(group => group.providerId))
-    const local = readExpandedProviders(
+    const initial = initialExpandedProviders(
       window.localStorage,
       providerIds,
       config.desktop?.expandedProviders ?? [],
+      groups.length === 1 ? groups[0]!.providerId : null,
     )
-    const daemonExpanded = (config.desktop?.expandedProviders ?? []).filter(id => providerIds.has(id))
-    const initial = groups.length === 1 ? [groups[0]!.providerId] : daemonExpanded.length > 0 ? daemonExpanded : local
     setExpanded(new Set(initial))
     try { writeExpandedProviders(window.localStorage, initial, providerIds) } catch {}
-    if (daemonExpanded.length === 0 && initial.length > 0) {
-      void updateConfig(next => ({ ...next, desktop: { ...next.desktop, expandedProviders: initial } }))
-    }
-  }, [config, snapshot, groups, updateConfig])
+  }, [config, snapshot, groups])
 
   const persistExpansion = useCallback((next: Set<string>) => {
-    clearTimeout(persistTimer.current)
     const known = new Set(groups.map(group => group.providerId))
     const ids = [...next].filter(id => known.has(id))
-    persistTimer.current = setTimeout(() => {
-      try { writeExpandedProviders(window.localStorage, ids, known) } catch {}
-      void updateConfig(next => ({ ...next, desktop: { ...next.desktop, expandedProviders: ids } }))
-    }, 100)
-  }, [groups, updateConfig])
+    try { writeExpandedProviders(window.localStorage, ids, known) } catch {}
+  }, [groups])
 
   useEffect(() => () => {
-    clearTimeout(persistTimer.current)
     clearTimeout(toastTimer.current)
     clearTimeout(denyTimer.current)
   }, [])
@@ -376,7 +368,7 @@ export function App() {
             />
         : surface === 'desktop'
           ? <DesktopSettings
-              config={config} groups={groups}
+              config={config}
               update={state?.update ?? { status: 'disabled', availableVersion: null, progressPercent: null, error: null }}
               appVersion={state?.appVersion ?? ''}
               daemon={state?.daemon ?? null}

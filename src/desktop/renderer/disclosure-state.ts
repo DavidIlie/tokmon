@@ -34,6 +34,17 @@ export function readExpandedProviders(
   return knownUnique(legacy, known)
 }
 
+/** Seed a lone provider only on first run; an explicitly stored [] stays collapsed. */
+export function initialExpandedProviders(
+  storage: DisclosureStorage,
+  known: ReadonlySet<string>,
+  legacy: readonly string[],
+  soleProviderId: string | null,
+): string[] {
+  const seed = legacy.length > 0 ? legacy : soleProviderId ? [soleProviderId] : []
+  return readExpandedProviders(storage, known, seed)
+}
+
 /** Persist a tiny desktop-only preference without touching daemon/provider state. */
 export function writeExpandedProviders(
   storage: DisclosureStorage,

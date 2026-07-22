@@ -1,7 +1,8 @@
 import { BrowserWindow, screen, type Tray } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { availableCenteredHeight, availablePopoverHeight, centeredPopover, popoverPlacement, positionPopover, usableTrayBounds } from './popover-position'
+import { availableCenteredHeight, availablePopoverHeight, centeredPopover, popoverPlacement, positionPopover, usableTrayBounds, type Rect } from './popover-position'
+import { popoverPlatformBehavior } from './popover-behavior'
 import { DESKTOP_CHANNELS } from '../shared/desktop-contract'
 
 const WIDTH = 360
@@ -11,8 +12,8 @@ const runtimeDir = path.dirname(fileURLToPath(import.meta.url))
 
 export interface PopoverWindowController {
   window: BrowserWindow
-  toggle(): void
-  show(): void
+  toggle(anchorBounds?: Rect): void
+  show(anchorBounds?: Rect): void
   hide(): void
   setHeight(height: number): void
   setBackgroundColor(color: string): void
@@ -22,6 +23,7 @@ export function createPopoverWindow(tray: Tray, rendererUrl: string, initialBack
   const linux = process.platform === 'linux'
   const mac = process.platform === 'darwin'
   const wayland = linux && process.env.XDG_SESSION_TYPE === 'wayland'
+  const behavior = popoverPlatformBehavior(process.platform)
   const window = new BrowserWindow({
     width: WIDTH,
     height: 300,
@@ -39,6 +41,9 @@ export function createPopoverWindow(tray: Tray, rendererUrl: string, initialBack
     movable: wayland,
     skipTaskbar: true,
     alwaysOnTop: true,
+    ...(behavior.type ? { type: behavior.type } : {}),
+    acceptFirstMouse: behavior.acceptFirstMouse,
+    hiddenInMissionControl: behavior.hiddenInMissionControl,
     fullscreenable: false,
     minimizable: false,
     maximizable: false,
@@ -53,7 +58,7 @@ export function createPopoverWindow(tray: Tray, rendererUrl: string, initialBack
       webSecurity: true,
     },
   })
-  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  window.setVisibleOnAllWorkspaces(true, behavior.visibleOnAllWorkspaces)
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event, url) => {
     if (url !== rendererUrl) event.preventDefault()
@@ -71,12 +76,13 @@ export function createPopoverWindow(tray: Tray, rendererUrl: string, initialBack
   })
 
   let pendingShow: ReturnType<typeof setTimeout> | null = null
+  let activeAnchor: Rect | null = null
   const clearPendingShow = () => {
     if (pendingShow) clearTimeout(pendingShow)
     pendingShow = null
   }
   const place = (): boolean => {
-    const trayBounds = tray.getBounds()
+    const trayBounds = activeAnchor ?? tray.getBounds()
     if (!usableTrayBounds(trayBounds, mac)) return false
     const display = screen.getDisplayNearestPoint({
       x: Math.round(trayBounds.x + trayBounds.width / 2),
@@ -92,10 +98,11 @@ export function createPopoverWindow(tray: Tray, rendererUrl: string, initialBack
   const reveal = () => {
     if (window.isDestroyed()) return
     window.show()
-    window.focus()
+    if (behavior.focusAfterShow) window.focus()
   }
-  const show = () => {
+  const show = (anchorBounds?: Rect) => {
     clearPendingShow()
+    activeAnchor = anchorBounds ?? null
     let attempts = 0
     const placeAndReveal = () => {
       if (window.isDestroyed()) return
@@ -112,7 +119,7 @@ export function createPopoverWindow(tray: Tray, rendererUrl: string, initialBack
       // A deliberately hidden/unsupported tray should not make an explicit
       // "Open Tokmon" action disappear. Centering is an honest fallback;
       // anchoring empty bounds to (0, 0) looked like a broken corner window.
-      const display = screen.getPrimaryDisplay()
+      const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
       const position = centeredPopover(display.workArea, window.getBounds())
       window.setPosition(position.x, position.y, false)
       pendingShow = null
@@ -123,8 +130,8 @@ export function createPopoverWindow(tray: Tray, rendererUrl: string, initialBack
   return {
     window,
     show,
-    hide: () => { clearPendingShow(); window.hide() },
-    toggle: () => window.isVisible() ? window.hide() : show(),
+    hide: () => { clearPendingShow(); activeAnchor = null; window.hide() },
+    toggle: anchorBounds => window.isVisible() ? window.hide() : show(anchorBounds),
     setBackgroundColor(color) {
       // Transparent macOS windows get their rounded surface from the renderer.
       // Opaque Windows/Linux shells use the same resolved token natively so
@@ -132,7 +139,7 @@ export function createPopoverWindow(tray: Tray, rendererUrl: string, initialBack
       if (!mac) window.setBackgroundColor(color)
     },
     setHeight(height) {
-      const trayBounds = tray.getBounds()
+      const trayBounds = activeAnchor ?? tray.getBounds()
       const display = screen.getDisplayNearestPoint({
         x: Math.round(trayBounds.x + trayBounds.width / 2),
         y: Math.round(trayBounds.y + trayBounds.height / 2),

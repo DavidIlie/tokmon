@@ -18,6 +18,7 @@ import { effectiveSystemMode, electronThemeSource } from './native-theme'
 import { activeAccountIds, promotionAccounts, tightestQuota } from './presentation'
 import { selectPromotedAccounts, type PromotionState } from './promotion'
 import { createTrayIcon } from './tray-icon'
+import { TrayStripLifecycle } from './tray-strip-lifecycle'
 import { disconnectedMenuBarTitle, menuBarTitle } from './tray-presentation'
 import { accountIdentity } from '../shared/privacy'
 import {
@@ -34,7 +35,6 @@ import {
 } from '../shared/presentation'
 import type { HeadroomView, WebAccount, WebSnapshot } from '../../web/contract'
 import type { DesktopUpdateState } from '../shared/desktop-contract'
-import { menuBarDisplayBucket } from '../shared/menu-bar-plan'
 
 /** Unified critical band (≤10%), shared by strip, gauge, tooltip and popover. */
 function isCritical(remaining: number | null): boolean {
@@ -116,12 +116,12 @@ const ownsInstanceLock = app.requestSingleInstanceLock()
 if (!ownsInstanceLock) app.quit()
 
 async function bootstrap(): Promise<void> {
-  if (process.platform === 'darwin') app.setActivationPolicy('accessory')
   if (process.platform === 'win32') app.setAppUserModelId(
     channel === 'dev' ? 'com.davidilie.tokmon.dev' : 'com.davidilie.tokmon',
   )
   nativeTheme.themeSource = electronThemeSource(DEFAULT_APPEARANCE)
   await app.whenReady()
+  if (process.platform === 'darwin') app.setActivationPolicy('accessory')
 
   const workspaceRoot = path.resolve(runtimeDir, '../../..')
   const webRoot = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.join(workspaceRoot, 'dist/web')
@@ -210,11 +210,7 @@ async function bootstrap(): Promise<void> {
   let reconnectFailures = 0
   let unsubSnapshot: (() => void) | null = null
   let unsubConfig: (() => void) | null = null
-  let trayStripActive = false
-  let trayStripPins = ''
-  let trayStripConfigRevision: number | null = null
-  let trayStripSnapshotGeneratedAt: number | null = null
-  let trayStripDisplayBucket: string | null = null
+  const trayStrip = new TrayStripLifecycle()
 
   // Provider-scoped pins (menu-bar order, ≤2), migrated from legacy account pins.
   const validPinnedProviders = (): string[] => {
@@ -232,20 +228,17 @@ async function bootstrap(): Promise<void> {
   }
 
   const showDisconnectedPresentation = (error: unknown = null) => {
-    trayStripActive = false
-    trayStripPins = ''
-    trayStripConfigRevision = null
-    trayStripSnapshotGeneratedAt = null
-    trayStripDisplayBucket = null
     const failed = error !== null
     const ready = updateReady(state.get().update)
-    tray.setImage(createTrayIcon(null, failed, ready))
+    if (!trayStrip.hasComposedImage) tray.setImage(createTrayIcon(null, failed, ready))
     const updateLine = updateTooltipLine(identity.appName, state.get().update)
     const connectionLine = failed
       ? `${identity.appName} — daemon unavailable\n${error instanceof Error ? error.message : String(error)}`
       : `${identity.appName} — connecting to daemon`
     tray.setToolTip(updateLine ? `${updateLine}\n${connectionLine}` : connectionLine)
-    if (process.platform === 'darwin') tray.setTitle(disconnectedMenuBarTitle(failed, ready))
+    if (process.platform === 'darwin') {
+      tray.setTitle(trayStrip.hasComposedImage ? '' : disconnectedMenuBarTitle(failed, ready))
+    }
   }
 
   const updatePresentation = () => {
@@ -271,13 +264,8 @@ async function bootstrap(): Promise<void> {
     const critical = isCritical(remaining)
     const ready = updateReady(current.update)
     const pinSignature = currentPinSignature()
-    if (
-      pinSignature !== trayStripPins
-      || current.configRevision !== trayStripConfigRevision
-      || snapshot.generatedAt !== trayStripSnapshotGeneratedAt
-      || menuBarDisplayBucket(current.displayWidthPt) !== trayStripDisplayBucket
-    ) trayStripActive = false
-    if (!trayStripActive) tray.setImage(createTrayIcon(usage, critical, ready))
+    trayStrip.observePinSignature(pinSignature)
+    if (!trayStrip.hasComposedImage) tray.setImage(createTrayIcon(usage, critical, ready))
 
     // Tooltip: one honest line per described provider (pinned first, else the promoted
     // providers), each naming its representative account/window/severity/reset in words.
@@ -306,7 +294,7 @@ async function bootstrap(): Promise<void> {
       const alternate = config.tray.menuBarValue === 'todayTokens'
         ? formatCompactTokens(providerTodayTokens(fallbackAccounts))
         : undefined
-      tray.setTitle(trayStripActive ? '' : menuBarTitle(config.tray.showMenuBarText, usage, critical, alternate, ready))
+      tray.setTitle(trayStrip.hasComposedImage ? '' : menuBarTitle(config.tray.showMenuBarText, usage, critical, alternate, ready))
     }
     if (app.isPackaged && lastLaunchAtLogin !== config.tray.launchAtLogin) {
       app.setLoginItemSettings({ openAtLogin: config.tray.launchAtLogin, openAsHidden: true })
@@ -315,9 +303,8 @@ async function bootstrap(): Promise<void> {
   }
 
   repaintPresentation = () => {
-    // Immediately invalidate a renderer-painted strip so stale updater state
-    // cannot hide or retain the update glyph while React produces its new PNG.
-    trayStripActive = false
+    // Keep the last validated pixels until React supplies the replacement.
+    // Main-process signature validation prevents stale pixels being accepted.
     updatePresentation()
   }
   const onNativeUpdateDownloaded = () => updater.markNativeReady()
@@ -491,15 +478,11 @@ async function bootstrap(): Promise<void> {
       image.setTemplateImage(true)
       tray.setImage(image)
       tray.setTitle('')
-      trayStripPins = pinSignature
-      trayStripConfigRevision = payload.configRevision
-      trayStripSnapshotGeneratedAt = payload.snapshotGeneratedAt
-      trayStripDisplayBucket = menuBarDisplayBucket(payload.displayWidthPt)
-      trayStripActive = true
+      trayStrip.accept()
     },
   })
 
-  tray.on('click', () => popover.toggle())
+  tray.on('click', (_event, bounds) => popover.toggle(bounds))
   tray.on('right-click', () => {
     const current = state.get()
     const connected = rpc !== null && daemon !== null
