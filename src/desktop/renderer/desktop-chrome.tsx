@@ -27,6 +27,9 @@ import { MenuBarStripPreview, menuBarValues } from './tray-strip-painter'
 import { menuBarWidthBudget, type MenuBarPlan } from '../shared/menu-bar-plan'
 
 type PreviewStyle = React.CSSProperties & Record<'--preview-bg' | '--preview-accent' | '--preview-cost' | '--preview-dim', string>
+type MenuBarPreviewStyle = React.CSSProperties & Record<'--menubar-native-inset', string>
+
+const MACOS_STATUS_ITEM_INLINE_INSET_PT = 10
 
 function themePreviewStyle(appearance: AppearanceConfig, preset: ThemePreset, systemMode: 'light' | 'dark'): PreviewStyle {
   const tokens = resolveTheme({ ...appearance, preset }, systemMode).tokens
@@ -444,26 +447,35 @@ export function MenuBarSettings({ config, snapshot, pins, platform, displayWidth
     : menuBar.mode === 'custom' && previewPlan && previewPlan.width > menuBarWidthBudget(displayWidthPt)
       ? 'This custom strip is wider than Tokmon’s compact-display budget.'
       : null
+  const nativeInsetPt = platform === 'darwin' ? MACOS_STATUS_ITEM_INLINE_INSET_PT : 0
+  const nativePreviewStyle: MenuBarPreviewStyle = { '--menubar-native-inset': `${nativeInsetPt}px` }
+  const previewWidthCopy = previewWidth === null
+    ? '—'
+    : platform === 'darwin'
+      ? `${previewWidth.toFixed(1)} pt content · ${(previewWidth + nativeInsetPt * 2).toFixed(1)} pt item`
+      : `${previewWidth.toFixed(1)} pt content`
   return (
     <section className="settings-view menubar-settings" aria-label="Menu bar settings">
       <SettingsHeader title="Menu Bar" backLabel="Settings" onBack={onBack} />
       <div className="menubar-preview-stage" aria-label="Live menu bar preview">
         <div className="menubar-preview-band">
-          <span ref={previewStrip} className="menubar-preview-bracket" data-empty={pins.length === 0 || undefined}>
-            {pins.length === 0
-              ? <span className="menubar-preview-empty"><i aria-hidden="true" />Pin a provider from Usage</span>
-              : <MenuBarStripPreview
-                  values={values} menuBar={menuBar} displayWidthPt={displayWidthPt}
-                  updateReady={update.status === 'downloaded'} className="menubar-live-preview"
-                  ariaLabel={`Tokmon menu bar preview with ${pins.length} pinned provider${pins.length === 1 ? '' : 's'}`}
-                  onPlan={setPreviewPlan}
-                />}
+          <span className="menubar-preview-native" data-native={platform === 'darwin' || undefined} style={nativePreviewStyle}>
+            <span ref={previewStrip} className="menubar-preview-bracket" data-empty={pins.length === 0 || undefined}>
+              {pins.length === 0
+                ? <span className="menubar-preview-empty"><i aria-hidden="true" />Pin a provider from Usage</span>
+                : <MenuBarStripPreview
+                    values={values} menuBar={menuBar} displayWidthPt={displayWidthPt}
+                    updateReady={update.status === 'downloaded'} className="menubar-live-preview"
+                    ariaLabel={`Tokmon menu bar preview with ${pins.length} pinned provider${pins.length === 1 ? '' : 's'}`}
+                    onPlan={setPreviewPlan}
+                  />}
+            </span>
           </span>
           <span className="menubar-preview-system" aria-hidden="true"><i /><i /><i /></span>
         </div>
-        <span className="menubar-preview-width">{previewWidth === null ? '—' : previewWidth.toFixed(1)} pt</span>
+        <span className="menubar-preview-width">{previewWidthCopy}</span>
       </div>
-      <p className="menubar-preview-caption">macOS reserves the outer spacing. Tokmon controls everything inside the bracket.</p>
+      <p className="menubar-preview-caption">Highlighted pill includes macOS’s 10 pt inset on each side. Brackets mark Tokmon content.</p>
       <div className="settings-list menubar-controls">
         <p className="settings-platform-note">{platformNote}</p>
         {adaptiveNote && <p className="menubar-adaptive-note" role="status">{adaptiveNote}</p>}
