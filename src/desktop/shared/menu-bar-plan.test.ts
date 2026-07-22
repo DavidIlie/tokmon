@@ -35,15 +35,15 @@ test('comfortable production geometry is exact and keeps migrated default propor
     measureText: measure,
   })
   assert.deepEqual(plan.tokens, MENU_BAR_DENSITIES.comfortable)
-  assert.equal(plan.valueSlotWidth, 24)
-  assert.equal(plan.reservedSlack, 12)
-  assert.equal(plan.contentOffsetX, 6)
-  assert.equal(plan.segments[0]?.x, 7)
+  assert.equal(plan.valueSlotWidth, 18)
+  assert.equal(plan.reservedSlack, 0)
+  assert.equal(plan.contentOffsetX, 0)
+  assert.equal(plan.segments[0]?.x, 1)
   assert.equal(plan.segments[0]?.width, 34)
-  assert.equal(plan.segments[1]?.x, 49)
-  assert.equal(plan.width, 105) // stable 100% slots + update affordance
+  assert.equal(plan.segments[1]?.x, 43)
+  assert.equal(plan.width, 93)
   assert.equal(plan.height, 22)
-  assert.equal(plan.updateCenterX, 100.5)
+  assert.equal(plan.updateCenterX, 88.5)
 })
 
 test('visibility combinations recover an all-hidden strip to provider marks', () => {
@@ -103,7 +103,7 @@ test('auto density is monotonic and collapses secondary content first without ch
     values,
     config: config({ elements: { providerMark: true, value: true, progress: true } }),
     displayWidthPt: 1600,
-    availableWidthPt: 80,
+    availableWidthPt: 68,
     measureText: measure,
   })
   assert.equal(densityOnly.density, 'tight')
@@ -115,7 +115,7 @@ test('auto density is monotonic and collapses secondary content first without ch
     values,
     config: config({ elements: { providerMark: true, value: true, progress: true } }),
     displayWidthPt: 1600,
-    availableWidthPt: 55,
+    availableWidthPt: 48,
     measureText: measure,
   })
   assert.deepEqual(constrained.segments.map(segment => segment.providerId), ['claude', 'codex'])
@@ -165,7 +165,7 @@ test('custom mode uses literal spacing and never auto-collapses', () => {
   assert.equal(custom.collapsed, false)
 })
 
-test('custom zero provider gap is optically literal while native width stays stable', () => {
+test('custom zero spacing adds no hidden outer reserve or inter-provider gap', () => {
   const zeroGapConfig = config({
     mode: 'custom', density: 'tight',
     customSpacing: { edgePaddingPt: 0, markValueGapPt: 0, providerGapPt: 0 },
@@ -180,25 +180,23 @@ test('custom zero provider gap is optically literal while native width stays sta
     measureText: measure,
   })
   assert.equal(plan.segments[1]!.x, plan.segments[0]!.x + plan.segments[0]!.width)
-  assert.ok(plan.reservedSlack > 0)
+  assert.equal(plan.reservedSlack, 0)
+  assert.equal(plan.contentOffsetX, 0)
+  assert.equal(plan.width, plan.segments[1]!.x + plan.segments[1]!.width)
 })
 
-test('native width is invariant across usage digits and compact token units', () => {
-  const usageWidths = [null, 0, 0.4, 9, 10, 97, 98, 100].map(usage => buildMenuBarPlan({
-    values: [{ providerId: 'claude', usage, active: false }],
-    config: config({ mode: 'custom' }),
-    displayWidthPt: 1440,
-    measureText: measure,
-  }).width)
-  assert.equal(new Set(usageWidths).size, 1)
-
-  const tokenWidths = ['0', '999', '1K', '1.3K', '1M', '1.2M', '1B'].map(label => buildMenuBarPlan({
+test('auto mode follows visible content instead of reserving hidden sentinel width', () => {
+  const build = (label: string) => buildMenuBarPlan({
     values: [{ providerId: 'claude', usage: null, label, active: false }],
-    config: config({ mode: 'custom' }),
+    config: config({ mode: 'auto' }),
     displayWidthPt: 1440,
     measureText: measure,
-  }).width)
-  assert.equal(new Set(tokenWidths).size, 1)
+  })
+  const short = build('1K')
+  const long = build('1.2M')
+  assert.equal(short.reservedSlack, 0)
+  assert.equal(short.contentOffsetX, 0)
+  assert.ok(short.width < long.width)
 })
 
 test('transient unknown values retain the last-known provider value until stale', () => {

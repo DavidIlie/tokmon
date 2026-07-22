@@ -300,12 +300,7 @@ function createPlan(
     .map((value, index) => ({ value, visibility: effectiveVisibility[index]! }))
     .filter(item => item.visibility.present && (item.visibility.mark || item.visibility.value || item.visibility.progress))
   const labels = visibleValues.map(({ value }) => value.label ?? menuBarLabel(value.usage))
-  const hasAlternate = visibleValues.some(({ value }) => value.label !== undefined)
-  // Native image width stays invariant across every legal value. Actual labels
-  // still own their literal geometry; unused stability width is moved outside
-  // provider boundaries instead of becoming invisible inter-provider padding.
-  const stableLabel = hasAlternate ? '999M' : '100%'
-  const valueSlotWidth = half(Math.max(0, measureText(stableLabel, font), ...labels.map(label => measureText(label, font))))
+  const valueSlotWidth = half(Math.max(0, ...labels.map(label => measureText(label, font))))
 
   let cursor = tokens.edgePadding
   const segments: MenuBarSegmentPlan[] = []
@@ -354,29 +349,9 @@ function createPlan(
   })
 
   const actualProviderWidth = segments.length === 0 ? 0 : cursor + tokens.edgePadding
-  const stableSegmentWidth = (show: Visibility): number => {
-    let content = 0
-    if (show.mark) content += tokens.iconBox
-    if (show.value) content += (show.mark ? tokens.markValueGap : 0) + valueSlotWidth
-    return Math.max(content, show.progress ? tokens.progressWidth : 0)
-  }
-  const stableProviderWidth = visibleValues.length === 0
-    ? 0
-    : tokens.edgePadding * 2
-      + visibleValues.reduce((sum, { visibility }) => sum + stableSegmentWidth(visibility), 0)
-      + Math.max(0, visibleValues.length - 1) * tokens.providerGap
-  const reservedSlack = Math.max(0, stableProviderWidth - actualProviderWidth)
-  const contentOffsetX = reservedSlack / 2
-  if (contentOffsetX > 0) {
-    for (const segment of segments) {
-      segment.x += contentOffsetX
-      if (segment.iconX !== null) segment.iconX += contentOffsetX
-      if (segment.valueLeft !== null) segment.valueLeft += contentOffsetX
-      if (segment.valueCenterX !== null) segment.valueCenterX += contentOffsetX
-      if (segment.progressX !== null) segment.progressX += contentOffsetX
-    }
-  }
-  const providerWidth = stableProviderWidth
+  const reservedSlack = 0
+  const contentOffsetX = 0
+  const providerWidth = actualProviderWidth
   // Keep every valid plan inside the native IPC contract. Tight mark-only and
   // progress-only layouts are 11pt intrinsically, but Electron status items
   // need the same 12pt discoverable floor as the procedural fallback icon.
