@@ -12,6 +12,7 @@ import { acquireOrAttachDaemon, type DaemonController } from '../../web/daemon-c
 import { DesktopStateStore, trayStripPayloadMatchesState } from './desktop-state'
 import { DesktopUpdaterController, type DesktopAutoUpdater } from './desktop-updater'
 import { desktopIdentity, desktopUserDataPath, resolveDesktopChannel } from './desktop-runtime'
+import { readDesktopLoginItem, setDesktopLoginItem } from './desktop-login-item'
 import { registerDesktopIpc } from './ipc-bridge'
 import { createPopoverWindow } from './popover-window'
 import { effectiveSystemMode, electronThemeSource } from './native-theme'
@@ -139,7 +140,10 @@ async function bootstrap(): Promise<void> {
     null,
     screen.getPrimaryDisplay().bounds.width,
   )
-  state.update({ systemMode: initialSystemMode })
+  state.update({
+    systemMode: initialSystemMode,
+    loginItem: readDesktopLoginItem(app, process.platform, channel),
+  })
   let repaintPresentation = () => {}
   let recoverInstallFailure = () => {}
   let trayUpdateReady = false
@@ -204,13 +208,18 @@ async function bootstrap(): Promise<void> {
   nativeTheme.on('updated', onNativeThemeUpdated)
 
   let promotion: PromotionState = { primaryId: null, promotedAt: null }
-  let lastLaunchAtLogin: boolean | null = null
   let connectAttempt: Promise<void> | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let reconnectFailures = 0
   let unsubSnapshot: (() => void) | null = null
   let unsubConfig: (() => void) | null = null
   const trayStrip = new TrayStripLifecycle()
+
+  const applyLaunchAtLogin = (enabled: boolean) => {
+    state.update({
+      loginItem: setDesktopLoginItem(app, process.platform, channel, enabled),
+    })
+  }
 
   // Provider-scoped pins (menu-bar order, ≤2), migrated from legacy account pins.
   const validPinnedProviders = (): string[] => {
@@ -295,10 +304,6 @@ async function bootstrap(): Promise<void> {
         ? formatCompactTokens(providerTodayTokens(fallbackAccounts))
         : undefined
       tray.setTitle(trayStrip.hasComposedImage ? '' : menuBarTitle(config.tray.showMenuBarText, usage, critical, alternate, ready))
-    }
-    if (app.isPackaged && lastLaunchAtLogin !== config.tray.launchAtLogin) {
-      app.setLoginItemSettings({ openAtLogin: config.tray.launchAtLogin, openAsHidden: true })
-      lastLaunchAtLogin = config.tray.launchAtLogin
     }
   }
 
@@ -414,12 +419,14 @@ async function bootstrap(): Promise<void> {
         unsubConfig = client.subscribeConfig(configState => {
           state.config(configState.config, configState.config.revision)
           applyAppearance(configState.config.appearance)
+          applyLaunchAtLogin(configState.config.tray.launchAtLogin)
           updatePresentation()
         })
         await client.getConfig()
           .then(value => {
             state.config(value.config, value.config.revision)
             applyAppearance(value.config.appearance)
+            applyLaunchAtLogin(value.config.tray.launchAtLogin)
           })
           .catch(error => {
             state.connection('error', error)
@@ -460,7 +467,10 @@ async function bootstrap(): Promise<void> {
     checkForUpdates: () => updater.checkForUpdates(),
     installUpdate: requestUpdateInstall,
     setPopoverHeight: height => popover.setHeight(height),
-    onConfig: config => applyAppearance(config.appearance),
+    onConfig: config => {
+      applyAppearance(config.appearance)
+      applyLaunchAtLogin(config.tray.launchAtLogin)
+    },
     onTrayStrip: payload => {
       if (process.platform !== 'darwin') return
       const current = state.get()
@@ -482,7 +492,15 @@ async function bootstrap(): Promise<void> {
     },
   })
 
-  tray.on('click', (_event, bounds) => popover.toggle(bounds))
+  tray.on('click', (_event, bounds) => {
+    const requested = state.get().config?.tray.launchAtLogin
+    if (requested === undefined) {
+      state.update({ loginItem: readDesktopLoginItem(app, process.platform, channel) })
+    } else {
+      applyLaunchAtLogin(requested)
+    }
+    popover.toggle(bounds)
+  })
   tray.on('right-click', () => {
     const current = state.get()
     const connected = rpc !== null && daemon !== null

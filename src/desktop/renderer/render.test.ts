@@ -433,6 +433,7 @@ test('desktop settings keeps app behavior while menu bar composition lives elsew
   const html = renderToStaticMarkup(createElement(DesktopSettings, {
     config: fullConfig,
     update: { status: 'idle', availableVersion: null, progressPercent: null, error: null },
+    loginItem: { status: 'disabled', enabled: false, error: null },
     appVersion: '0.28.5',
     daemon: {
       role: 'attached', ownerKind: 'cli', version: '0.28.7', protocolVersion: 4, channel: 'release',
@@ -450,6 +451,7 @@ test('desktop settings keeps app behavior while menu bar composition lives elsew
   assert.match(html, /data-active="true">14d<\/button>/)
   assert.match(html, />30d<\/button>/)
   assert.match(html, /Launch at login/)
+  assert.match(html, /Start Tokmon silently after sign-in/)
   assert.match(html, /Tokmon 0\.28\.5/)
   assert.match(html, /Background service 0\.28\.7 · protocol 4 · CLI/)
   assert.match(html, /Check for Updates/)
@@ -462,6 +464,7 @@ test('desktop settings is truthful when the package manager owns Linux updates',
   const html = renderToStaticMarkup(createElement(DesktopSettings, {
     config,
     update: { status: 'unsupported', availableVersion: null, progressPercent: null, error: null },
+    loginItem: { status: 'unsupported', enabled: false, error: null },
     appVersion: '0.28.7', daemon: null,
     onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
     onCheckUpdates: () => {}, onQuit: () => {},
@@ -475,6 +478,7 @@ test('desktop settings defers a downloaded update to the global restart action',
   const html = renderToStaticMarkup(createElement(DesktopSettings, {
     config,
     update: { status: 'downloaded', availableVersion: '0.29.0', progressPercent: 100, error: null },
+    loginItem: { status: 'enabled', enabled: true, error: null },
     appVersion: '0.28.5',
     daemon: null,
     onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
@@ -482,6 +486,23 @@ test('desktop settings defers a downloaded update to the global restart action',
   }))
   assert.match(html, /0\.29\.0 is ready to install/)
   assert.match(html, /disabled=""[^>]*>Update Ready/)
+})
+
+test('desktop settings explains when macOS still requires login item approval', () => {
+  const pendingConfig = {
+    ...config,
+    tray: { ...config.tray, launchAtLogin: true },
+  } as Config
+  const html = renderToStaticMarkup(createElement(DesktopSettings, {
+    config: pendingConfig,
+    update: { status: 'idle', availableVersion: null, progressPercent: null, error: null },
+    loginItem: { status: 'requires-approval', enabled: false, error: null },
+    appVersion: '0.29.4', daemon: null,
+    onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
+    onCheckUpdates: () => {}, onQuit: () => {},
+  }))
+  assert.match(html, /Allow Tokmon in System Settings → General → Login Items/)
+  assert.match(html, /role="switch" aria-checked="true"/)
 })
 
 test('settings hub orders theme, menu bar, providers, then desktop behavior', () => {

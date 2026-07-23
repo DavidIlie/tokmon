@@ -370,6 +370,7 @@ export function App() {
           ? <DesktopSettings
               config={config}
               update={state?.update ?? { status: 'disabled', availableVersion: null, progressPercent: null, error: null }}
+              loginItem={state?.loginItem ?? { status: 'development', enabled: false, error: null }}
               appVersion={state?.appVersion ?? ''}
               daemon={state?.daemon ?? null}
               onPatch={mutate => { void updateConfig(mutate) }}

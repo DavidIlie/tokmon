@@ -21,7 +21,9 @@ function snapshot(redacted: boolean): WebSnapshot {
 
 function state(revision: number, privacyMode: boolean, snapshotMode?: boolean): DesktopState {
   return {
-    appName: 'Tokmon', appVersion: 'test', update: { status: 'disabled', availableVersion: null, progressPercent: null, error: null },
+    appName: 'Tokmon', appVersion: 'test',
+    update: { status: 'disabled', availableVersion: null, progressPercent: null, error: null },
+    loginItem: { status: 'enabled', enabled: true, error: null },
     snapshot: snapshotMode === undefined ? null : snapshot(snapshotMode), config: { revision, privacyMode } as Config, configRevision: revision,
     connection: 'live', daemon: null, platform: 'darwin', displayWidthPt: 1440,
     systemMode: 'dark', activeAccountIds: [], error: null,

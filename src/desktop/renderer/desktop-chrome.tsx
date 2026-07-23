@@ -550,9 +550,20 @@ function updateStatusCopy(update: DesktopUpdateState): string {
   return 'Checks automatically after launch and every hour'
 }
 
-export function DesktopSettings({ config, update, appVersion, daemon, onPatch, onBack, onDashboard, onCheckUpdates, onQuit }: {
+function launchAtLoginHint(loginItem: DesktopState['loginItem'], requested: boolean): string {
+  if (loginItem.status === 'development') return 'Available in the installed app'
+  if (loginItem.status === 'unsupported') return 'Available on macOS and Windows'
+  if (loginItem.status === 'requires-approval') return 'Allow Tokmon in System Settings → General → Login Items'
+  if (loginItem.status === 'not-found') return 'Reinstall Tokmon, then try again'
+  if (loginItem.status === 'error') return loginItem.error ?? 'Couldn’t update the system login item'
+  if (requested && !loginItem.enabled) return 'Disabled in system startup settings'
+  return loginItem.enabled ? 'Starts silently after sign-in' : 'Start Tokmon silently after sign-in'
+}
+
+export function DesktopSettings({ config, update, loginItem, appVersion, daemon, onPatch, onBack, onDashboard, onCheckUpdates, onQuit }: {
   config: Config
   update: DesktopUpdateState
+  loginItem: DesktopState['loginItem']
   appVersion: string
   daemon: DesktopState['daemon']
   onPatch(mutate: (config: Config) => Config): void
@@ -562,6 +573,7 @@ export function DesktopSettings({ config, update, appVersion, daemon, onPatch, o
   onQuit(): void
 }) {
   const service = daemonLabel(daemon)
+  const loginItemUnavailable = loginItem.status === 'development' || loginItem.status === 'unsupported'
   const updateBusy = update.status === 'checking' || update.status === 'available' || update.status === 'downloading' || update.status === 'restarting'
   const updateDisabled = update.status === 'disabled' || update.status === 'unsupported' || updateBusy || update.status === 'downloaded'
   const updateLabel = update.status === 'restarting'
@@ -600,8 +612,13 @@ export function DesktopSettings({ config, update, appVersion, daemon, onPatch, o
         <SettingsRow label="Active window" hint="Recent usage emphasis">
           <span className="segmented" role="radiogroup" aria-label="Active window">{[5, 10, 20, 30].map(value => <button key={value} type="button" role="radio" aria-checked={config.tray.activeTimeoutMin === value} data-active={config.tray.activeTimeoutMin === value} onClick={() => onPatch(next => ({ ...next, tray: { ...next.tray, activeTimeoutMin: value } }))}>{value}m</button>)}</span>
         </SettingsRow>
-        <SettingsRow label="Launch at login" hint="Start Tokmon silently">
-          <Toggle value={config.tray.launchAtLogin} label="Launch at login" onChange={value => onPatch(next => ({ ...next, tray: { ...next.tray, launchAtLogin: value } }))} />
+        <SettingsRow label="Launch at login" hint={launchAtLoginHint(loginItem, config.tray.launchAtLogin)}>
+          <Toggle
+            value={config.tray.launchAtLogin}
+            label="Launch at login"
+            disabled={loginItemUnavailable}
+            onChange={value => onPatch(next => ({ ...next, tray: { ...next.tray, launchAtLogin: value } }))}
+          />
         </SettingsRow>
         <div className="desktop-app-actions" aria-label="Application actions">
           <span className="desktop-app-version">

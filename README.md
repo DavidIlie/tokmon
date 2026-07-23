@@ -68,7 +68,8 @@ progress lines, and comfortable, compact, or tight spacing. Auto layout adapts
 to smaller displays; Custom mode exposes half-point edge and gap controls.
 Clicking the item opens a compact view of every enabled provider and account,
 including usage, reset times, token totals, spend, cache savings, and recent
-history.
+history. The Desktop App settings can also launch Tokmon silently at login on
+macOS and Windows, with native approval state shown in the app.
 
 ![Tokmon desktop quota popover](assets/desktop/tray-popover.png)
 

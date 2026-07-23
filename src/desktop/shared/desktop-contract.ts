@@ -18,6 +18,14 @@ export const DESKTOP_CHANNELS = {
 export type DesktopConnectionState = 'connecting' | 'live' | 'reconnecting' | 'error'
 export type DesktopRefreshScope = 'all' | 'summary' | 'table' | 'billing' | 'peak'
 export type DesktopUpdateStatus = 'disabled' | 'unsupported' | 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'restarting' | 'error'
+export type DesktopLoginItemStatus = 'unsupported' | 'development' | 'disabled' | 'enabled' | 'requires-approval' | 'not-found' | 'error'
+
+export interface DesktopLoginItemState {
+  status: DesktopLoginItemStatus
+  /** Native OS state, which can differ from the requested config after OS-level denial. */
+  enabled: boolean
+  error: string | null
+}
 
 export interface DesktopUpdateState {
   status: DesktopUpdateStatus
@@ -94,6 +102,7 @@ export interface DesktopState {
   appName: string
   appVersion: string
   update: DesktopUpdateState
+  loginItem: DesktopLoginItemState
   snapshot: WebSnapshot | null
   config: Config | null
   configRevision: number | null

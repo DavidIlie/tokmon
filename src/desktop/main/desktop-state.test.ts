@@ -12,6 +12,7 @@ test('desktop state exposes the Electron bundle identity independently of the da
   assert.equal(state.appName, 'Tokmon')
   assert.equal(state.appVersion, '1.2.3')
   assert.equal(state.update.status, 'disabled')
+  assert.equal(state.loginItem.status, 'development')
   assert.equal(state.snapshot, null)
   assert.equal(state.displayWidthPt, 1440)
 })

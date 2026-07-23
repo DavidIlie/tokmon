@@ -54,6 +54,19 @@ multiple accounts.
 Closing the popover resets its navigation to the overview. Advanced analytics
 and custom palette editing open in the web dashboard.
 
+## Launch at login
+
+Turn on **Launch at login** in **Settings → Desktop App** to start Tokmon
+silently after sign-in. The preference is shared with the CLI, TUI, and web
+settings, while the installed desktop app owns the native macOS or Windows
+registration.
+
+On macOS 13 or newer, Tokmon uses the main app login service and reports when
+approval is still required in **System Settings → General → Login Items**.
+Windows uses the installed executable and reports when Startup Apps has disabled
+it. Development builds never register themselves, and Linux startup remains
+managed by the desktop environment.
+
 ## Daemon ownership
 
 The desktop app can own the daemon. A later `tokmon`, `tokmon serve`, or query

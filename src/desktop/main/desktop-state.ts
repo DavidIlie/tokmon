@@ -15,6 +15,7 @@ export class DesktopStateStore {
       appName,
       appVersion,
       update: disabledUpdateState(),
+      loginItem: { status: 'development', enabled: false, error: null },
       snapshot: null,
       config: null,
       configRevision: null,
