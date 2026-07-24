@@ -11,6 +11,8 @@ export interface Account {
   name: string
   homeDir: string
   color?: string
+  /** Manual account intent. Omitted means enabled for backwards compatibility. */
+  enabled?: boolean
 }
 
 export type MenuBarMode = 'auto' | 'custom'
@@ -183,6 +185,7 @@ export interface TrackedAccountRow {
   homeDir: string
   color: string
   source: TrackedAccountSource
+  enabled: boolean
   explicitId?: string
   explicitIndex?: number
   excludedRef?: DetectedAccountRef
@@ -194,6 +197,7 @@ export interface TrackedAccountCandidate {
   name: string
   homeDir?: string | null
   color?: string | null
+  source?: 'auto' | 'configured'
 }
 
 export const DEFAULT_MENU_BAR_CONFIG: MenuBarConfig = {
@@ -323,6 +327,7 @@ export function getTrackedAccountRows(
   const excludedKeys = new Set(
     config.accountDetection.excludedAccounts.map(ref => keyFor(ref.providerId, ref.homeDir)),
   )
+  const liveById = new Map((autoAccounts ?? []).map(account => [account.id, account]))
 
   const rememberRow = (row: TrackedAccountRow): void => {
     rowIds.add(row.id)
@@ -334,6 +339,10 @@ export function getTrackedAccountRows(
     const meta = PROVIDER_META[account.providerId]
     configuredIds.add(account.id)
     configuredKeys.add(keyFor(account.providerId, account.homeDir))
+    const live = liveById.get(account.id)
+    if (live) {
+      configuredKeys.add(keyFor(account.providerId, live.homeDir))
+    }
     rememberRow({
       id: account.id,
       providerId: account.providerId,
@@ -341,6 +350,7 @@ export function getTrackedAccountRows(
       homeDir: account.homeDir || '~',
       color: account.color || meta.color,
       source: 'configured',
+      enabled: account.enabled !== false,
       explicitId: account.id,
       explicitIndex,
     })
@@ -361,11 +371,14 @@ export function getTrackedAccountRows(
         homeDir: account.homeDir || '~',
         color: account.color || meta.color,
         source: 'auto',
+        enabled: true,
       })
     }
   }
 
-  for (const providerId of PROVIDER_ORDER) {
+  // Callers with a daemon snapshot already supplied canonical runtime accounts.
+  // Only legacy/degraded callers without that inventory need synthesized defaults.
+  if (autoAccounts === undefined) for (const providerId of PROVIDER_ORDER) {
     if (!detectionEnabled || detectorDisabled.has(providerId)) continue
     if (config.disabledProviders.includes(providerId)) continue
     if (!tracked.has(providerId)) continue
@@ -380,6 +393,7 @@ export function getTrackedAccountRows(
       homeDir: '~',
       color: meta.color,
       source: 'auto',
+      enabled: true,
     })
   }
   for (const ref of config.accountDetection.excludedAccounts) {
@@ -392,6 +406,7 @@ export function getTrackedAccountRows(
       homeDir: ref.homeDir,
       color: meta.color,
       source: 'ignored',
+      enabled: false,
       excludedRef: ref,
     })
   }
@@ -605,6 +620,7 @@ export function repairConfig(input: unknown): ConfigRepair {
       name,
       homeDir: typeof raw.homeDir === 'string' && raw.homeDir.trim() ? raw.homeDir : '~',
       ...(typeof raw.color === 'string' && raw.color.trim() ? { color: raw.color } : {}),
+      ...(raw.enabled === false ? { enabled: false } : {}),
     })
   })
 
@@ -719,8 +735,10 @@ export function repairConfig(input: unknown): ConfigRepair {
   }
   if (parsed.desktop !== undefined && !sameJson(parsed.desktop, desktop)) reasons.push('desktop contained invalid settings')
 
-  const activeAccountId = typeof parsed.activeAccountId === 'string' && (accountIds.has(parsed.activeAccountId) || PROVIDER_IDS.includes(parsed.activeAccountId as ProviderId))
-    ? parsed.activeAccountId
+  // Auto-discovered ids are daemon-owned and are not persisted in `accounts`.
+  // Preserve any non-empty selection so alternate homes remain selectable.
+  const activeAccountId = typeof parsed.activeAccountId === 'string' && parsed.activeAccountId.trim()
+    ? parsed.activeAccountId.trim()
     : null
   if (parsed.activeAccountId !== undefined && parsed.activeAccountId !== null && activeAccountId === null) {
     reasons.push('activeAccountId did not match a known account/provider')

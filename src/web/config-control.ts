@@ -1,10 +1,11 @@
-import { normalizeConfig, saveConfig, type Config } from '../config'
+import { canonicalizeConfigHomeRefs, normalizeConfig, saveConfig, type Config } from '../config'
 import {
   TOKMON_CAPABILITIES,
   TOKMON_PROTOCOL_VERSION,
   type ConfigState,
   type ConfigUpdateRequest,
 } from '../rpc/contract'
+import { detectInstalledProviders } from '../providers'
 import { resolveAccounts, tzFor } from './data'
 import type { DataEngine } from './data-engine'
 
@@ -46,12 +47,34 @@ export class ConfigPersistenceError extends Error {
   }
 }
 
-async function resolveEngineConfig(config: Config): Promise<Parameters<DataEngine['setConfig']>[0]> {
+export async function resolveEngineConfig(config: Config): Promise<Parameters<DataEngine['setConfig']>[0]> {
+  const [resolved, installedProviders] = await Promise.all([
+    resolveAccounts(config),
+    detectInstalledProviders(),
+  ])
   return {
-    resolved: await resolveAccounts(config),
+    resolved,
+    installedProviders,
     tz: tzFor(config),
     summaryIntervalMs: summaryIntervalFor(config),
     billingIntervalMs: billingIntervalFor(config),
+  }
+}
+
+type EngineConfigResolver = typeof resolveEngineConfig
+
+/** Explicit full refreshes rescan homes without overwriting a newer config revision. */
+export async function rediscoverEngineAccounts(
+  engine: DataEngine,
+  state: { config: Config },
+  resolve: EngineConfigResolver = resolveEngineConfig,
+): Promise<void> {
+  while (true) {
+    const expected = state.config
+    const next = await resolve(expected)
+    if (state.config.revision !== expected.revision) continue
+    engine.setConfig(next)
+    return
   }
 }
 
@@ -79,9 +102,19 @@ function mergeCapabilityFields(incomingConfig: Config, current: Config): Record<
   const incoming = incomingConfig as Partial<Config>
   const incomingTray = incoming.tray as Partial<Config['tray']> | undefined
   const incomingDesktop = incoming.desktop as Partial<Config['desktop']> | undefined
+  const currentAccounts = new Map(current.accounts.map(account => [account.id, account]))
+  const accounts = hasOwn(incoming, 'accounts') && Array.isArray(incoming.accounts)
+    ? incoming.accounts.map(account => {
+        const previous = currentAccounts.get(account.id)
+        return !hasOwn(account, 'enabled') && previous?.enabled === false
+          ? { ...account, enabled: false }
+          : account
+      })
+    : current.accounts
 
   return {
     ...incoming,
+    accounts,
     appearance: hasOwn(incoming, 'appearance') ? incoming.appearance : current.appearance,
     accountDetection: hasOwn(incoming, 'accountDetection')
       ? incoming.accountDetection
@@ -131,10 +164,10 @@ async function applyConfigUpdateUnlocked(
     throw new ConfigConflictError(toConfigState(state.config))
   }
 
-  const normalized = normalizeConfig({
+  const normalized = canonicalizeConfigHomeRefs(normalizeConfig({
     ...mergeCapabilityFields(input.config, state.config),
     revision: state.config.revision + 1,
-  })
+  }))
 
   const reconfigureEngine = configAffectsEngine(state.config, normalized)
   // Only source/timing changes resolve accounts. Pins, privacy, disclosure and

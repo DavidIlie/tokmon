@@ -1,8 +1,8 @@
-import { detectProviders, PROVIDERS } from '../providers'
+import { detectAccountProviders, PROVIDERS } from '../providers'
 import { buildAccounts } from '../accounts'
 import { resolveTimezone } from '../tz'
 import type { Config } from '../config'
-import type { Account, BillingResult } from '../providers/types'
+import type { Account, BillingResult, ProviderId } from '../providers/types'
 import type { DashboardData, TableData } from '../types'
 import { colorHex, namedHex } from '../shared/colors'
 import type {
@@ -18,7 +18,7 @@ export interface ResolvedAccount {
 }
 
 export async function resolveAccounts(config: Config): Promise<ResolvedAccount[]> {
-  const detected = await detectProviders()
+  const detected = await detectAccountProviders()
   const accounts = buildAccounts(config, detected)
   return accounts.map(a => {
     const p = PROVIDERS[a.providerId]
@@ -55,6 +55,7 @@ export function assembleSnapshot(opts: {
   intervalMs: number
   billingIntervalMs: number
   resolved: ResolvedAccount[]
+  installedProviders?: ProviderId[]
   usage: Map<string, { dashboard: DashboardData | null; table: TableData | null }>
   billing: Map<string, BillingResult | null>
   summaryState?: Map<string, AccountFetchState>
@@ -80,6 +81,7 @@ export function assembleSnapshot(opts: {
       name: r.account.name,
       color: r.color,
       homeDir: r.account.homeDir ?? null,
+      source: r.account.source ?? 'auto',
       hasUsage: r.hasUsage,
       hasBilling: r.hasBilling,
       email: billing?.email ?? null,
@@ -147,6 +149,7 @@ export function assembleSnapshot(opts: {
     tz: opts.tz,
     intervalMs: opts.intervalMs,
     billingIntervalMs: opts.billingIntervalMs,
+    installedProviders: opts.installedProviders,
     providers,
     accounts,
     seeded: opts.seeded ?? false,

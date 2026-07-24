@@ -514,12 +514,12 @@ export const SettingsView = memo(function SettingsView({
             const identityLabel = config.privacyMode ? redactEmail(rawIdentityLabel) : rawIdentityLabel
             const plan = identity?.plan ?? null
             const ignored = acc.source === 'ignored'
-            const sourceLabel = acc.source === 'auto' ? 'auto tracking' : ignored ? 'ignored' : 'configured'
+            const sourceLabel = acc.source === 'auto' ? 'auto tracking' : ignored ? 'removed' : acc.enabled ? 'configured' : 'disabled'
             return (
               <Box key={`${acc.source}:${acc.id}`}>
                 <Text color={selected ? theme.accent : undefined}>{selected ? glyphs().caretR : ' '} </Text>
                 <Text color={ignored ? theme.unknown : acc.color || provider.color}>{ignored ? glyphs().warn : isActive ? glyphs().dot : glyphs().radioOff} </Text>
-                <Box width={28}><Text bold={!ignored} dimColor={ignored}>{truncateName(identityLabel, 27)}</Text></Box>
+                <Box width={28}><Text bold={!ignored && acc.enabled} dimColor={ignored || !acc.enabled}>{truncateName(identityLabel, 27)}</Text></Box>
                 <Box width={9}><Text color={provider.color}>{provider.name}</Text></Box>
                 <Box width={18}><Text dimColor>{plan ? truncateName(plan, 17) : ''}</Text></Box>
                 <Box width={14}><Text dimColor>{sourceLabel}</Text></Box>
@@ -552,11 +552,11 @@ export const SettingsView = memo(function SettingsView({
         <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  space tracking/global discovery  {glyphs().middot}  a per-provider auto-detect  {glyphs().middot}  s/Esc close</Text>
       ) : activeTab === 'accounts' && cursor >= 0 && cursor < trackedAccounts.length ? (
         trackedAccounts[cursor]?.source === 'auto' ? (
-          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter configure  {glyphs().middot}  space activate  {glyphs().middot}  x ignore  {glyphs().middot}  s/Esc close</Text>
+          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter configure  {glyphs().middot}  space activate  {glyphs().middot}  x remove  {glyphs().middot}  s/Esc close</Text>
         ) : trackedAccounts[cursor]?.source === 'ignored' ? (
-          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter/x turn on  {glyphs().middot}  s/Esc close</Text>
+          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter/x restore  {glyphs().middot}  s/Esc close</Text>
         ) : (
-          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  {glyphs().shift}{glyphs().arrowU}{glyphs().arrowD} reorder  {glyphs().middot}  Enter edit  {glyphs().middot}  space activate  {glyphs().middot}  d delete  {glyphs().middot}  s/Esc close</Text>
+          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  {glyphs().shift}{glyphs().arrowU}{glyphs().arrowD} reorder  {glyphs().middot}  Enter edit  {glyphs().middot}  e enable/disable  {glyphs().middot}  d delete  {glyphs().middot}  s/Esc close</Text>
         )
       ) : activeTab === 'accounts' && cursor === trackedAccounts.length ? (
         <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter add account  {glyphs().middot}  s/Esc close</Text>

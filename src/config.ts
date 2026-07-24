@@ -1,6 +1,6 @@
 import { chmod, readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises'
 import { chmodSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
-import { join, isAbsolute } from 'node:path'
+import { join, isAbsolute, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { DEFAULTS, normalizeConfig, repairConfig, type Config, type Account } from './config-schema'
 
@@ -100,10 +100,11 @@ export async function loadConfig(): Promise<Config> {
     return { ...DEFAULTS }
   }
   const repaired = repairConfig(parsed)
-  if (repaired.repaired) {
-    try { await saveConfig(repaired.config) } catch {}
+  const config = canonicalizeConfigHomeRefs(repaired.config)
+  if (repaired.repaired || JSON.stringify(config) !== JSON.stringify(repaired.config)) {
+    try { await saveConfig(config) } catch {}
   }
-  return repaired.config
+  return config
 }
 
 let saveQueue: Promise<void> = Promise.resolve()
@@ -115,7 +116,7 @@ function configTempFile(dir: string): string {
 }
 
 function configJson(config: Config): string {
-  return JSON.stringify(normalizeConfig(config), null, 2) + '\n'
+  return JSON.stringify(canonicalizeConfigHomeRefs(normalizeConfig(config)), null, 2) + '\n'
 }
 
 export function saveConfig(config: Config): Promise<void> {
@@ -161,6 +162,27 @@ export function expandHome(p: string): string {
   if (p === '~' || p === '~/' || p === '~\\') return homedir()
   if (p.startsWith('~/') || p.startsWith('~\\')) return join(homedir(), p.slice(2))
   return p
+}
+
+/** Persist the real user home with one portable spelling across accounts and exclusions. */
+export function canonicalizeConfigHomeRefs(config: Config): Config {
+  const defaultHome = resolve(homedir())
+  const canonical = (value: string): string =>
+    resolve(expandHome(value)) === defaultHome ? '~' : value
+  return {
+    ...config,
+    accounts: config.accounts.map(account => ({
+      ...account,
+      homeDir: canonical(account.homeDir || '~'),
+    })),
+    accountDetection: {
+      ...config.accountDetection,
+      excludedAccounts: config.accountDetection.excludedAccounts.map(ref => ({
+        ...ref,
+        homeDir: canonical(ref.homeDir),
+      })),
+    },
+  }
 }
 
 export function findAccount(config: Config, id: string | null): Account | null {

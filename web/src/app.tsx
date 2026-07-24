@@ -1,7 +1,7 @@
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createHashHistory, createRootRoute, createRoute, createRouter,
-  Link, Outlet, RouterProvider, useRouterState,
+  Link, Outlet, RouterProvider, useNavigate, useRouterState,
 } from '@tanstack/react-router'
 import { DEFAULTS, isDarkOnlyThemePreset, type ConfigState, type WebSnapshot } from '@shared'
 
@@ -78,10 +78,15 @@ const useDashboard = (): DashCtx => {
 }
 
 function RootLayout() {
+  const pathname = useRouterState({ select: s => s.location.pathname })
+  const navigate = useNavigate()
   const { snapshot, conn } = useSnapshot()
   const [filters, setFilters] = useFilters()
   const theme = useTheme()
-  const [showSettings, setShowSettings] = useState(false)
+  const settingsDeepLink = pathname === '/settings/accounts'
+    ? 'accounts' as const
+    : pathname === '/settings' ? 'general' as const : null
+  const [showSettings, setShowSettings] = useState(() => settingsDeepLink !== null)
   const [privacyMode, setPrivacyMode] = useState(DEFAULTS.privacyMode)
   const [privacyToggleKey, setPrivacyToggleKey] = useState(DEFAULTS.privacyToggleKey)
   const [allowNetworkAccess, setAllowNetworkAccess] = useState(DEFAULTS.allowNetworkAccess)
@@ -92,6 +97,10 @@ function RootLayout() {
   const configStateRef = useRef<ConfigState | null>(null)
   const pendingPrivacyRef = useRef<boolean | null>(null)
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (settingsDeepLink) setShowSettings(true)
+  }, [settingsDeepLink])
 
   const acceptConfigState = useCallback((state: ConfigState): void => {
     configStateRef.current = state
@@ -167,7 +176,6 @@ function RootLayout() {
   const periodLabel = PERIODS.find(p => p.key === filters.period)?.label ?? filters.period
   const scopeLabel = filters.period === 'all' ? undefined : periodLabel
 
-  const pathname = useRouterState({ select: s => s.location.pathname })
   const activeKey: TabKey = (TABS.find(t => pathOf(t.key) === pathname)?.key) ?? 'overview'
 
   useEffect(() => {
@@ -294,7 +302,15 @@ function RootLayout() {
 
       {showSettings ? (
         <Suspense fallback={<div className="fixed inset-0 z-[60] grid place-items-center bg-bg-0/70 text-sm text-fg-dim" role="status" aria-live="polite">Opening settings…</div>}>
-          <SettingsSheet snapshot={snapshot} onClose={() => setShowSettings(false)} />
+          <SettingsSheet
+            snapshot={snapshot}
+            initialTab={settingsDeepLink ?? 'general'}
+            requestedTab={settingsDeepLink}
+            onClose={() => {
+              setShowSettings(false)
+              if (settingsDeepLink) void navigate({ to: '/overview' })
+            }}
+          />
         </Suspense>
       ) : null}
     </div>
@@ -317,6 +333,9 @@ function ExploreRoute() {
   const { snapshot, filters, periodLabel, privacyMode } = useDashboard()
   return <Suspense fallback={<RouteFallback label="explore" />}><ExploreTab snapshot={snapshot} filters={filters} periodLabel={periodLabel} privacyMode={privacyMode} /></Suspense>
 }
+function SettingsRoute() {
+  return null
+}
 
 function RouteFallback({ label }: { label: string }) {
   return <div className="min-h-[50vh] content-center text-center text-sm text-fg-faint" role="status" aria-live="polite">Loading {label}…</div>
@@ -331,6 +350,8 @@ const routeTree = rootRoute.addChildren([
   tabRoute('analytics', AnalyticsRoute),
   tabRoute('models', ModelsRoute),
   tabRoute('explore', ExploreRoute),
+  createRoute({ getParentRoute: () => rootRoute, path: '/settings', component: SettingsRoute }),
+  createRoute({ getParentRoute: () => rootRoute, path: '/settings/accounts', component: SettingsRoute }),
 ])
 const router = createRouter({ routeTree, history: createHashHistory(), defaultViewTransition: true })
 

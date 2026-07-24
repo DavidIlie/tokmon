@@ -13,36 +13,53 @@ interface DiscoveredAccount {
   name: string
   color: string
   homeDir?: string
+  source: 'auto'
 }
 
 function accountKey(providerId: ProviderId, homeDir?: string): string {
   return `${providerId}:${homeDir ? resolve(expandHome(homeDir)) : homedir()}`
 }
 
-function uniqueId(base: string, used: Set<string>): string {
-  let id = slugify(base) || 'account'
-  if (!used.has(id)) {
-    used.add(id)
-    return id
+function runtimeHomeDir(homeDir: string): string | undefined {
+  const expanded = resolve(expandHome(homeDir))
+  return expanded === resolve(homedir()) ? undefined : expanded
+}
+
+function stableHash(value: string): string {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
   }
-  for (let i = 2; i < 1000; i++) {
-    const next = `${id}_${i}`
-    if (!used.has(next)) {
-      used.add(next)
-      return next
-    }
+  return (hash >>> 0).toString(36)
+}
+
+/** Stable across ordering/config collisions so cache and active-account references do not drift. */
+function discoveredId(providerId: ProviderId, homeDir: string): string {
+  const label = slugify(basename(homeDir).replace(new RegExp(`^\\.${providerId}[_-]?`), '')) || 'account'
+  return `${providerId}_${label}_${stableHash(resolve(homeDir))}`
+}
+
+function containsClaudeSession(root: string): boolean {
+  if (!existsSync(root)) return false
+  const pending = [root]
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    try {
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        if (entry.isFile() && entry.name.endsWith('.jsonl')) return true
+        if (entry.isDirectory()) pending.push(join(current, entry.name))
+      }
+    } catch {}
   }
-  id = `${id}_${Date.now()}`
-  used.add(id)
-  return id
+  return false
 }
 
 function hasClaudeState(homeDir: string): boolean {
-  return existsSync(join(homeDir, '.claude.json'))
-    || existsSync(join(homeDir, '.claude', '.credentials.json'))
-    || existsSync(join(homeDir, '.claude', 'projects'))
+  return existsSync(join(homeDir, '.claude', '.credentials.json'))
     || existsSync(join(homeDir, '.config', 'claude', '.credentials.json'))
-    || existsSync(join(homeDir, '.config', 'claude', 'projects'))
+    || containsClaudeSession(join(homeDir, '.claude', 'projects'))
+    || containsClaudeSession(join(homeDir, '.config', 'claude', 'projects'))
 }
 
 function candidateAlternateHomes(prefix: string): string[] {
@@ -93,50 +110,50 @@ function labelForCodexHome(homeDir: string): string {
   return raw ? `Codex ${raw}` : 'Codex'
 }
 
-function discoverClaudeAccounts(usedIds: Set<string>): DiscoveredAccount[] {
+function discoverClaudeAccounts(): DiscoveredAccount[] {
   const provider = PROVIDERS.claude
   const out: DiscoveredAccount[] = []
   for (const homeDir of candidateAlternateHomes('claude')) {
     if (!hasClaudeState(homeDir)) continue
-    const suffix = basename(homeDir).replace(/^\.claude[_-]?/, '') || basename(homeDir)
     out.push({
-      id: uniqueId(`claude_${suffix}`, usedIds),
+      id: discoveredId('claude', homeDir),
       providerId: 'claude',
       name: labelForClaudeHome(homeDir),
       color: provider.color,
       homeDir,
+      source: 'auto',
     })
   }
   return out
 }
 
-function discoverCodexAccounts(usedIds: Set<string>): DiscoveredAccount[] {
+function discoverCodexAccounts(): DiscoveredAccount[] {
   const provider = PROVIDERS.codex
   const out: DiscoveredAccount[] = []
   for (const homeDir of candidateAlternateHomes('codex')) {
     if (!hasCodexAuth(homeDir)) continue
-    const suffix = basename(homeDir).replace(/^\.codex[_-]?/, '') || basename(homeDir)
     out.push({
-      id: uniqueId(`codex_${suffix}`, usedIds),
+      id: discoveredId('codex', homeDir),
       providerId: 'codex',
       name: labelForCodexHome(homeDir),
       color: provider.color,
       homeDir,
+      source: 'auto',
     })
   }
   return out
 }
 
-function discoverProviderAccounts(providerId: ProviderId, usedIds: Set<string>): DiscoveredAccount[] {
-  if (providerId === 'claude') return discoverClaudeAccounts(usedIds)
-  if (providerId === 'codex') return discoverCodexAccounts(usedIds)
+function discoverProviderAccounts(providerId: ProviderId): DiscoveredAccount[] {
+  if (providerId === 'claude') return discoverClaudeAccounts()
+  if (providerId === 'codex') return discoverCodexAccounts()
   return []
 }
 
 export function buildAccounts(config: Config, detected: ProviderId[]): Account[] {
   const out: Account[] = []
-  const usedIds = new Set(config.accounts.map(a => a.id))
   const seenKeys = new Set<string>()
+  const seenIds = new Set<string>()
   const excludedKeys = new Set(
     config.accountDetection.excludedAccounts.map(ref => accountKey(ref.providerId, ref.homeDir)),
   )
@@ -144,8 +161,15 @@ export function buildAccounts(config: Config, detected: ProviderId[]): Account[]
   const add = (account: Account): void => {
     const key = accountKey(account.providerId, account.homeDir)
     if (seenKeys.has(key)) return
+    let id = account.id
+    if (seenIds.has(id)) {
+      const base = `${id}_auto`
+      id = base
+      for (let suffix = 2; seenIds.has(id); suffix++) id = `${base}_${suffix}`
+    }
     seenKeys.add(key)
-    out.push(account)
+    seenIds.add(id)
+    out.push(id === account.id ? account : { ...account, id })
   }
 
   for (const pid of PROVIDER_ORDER) {
@@ -153,19 +177,28 @@ export function buildAccounts(config: Config, detected: ProviderId[]): Account[]
     const provider = PROVIDERS[pid]
     const configured = config.accounts.filter(a => a.providerId === pid)
     for (const a of configured) {
+      if (a.enabled === false) {
+        seenKeys.add(accountKey(a.providerId, a.homeDir))
+        seenIds.add(a.id)
+        continue
+      }
       add({
         id: a.id,
         providerId: pid,
         name: a.name,
         color: a.color || provider.color,
-        homeDir: a.homeDir && a.homeDir !== '~' ? expandHome(a.homeDir) : undefined,
+        homeDir: runtimeHomeDir(a.homeDir || '~'),
+        source: 'configured',
       })
     }
 
     if (!config.accountDetection.enabled || config.accountDetection.disabledProviders.includes(pid)) continue
-    const discovered = discoverProviderAccounts(pid, usedIds)
+    const discovered = discoverProviderAccounts(pid)
     if (detected.includes(pid)) {
-      const account = { id: pid, providerId: pid, name: provider.name, color: provider.color, homeDir: undefined }
+      const account: Account = {
+        id: pid, providerId: pid, name: provider.name, color: provider.color,
+        homeDir: undefined, source: 'auto',
+      }
       if (!excludedKeys.has(accountKey(pid))) add(account)
     }
     for (const account of discovered) {

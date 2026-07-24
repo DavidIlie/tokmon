@@ -6,7 +6,10 @@ import {
   type Config,
 } from './config'
 import { buildAccounts, accountsByProvider } from './accounts'
-import { PROVIDERS, PROVIDER_ORDER, detectProviders, type Account, type ProviderId } from './providers'
+import {
+  PROVIDERS, PROVIDER_ORDER, detectAccountProviders, detectInstalledProviders,
+  type Account, type ProviderId,
+} from './providers'
 import { resolveTimezone } from './tz'
 import { glyphs } from './glyphs'
 import * as fmt from './format'
@@ -64,6 +67,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     daemon,
   })
   const [detected, setDetected] = useState<ProviderId[]>([])
+  const [detectedAccounts, setDetectedAccounts] = useState<ProviderId[]>([])
   const [tab, setTab] = useState(0)
   const [view, setView] = useState(0)
   const [cursor, setCursor] = useState(0)
@@ -103,7 +107,11 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     () => [...new Set((snapshot?.accounts ?? []).map(account => account.providerId))],
     [snapshot],
   )
-  const detectedProviders = connected ? daemonDetected : detected
+  const detectedProviders = useMemo(
+    () => [...new Set([...(snapshot?.installedProviders ?? detected), ...daemonDetected])],
+    [daemonDetected, detected, snapshot?.installedProviders],
+  )
+  const detectedAccountProviders = connected ? daemonDetected : detectedAccounts
 
   const accounts = useMemo(() => connected
     ? (snapshot?.accounts ?? []).map(account => ({
@@ -112,11 +120,12 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
         name: account.name,
         color: account.color,
         homeDir: account.homeDir ?? undefined,
+        source: account.source,
       }))
-    : buildAccounts(cfg, detectedProviders), [cfg, connected, detectedProviders, snapshot])
+    : buildAccounts(cfg, detectedAccountProviders), [cfg, connected, detectedAccountProviders, snapshot])
   const trackedAccountRows = useMemo(
-    () => getTrackedAccountRows(cfg, detectedProviders, accounts),
-    [cfg, detectedProviders, accounts],
+    () => getTrackedAccountRows(cfg, detectedAccountProviders, accounts),
+    [cfg, detectedAccountProviders, accounts],
   )
   const settingsRowCount = settingsTab === 'general'
     ? GENERAL_ROWS
@@ -307,9 +316,11 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
   }))
 
   useEffect(() => {
-    if (connected) return
-    void detectProviders().then(setDetected)
-  }, [connected])
+    void Promise.all([detectInstalledProviders(), detectAccountProviders()]).then(([installed, accounts]) => {
+      setDetected(installed)
+      setDetectedAccounts(accounts)
+    })
+  }, [])
 
   const tableKey = useMemo(
     () => `${effTableProvider}|${tableAccounts.map(acctKey).join(',')}|${tz}`,

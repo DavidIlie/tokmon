@@ -9,7 +9,7 @@ export const TOKMON_WS_PATH = '/ws'
 
 /** Bump only for an incompatible wire change. Capabilities gate additive features. */
 export const TOKMON_PROTOCOL_VERSION = 4
-export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1', 'menu-bar-today-tokens', 'menu-bar-builder-v1'] as const
+export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1', 'account-provenance-v1', 'installed-harnesses-v1', 'discovery-refresh-v1', 'menu-bar-today-tokens', 'menu-bar-builder-v1'] as const
 export type TokmonCapability = typeof TOKMON_CAPABILITIES[number]
 
 export const TOKMON_WS_METHODS = {
@@ -41,6 +41,7 @@ const AccountSchema = Schema.Struct({
   name: Schema.String,
   homeDir: Schema.String,
   color: Schema.optionalKey(Schema.String),
+  enabled: Schema.optionalKey(Schema.Boolean),
 })
 
 export const TrayConfigSchema = Schema.Struct({
@@ -397,6 +398,7 @@ const WebAccountSchema = Schema.Struct({
   name: Schema.String,
   color: Schema.String,
   homeDir: Schema.NullOr(Schema.String),
+  source: Schema.optionalKey(Schema.Literals(['auto', 'configured'] as const)),
   hasUsage: Schema.Boolean,
   hasBilling: Schema.Boolean,
   email: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -424,6 +426,7 @@ export const WebSnapshotSchema = Schema.Struct({
   tz: Schema.String,
   intervalMs: PositiveFiniteSchema,
   billingIntervalMs: Schema.optionalKey(PositiveFiniteSchema),
+  installedProviders: Schema.optionalKey(Schema.Array(ProviderIdSchema)),
   providers: Schema.Array(Schema.Struct({
     id: ProviderIdSchema,
     name: Schema.String,

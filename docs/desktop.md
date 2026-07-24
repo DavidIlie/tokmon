@@ -51,6 +51,11 @@ A provider with one default account does not repeat a synthetic “account 1”
 label. Account identities appear only when they are needed to distinguish
 multiple accounts.
 
+For multiple detected accounts, expand the provider card and choose **Remove**
+beside the unwanted account. This only removes it from Tokmon. Restore it later
+under **Settings → Providers & Accounts**, where detected, manual, and removed
+accounts have explicit lifecycle actions.
+
 Closing the popover resets its navigation to the overview. Advanced analytics
 and custom palette editing open in the web dashboard.
 

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { Config } from '../../web/contract'
+import { setDetectedAccountExcluded, type Config, type WebAccount, type WebSnapshot } from '../../web/contract'
 import type { DashboardPath, DesktopState } from '../shared/desktop-contract'
-import { matchesPrivacyShortcut } from './privacy'
+import { accountIdentity, matchesPrivacyShortcut } from './privacy'
 import { initialExpandedProviders, writeExpandedProviders } from './disclosure-state'
 import {
   groupByProvider,
@@ -19,6 +19,42 @@ import { releasePopoverFocus } from './popover-focus'
 
 function Toast({ message }: { message: string }) {
   return <div className="toast" role="status">{message}</div>
+}
+
+function accountHome(account: WebAccount): string {
+  return account.homeDir?.trim() || '~'
+}
+
+/** Apply optimistic account policy to a lagging snapshot while the daemon reconciles. */
+export function snapshotWithAccountPolicy(snapshot: WebSnapshot, config: Config): WebSnapshot {
+  const configured = (account: WebAccount) => config.accounts.find(candidate =>
+    candidate.id === account.id
+      || (candidate.providerId === account.providerId && (candidate.homeDir.trim() || '~') === accountHome(account)),
+  )
+  const included = (account: WebAccount) => {
+    if (config.disabledProviders.includes(account.providerId)) return false
+    const manual = configured(account)
+    if (account.source === 'configured' || (account.source === undefined && manual)) {
+      return manual?.enabled !== false
+    }
+    if (!config.accountDetection.enabled
+      || config.accountDetection.disabledProviders.includes(account.providerId)) return false
+    return !config.accountDetection.excludedAccounts.some(ref =>
+      ref.providerId === account.providerId && ref.homeDir === accountHome(account),
+    )
+  }
+  const accounts = snapshot.accounts.filter(included)
+  if (accounts.length === snapshot.accounts.length) return snapshot
+  const count = (values: readonly WebAccount[], providerId: string) =>
+    values.filter(account => account.providerId === providerId).length
+  return {
+    ...snapshot,
+    accounts,
+    providers: snapshot.providers.map(provider =>
+      count(accounts, provider.id) === count(snapshot.accounts, provider.id)
+        ? provider
+        : { ...provider, headroom: undefined }),
+  }
 }
 
 export function measuredPopoverHeight(contentHeight: number, chromeHeights: readonly number[]): number {
@@ -116,6 +152,10 @@ export function App() {
 
   const snapshot = state?.snapshot ?? null
   const config = state?.config ?? null
+  const effectiveSnapshot = useMemo(
+    () => snapshot && config ? snapshotWithAccountPolicy(snapshot, config) : snapshot,
+    [snapshot, config],
+  )
 
   // Apply the shared palette before layout effects measure the popover. Theme
   // changes are an immediate root-level token swap, not a subtree observation
@@ -125,8 +165,11 @@ export function App() {
     applyDesktopTheme(document.documentElement, config.appearance, state?.systemMode ?? 'dark')
   }, [config?.appearance, state?.systemMode])
 
-  const groups = useMemo(() => (snapshot ? groupByProvider(snapshot) : []), [snapshot])
-  const pins = useMemo(() => (config && snapshot ? resolveProviderPins(config, snapshot) : []), [config, snapshot])
+  const groups = useMemo(() => (effectiveSnapshot ? groupByProvider(effectiveSnapshot) : []), [effectiveSnapshot])
+  const pins = useMemo(
+    () => (config && effectiveSnapshot ? resolveProviderPins(config, effectiveSnapshot) : []),
+    [config, effectiveSnapshot],
+  )
   const storedPins = useMemo(() => {
     if (!config) return pins
     const explicit = readProviderPins(config)
@@ -272,6 +315,18 @@ export function App() {
     }))
   }, [storedPins, pins, groups, flashToast, updateConfig])
 
+  const removeDetectedAccount = useCallback((account: WebAccount) => {
+    void updateConfig(next => ({
+      ...next,
+      activeAccountId: next.activeAccountId === account.id ? null : next.activeAccountId,
+      accountDetection: setDetectedAccountExcluded(next.accountDetection, {
+        providerId: account.providerId,
+        homeDir: accountHome(account),
+      }, true),
+    }))
+    flashToast(`${accountIdentity(account, config?.privacyMode ?? true)} removed from Tokmon. Restore it in Providers & Accounts.`)
+  }, [config?.privacyMode, flashToast, updateConfig])
+
   const onArrow = useCallback((providerId: string, direction: 'up' | 'down') => {
     const root = frame.current
     if (!root) return
@@ -332,8 +387,8 @@ export function App() {
     updateScrollEdges(event.currentTarget)
   }, [updateScrollEdges])
 
-  const ready = snapshot && config
-  const hasAccounts = (snapshot?.accounts.length ?? 0) > 0
+  const ready = effectiveSnapshot && config
+  const hasAccounts = (effectiveSnapshot?.accounts.length ?? 0) > 0
   const displayWidthPt = state?.displayWidthPt ?? window.screen?.availWidth ?? 1440
   const updateState = state?.update ?? { status: 'disabled' as const, availableVersion: null, progressPercent: null, error: null }
 
@@ -345,7 +400,7 @@ export function App() {
     >
       {ready && (
         <TrayStripPainter
-          snapshot={snapshot} config={config} pins={pins} platform={state?.platform ?? ''}
+          snapshot={effectiveSnapshot} config={config} pins={pins} platform={state?.platform ?? ''}
           update={updateState} displayWidthPt={displayWidthPt}
         />
       )}
@@ -361,7 +416,7 @@ export function App() {
           ? <ThemeSettings config={config} systemMode={state?.systemMode ?? 'dark'} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')} />
         : surface === 'menubar'
           ? <MenuBarSettings
-              config={config} snapshot={snapshot} pins={pins} platform={state?.platform ?? ''}
+              config={config} snapshot={effectiveSnapshot} pins={pins} platform={state?.platform ?? ''}
               displayWidthPt={displayWidthPt} update={updateState}
               onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')}
               onToast={flashToast}
@@ -379,9 +434,9 @@ export function App() {
               onQuit={() => { void window.tokmon.quit() }}
             />
         : surface === 'providers'
-          ? <ProvidersSettings config={config} snapshot={snapshot} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')} />
+          ? <ProvidersSettings config={config} snapshot={snapshot!} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings/accounts')} />
         : !hasAccounts
-          ? <EmptyState onDashboard={() => openDashboard('/settings')} />
+          ? <EmptyState onDashboard={() => openDashboard('/settings/accounts')} />
           : (
             <>
               <div
@@ -390,7 +445,7 @@ export function App() {
               >
                 {groups.map(group => (
                   <ProviderCard
-                    key={group.providerId} group={group} snapshot={snapshot} config={config}
+                    key={group.providerId} group={group} snapshot={effectiveSnapshot} config={config}
                     pinned={pins.includes(group.providerId)} pinPosition={pins.indexOf(group.providerId) >= 0 ? pins.indexOf(group.providerId) + 1 : null}
                     pinCount={storedPins.length}
                     expanded={expanded.has(group.providerId)}
@@ -398,6 +453,7 @@ export function App() {
                     onToggle={() => onToggleProvider(group.providerId)}
                     onPin={replaceSecond => onPinProvider(group.providerId, replaceSecond)}
                     onArrow={direction => onArrow(group.providerId, direction)}
+                    onRemoveAccount={removeDetectedAccount}
                   />
                 ))}
                 {pins.length === 0 && (
@@ -406,7 +462,7 @@ export function App() {
               </div>
             </>
           )}
-      {surface === 'usage' && snapshot && <TotalsBar snapshot={snapshot} now={now} />}
+      {surface === 'usage' && effectiveSnapshot && <TotalsBar snapshot={effectiveSnapshot} now={now} />}
       <UpdateReady
         update={updateState}
         currentVersion={state?.appVersion ?? ''}

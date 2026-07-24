@@ -20,7 +20,7 @@ import { ThemeSection } from './settings/theme-section'
 import { useTheme } from './theme-provider'
 import { validateAppearanceDraft } from '../lib/theme-runtime'
 
-type SettingsTab = 'general' | 'theme' | 'app' | 'providers' | 'accounts'
+export type SettingsTab = 'general' | 'theme' | 'app' | 'providers' | 'accounts'
 
 const SETTINGS_TABS: { value: SettingsTab; label: string }[] = [
   { value: 'general', label: 'General' },
@@ -30,7 +30,12 @@ const SETTINGS_TABS: { value: SettingsTab; label: string }[] = [
   { value: 'accounts', label: 'Accounts' },
 ]
 
-export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snapshot: WebSnapshot | null }) {
+export function SettingsSheet({ onClose, snapshot, initialTab = 'general', requestedTab = null }: {
+  onClose: () => void
+  snapshot: WebSnapshot | null
+  initialTab?: SettingsTab
+  requestedTab?: SettingsTab | null
+}) {
   const theme = useTheme()
   const panelRef = useRef<HTMLDivElement>(null)
   const titleRef = useRef<HTMLHeadingElement>(null)
@@ -42,11 +47,12 @@ export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snap
   const [dirty, setDirty] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const [acctEditor, setAcctEditor] = useState<AccountDraft | null>(null)
-  const [tab, setTab] = useState<SettingsTab>('general')
+  const [tab, setTab] = useState<SettingsTab>(initialTab)
   const dirtyRef = useRef(false)
   const confirmDiscardRef = useRef(false)
   const draftRef = useRef<Config | null>(null)
   const revisionRef = useRef<number | null>(null)
+  const routeManagedRef = useRef(requestedTab !== null)
 
   const acceptIncoming = useCallback((state: Awaited<ReturnType<typeof getConfig>>) => {
     setLoadError(null)
@@ -96,7 +102,7 @@ export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snap
     return () => { alive = false; unsubscribe() }
   }, [acceptIncoming])
 
-  const requestClose = () => {
+  const requestClose = useCallback(() => {
     if (!dirtyRef.current || confirmDiscardRef.current) {
       theme.setPreview(null)
       onClose()
@@ -105,7 +111,17 @@ export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snap
     confirmDiscardRef.current = true
     setConfirmDiscard(true)
     setSaveError('unsaved changes; choose discard to close settings')
-  }
+  }, [onClose, theme])
+
+  useEffect(() => {
+    if (requestedTab) {
+      routeManagedRef.current = true
+      setTab(requestedTab)
+    } else if (routeManagedRef.current) {
+      routeManagedRef.current = false
+      requestClose()
+    }
+  }, [requestedTab, requestClose])
 
   useEffect(() => {
     const panel = panelRef.current
@@ -189,7 +205,7 @@ export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snap
                   {tab === 'general' && <GeneralSection draft={draft} patch={patch} />}
                   {tab === 'theme' && <ThemeSection draft={draft} patch={patch} />}
                   {tab === 'app' && <AppSection draft={draft} patch={patch} snapshot={snapshot} />}
-                  {tab === 'providers' && <ProvidersSection draft={draft} patch={patch} />}
+                  {tab === 'providers' && <ProvidersSection draft={draft} patch={patch} snapshot={snapshot} />}
                   {tab === 'accounts' && (
                     <AccountsSection
                       draft={draft} patch={patch} snapshot={snapshot}
@@ -232,7 +248,7 @@ export function SettingsSheet({ onClose, snapshot }: { onClose: () => void; snap
           onSubmit={(acct, mode, editingId) => {
             patch(c => mode === 'add'
               ? { ...c, accounts: [...c.accounts, acct] }
-              : { ...c, accounts: c.accounts.map(a => a.id === editingId ? acct : a) })
+              : { ...c, accounts: c.accounts.map(a => a.id === editingId ? { ...acct, enabled: a.enabled } : a) })
             setAcctEditor(null)
           }}
         />

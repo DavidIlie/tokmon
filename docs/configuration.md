@@ -32,6 +32,14 @@ Provider tracking and account discovery are separate controls. Discovery can be
 disabled globally, per provider, or for one detected home. Manual accounts are
 never removed when discovery is turned off.
 
+An installed harness is not an account by itself. Tokmon creates a default
+account only when its home contains readable credentials or usage history.
+
+Use **Remove from Tokmon** to stop tracking one detected account. This reversible
+exclusion does not sign out, delete provider files, or affect sibling accounts;
+removed accounts remain available under **Restore**. Turning discovery off is
+broader and hides every automatically detected account.
+
 Manual accounts support provider, display name, home directory, accent color,
 enable/disable, and ordering.
 

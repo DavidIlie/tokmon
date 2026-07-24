@@ -4,12 +4,14 @@ import {
   PROVIDER_ORDER,
   DESKTOP_GRAPH_RANGES,
   DEFAULT_MENU_BAR_CONFIG,
+  getTrackedAccountRows,
   providerDetectionEnabled,
   setDetectedAccountExcluded,
   setProviderDetectionEnabled,
   setProviderTrackingEnabled,
   type Config,
   type MenuBarDensity,
+  type WebAccount,
   type WebSnapshot,
 } from '../../web/contract'
 import type { DesktopState, DesktopUpdateState } from '../shared/desktop-contract'
@@ -213,7 +215,7 @@ export function SettingsHub({ config, onBack, onTheme, onMenuBar, onProviders, o
         </button>
         <button type="button" className="settings-destination" onClick={onProviders}>
           <span className="detection-glyph" aria-hidden="true"><i /><i /></span>
-          <span><b>Providers &amp; Accounts</b><small>{config.accountDetection.enabled ? 'Automatic discovery on' : 'Manual accounts only'} · {config.accountDetection.excludedAccounts.length} ignored</small></span>
+          <span><b>Providers &amp; Accounts</b><small>{config.accountDetection.enabled ? 'Automatic discovery on' : 'Manual accounts only'} · {config.accountDetection.excludedAccounts.length} removed</small></span>
           <span className="destination-chevron" aria-hidden="true">›</span>
         </button>
         <button type="button" className="settings-destination" onClick={onDesktop}>
@@ -647,11 +649,28 @@ export function ProvidersSettings({ config, snapshot, onPatch, onBack, onDashboa
   onBack(): void
   onDashboard(): void
 }) {
-  const manualKeys = new Set(config.accounts.map(account => `${account.providerId}:${account.homeDir || '~'}`))
-  const detected = snapshot.accounts.filter(account => {
-    const homeDir = account.homeDir ?? '~'
-    return !manualKeys.has(`${account.providerId}:${homeDir}`) && !config.accounts.some(manual => manual.id === account.id)
-  })
+  const rows = getTrackedAccountRows(config, [], snapshot.accounts)
+  const liveBySource = new Map(snapshot.accounts.map(account => [
+    `${account.providerId}:${account.homeDir ?? '~'}`,
+    account,
+  ]))
+  const rowIdentity = (row: typeof rows[number]): string => {
+    const live = snapshot.accounts.find(account => account.id === row.id)
+      ?? liveBySource.get(`${row.providerId}:${row.homeDir}`)
+    if (config.privacyMode) {
+      return live?.identity?.redacted
+        ? live.identity.accessibleLabel
+        : `${PROVIDER_META[row.providerId].name} account`
+    }
+    return live?.identity?.accessibleLabel ?? row.name
+  }
+  const rowStatus = (row: typeof rows[number], live: WebAccount | undefined): string => {
+    if (row.source === 'ignored') return 'Removed · not tracked'
+    if (row.source === 'configured') return row.enabled ? 'Manual · tracking' : 'Manual · disabled'
+    if (live?.billing?.error) return `Detected · ${live.billing.error}`
+    if (live?.dashboard || live?.table) return 'Detected · usage found'
+    return 'Detected · no usage or quota data'
+  }
   return (
     <section className="settings-view" aria-label="Providers and accounts settings">
       <SettingsHeader title="Providers & Accounts" backLabel="Settings" onBack={onBack} />
@@ -662,8 +681,9 @@ export function ProvidersSettings({ config, snapshot, onPatch, onBack, onDashboa
             {PROVIDER_ORDER.map(providerId => {
               const enabled = !config.disabledProviders.includes(providerId)
               const name = PROVIDER_META[providerId].name
+              const installed = snapshot.installedProviders?.includes(providerId) ?? false
               return <div key={providerId}>
-                <span>{name}</span>
+                <span>{name}{installed ? ' · installed' : ''}</span>
                 <Toggle
                   value={enabled} label={`Track ${name}`}
                   onChange={value => onPatch(next => setProviderTrackingEnabled(next, providerId, value))}
@@ -673,10 +693,52 @@ export function ProvidersSettings({ config, snapshot, onPatch, onBack, onDashboa
           </div>
         </div>
         <div className="settings-subsection-heading">
-          <b>Automatic discovery</b>
-          <small>Discovery finds local accounts. It does not control whether a provider is tracked.</small>
+          <b>Accounts on this Mac</b>
+          <small>Remove one detected account without changing its provider files, login, or the other accounts.</small>
         </div>
-        <SettingsRow label="Discover accounts" hint="Manual accounts keep working when this is off">
+        <div className="detection-accounts" aria-label="Accounts on this Mac">
+          {rows.length === 0 && <p className="settings-empty">No accounts found. Leave automatic discovery on or add one manually.</p>}
+          {rows.map(row => {
+            const live = snapshot.accounts.find(account => account.id === row.id)
+              ?? liveBySource.get(`${row.providerId}:${row.homeDir}`)
+            const ignored = row.source === 'ignored'
+            return (
+              <div key={`${row.source}:${row.id}`} data-ignored={ignored || undefined}>
+                <span>
+                  <b>{rowIdentity(row)}</b>
+                  <small>{rowStatus(row, live)}{config.privacyMode ? ' · Path hidden' : ` · ${row.homeDir}`}</small>
+                </span>
+                {row.source === 'auto' ? (
+                  <button type="button" aria-label={`Remove ${rowIdentity(row)} from Tokmon`} onClick={() => onPatch(next => ({
+                    ...next,
+                    activeAccountId: next.activeAccountId === row.id ? null : next.activeAccountId,
+                    accountDetection: setDetectedAccountExcluded(next.accountDetection, {
+                      providerId: row.providerId,
+                      homeDir: row.homeDir,
+                    }, true),
+                  }))}>Remove</button>
+                ) : ignored ? (
+                  <button type="button" aria-label={`Restore ${PROVIDER_META[row.providerId].name} account`} onClick={() => onPatch(next => ({
+                    ...next,
+                    accountDetection: setDetectedAccountExcluded(next.accountDetection, row.excludedRef!, false),
+                  }))}>Restore</button>
+                ) : (
+                  <button type="button" onClick={() => onPatch(next => ({
+                    ...next,
+                    activeAccountId: !row.enabled || next.activeAccountId !== row.id ? next.activeAccountId : null,
+                    accounts: next.accounts.map(account =>
+                      account.id === row.id ? { ...account, enabled: !row.enabled } : account),
+                  }))}>{row.enabled ? 'Disable' : 'Enable'}</button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+        <div className="settings-subsection-heading">
+          <b>Automatic discovery</b>
+          <small>Advanced scan policy. Use Remove above when you only want to stop tracking one account.</small>
+        </div>
+        <SettingsRow label="Discover accounts" hint="Turning this off hides every detected account; manual accounts remain">
           <Toggle
             value={config.accountDetection.enabled}
             label="Discover accounts"
@@ -698,34 +760,8 @@ export function ProvidersSettings({ config, snapshot, onPatch, onBack, onDashboa
             })}
           </span>
         </SettingsRow>
-        {(detected.length > 0 || config.accountDetection.excludedAccounts.length > 0) && (
-          <div className="detection-accounts">
-            {detected.map(account => (
-              <div key={`${account.providerId}:${account.homeDir ?? '~'}`}>
-                <span><b>{PROVIDER_META[account.providerId].name}</b><small>{config.privacyMode ? 'Path hidden' : account.homeDir ?? '~'}</small></span>
-                <button type="button" onClick={() => onPatch(next => ({
-                  ...next,
-                  activeAccountId: next.activeAccountId === account.id ? null : next.activeAccountId,
-                  accountDetection: setDetectedAccountExcluded(next.accountDetection, {
-                    providerId: account.providerId,
-                    homeDir: account.homeDir ?? '~',
-                  }, true),
-                }))}>Turn off</button>
-              </div>
-            ))}
-            {config.accountDetection.excludedAccounts.map(ref => (
-              <div key={`ignored:${ref.providerId}:${ref.homeDir}`} data-ignored="true">
-                <span><b>{PROVIDER_META[ref.providerId].name}</b><small>{config.privacyMode ? 'Path hidden' : ref.homeDir}</small></span>
-                <button type="button" onClick={() => onPatch(next => ({
-                  ...next,
-                  accountDetection: setDetectedAccountExcluded(next.accountDetection, ref, false),
-                }))}>Turn on</button>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
-      <button type="button" className="manage-settings" onClick={onDashboard}>Manage manual accounts…</button>
+      <button type="button" className="manage-settings" onClick={onDashboard}>Open full account editor…</button>
     </section>
   )
 }

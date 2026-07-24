@@ -10,6 +10,8 @@ export interface Account {
   name: string
   color: string
   homeDir?: string
+  /** Runtime provenance. Provider readers stay source-agnostic; clients use it for lifecycle actions. */
+  source?: 'auto' | 'configured'
 }
 
 export type MetricFormat =

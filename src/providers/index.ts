@@ -26,12 +26,11 @@ export const PROVIDERS: Record<ProviderId, Provider> = {
   grok: grokProvider,
 }
 
-export async function detectProviders(): Promise<ProviderId[]> {
+async function detectWhere(predicate: (id: ProviderId) => Promise<boolean>): Promise<ProviderId[]> {
   const found = await Promise.all(
     PROVIDER_ORDER.map(async id => {
       try {
-        if (installSignals(id)) return id
-        return (await PROVIDERS[id].detect()) ? id : null
+        return (await predicate(id)) ? id : null
       } catch {
         return null
       }
@@ -39,3 +38,19 @@ export async function detectProviders(): Promise<ProviderId[]> {
   )
   return found.filter((id): id is ProviderId => id !== null)
 }
+
+/**
+ * Harness availability is an onboarding signal, not account evidence.
+ * An installed but signed-out CLI must never synthesize a "No data" account.
+ */
+export function detectInstalledProviders(): Promise<ProviderId[]> {
+  return detectWhere(async id => installSignals(id) || await PROVIDERS[id].detect())
+}
+
+/** Providers whose default home contains account data that Tokmon can read. */
+export function detectAccountProviders(): Promise<ProviderId[]> {
+  return detectWhere(id => PROVIDERS[id].detect())
+}
+
+/** Backwards-compatible name used by onboarding and installation discovery. */
+export const detectProviders = detectInstalledProviders

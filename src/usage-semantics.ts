@@ -1,5 +1,4 @@
 import type { Metric } from './providers/types'
-import { containsEmail, redactEmail } from './config-schema'
 export type MetricRole = 'session' | 'weekly' | 'model' | 'other' | 'unbounded'
 
 export type QuotaValue = {
@@ -181,7 +180,7 @@ export function severityTag(level: Severity): string | null {
   return null
 }
 
-/** Registered account title first; sensitive identities become stable ordinals globally. */
+/** Registered account title first; privacy mode always becomes a stable provider ordinal. */
 export function deriveAccountIdentity(input: {
   name: string
   email?: string | null
@@ -193,14 +192,12 @@ export function deriveAccountIdentity(input: {
   const registered = input.name.trim() || input.providerName
   const email = input.email?.trim() || null
   const displayName = input.displayName?.trim() || null
-  if (input.privacyMode && (containsEmail(registered) || containsEmail(email))) {
+  if (input.privacyMode) {
     const title = `${input.providerName} account ${input.ordinal}`
     return { title, subtitle: null, accessibleLabel: title, redacted: true }
   }
-  const title = input.privacyMode ? redactEmail(registered) : registered
-  const subtitleCandidate = !input.privacyMode
-    ? (email && !registered.toLowerCase().includes(email.toLowerCase()) ? email : displayName)
-    : (displayName && !containsEmail(displayName) ? displayName : null)
+  const title = registered
+  const subtitleCandidate = email && !registered.toLowerCase().includes(email.toLowerCase()) ? email : displayName
   const subtitle = subtitleCandidate && subtitleCandidate !== title ? subtitleCandidate : null
   return { title, subtitle, accessibleLabel: subtitle ? `${title}, ${subtitle}` : title, redacted: input.privacyMode && title !== registered }
 }

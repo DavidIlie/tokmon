@@ -9,6 +9,7 @@ import {
   type DesktopRefreshScope,
   type TrayStripPayload,
 } from '../shared/desktop-contract'
+import { dashboardDeepLink } from './dashboard-deep-link'
 import type { DesktopStateStore } from './desktop-state'
 
 const REFRESH_SCOPES = new Set<DesktopRefreshScope>(['all', 'summary', 'table', 'billing', 'peak'])
@@ -77,8 +78,9 @@ export function registerDesktopIpc(opts: DesktopIpcOptions): () => void {
     if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) {
       throw new Error('refusing to open a non-loopback dashboard URL')
     }
-    url.pathname = (path as DashboardPath | undefined) ?? '/'
-    await shell.openExternal(url.toString())
+    const dashboardPath = (path as DashboardPath | undefined) ?? '/'
+    // The dashboard uses hash history; the HTTP pathname must keep serving the SPA root.
+    await shell.openExternal(dashboardDeepLink(url.toString(), dashboardPath))
   })
   ipcMain.handle(DESKTOP_CHANNELS.checkForUpdates, async event => {
     assertSender(event)
