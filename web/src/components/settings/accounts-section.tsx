@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { getTrackedAccountRows, PROVIDER_META, setDetectedAccountExcluded, type Account, type Config, type TrackedAccountRow, type WebAccount, type WebSnapshot } from '@shared'
 import { namedColorHex } from '../../lib/colors'
-import { ChevronUp, ChevronDown, Pencil, Plus, Refresh, Trash, X } from '../icons'
+import { ChevronUp, ChevronDown, Pencil, Plus, Trash } from '../icons'
 import { PrivacyLabel } from '../privacy-label'
 import { Button } from '../ui/button'
 import { FOCUS_RING } from '../ui/primitives'
@@ -48,6 +48,9 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
         <Plus className="size-3" /> Add account
       </Button>
     }>
+      <p className="mb-2.5 text-[11px] text-fg-faint">
+        Remove one detected account from Tokmon without changing its files or login. Removed accounts stay restorable here.
+      </p>
       {accounts.length === 0 ? (
         <p className="rounded border border-line bg-bg-2/50 px-3 py-3 text-xs text-fg-faint">
           None configured — enabled providers track automatically.
@@ -60,7 +63,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
             const identity = live ? accountIdentityText(live, meta.name) : acc.name || meta.name
             const plan = live?.plan ?? live?.billing?.plan ?? null
             const hex = namedColorHex(acc.color || meta.color)
-            const active = acc.id === draft.activeAccountId
+            const active = acc.enabled && acc.id === draft.activeAccountId
             const configured = acc.source === 'configured'
             const ignored = acc.source === 'ignored'
             return (
@@ -69,7 +72,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                   type="button"
                   role="radio"
                   aria-checked={active}
-                  disabled={ignored}
+                  disabled={ignored || !acc.enabled}
                   aria-label={`Set ${acc.name} active`}
                   title={active ? 'Active account (click to clear)' : 'Set active'}
                   onClick={() => setActive(active ? null : acc.id)}
@@ -87,7 +90,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                       <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-dim">{plan}</span>
                     )}
                     <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fg-faint">
-                      {acc.source === 'auto' ? 'detected' : ignored ? 'ignored' : 'manual'}
+                      {acc.source === 'auto' ? 'detected' : ignored ? 'removed' : acc.enabled ? 'manual' : 'manual · disabled'}
                     </span>
                   </div>
                   <div className="truncate font-mono text-[11px] text-fg-faint">{draft.privacyMode ? 'path hidden' : acc.homeDir}</div>
@@ -99,20 +102,26 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                       <IconBtn label="Move up" disabled={acc.explicitIndex === 0} onClick={() => move(acc.explicitIndex!, -1)}><ChevronUp className="size-3.5" /></IconBtn>
                       <IconBtn label="Move down" disabled={acc.explicitIndex === draft.accounts.length - 1} onClick={() => move(acc.explicitIndex!, 1)}><ChevronDown className="size-3.5" /></IconBtn>
                       <IconBtn label="Edit account" onClick={() => onEdit(acc)}><Pencil className="size-3.5" /></IconBtn>
+                      <Button size="xs" onClick={() => patch(c => ({
+                        ...c,
+                        activeAccountId: !acc.enabled || c.activeAccountId !== acc.id ? c.activeAccountId : null,
+                        accounts: c.accounts.map(account =>
+                          account.id === acc.id ? { ...account, enabled: !acc.enabled } : account),
+                      }))}>{acc.enabled ? 'Disable' : 'Enable'}</Button>
                       <IconBtn label={pendingDeleteId === acc.id ? 'Confirm delete account' : 'Delete account'} danger onClick={() => requestRemove(acc.id)}><Trash className="size-3.5" /></IconBtn>
                     </>
                   ) : ignored ? (
-                    <IconBtn label="Turn detected account on" onClick={() => acc.excludedRef && patch(c => ({
+                    <Button size="xs" aria-label={`Restore ${acc.name}`} onClick={() => acc.excludedRef && patch(c => ({
                       ...c,
                       accountDetection: setDetectedAccountExcluded(c.accountDetection, acc.excludedRef!, false),
-                    }))}><Refresh className="size-3.5" /></IconBtn>
+                    }))}>Restore</Button>
                   ) : (<>
                     <IconBtn label="Configure as manual account" onClick={() => onConfigure(acc)}><Pencil className="size-3.5" /></IconBtn>
-                    <IconBtn label="Turn detected account off" onClick={() => patch(c => ({
+                    <Button size="xs" aria-label={`Remove ${acc.name} from Tokmon`} onClick={() => patch(c => ({
                       ...c,
                       activeAccountId: c.activeAccountId === acc.id ? null : c.activeAccountId,
                       accountDetection: setDetectedAccountExcluded(c.accountDetection, { providerId: acc.providerId, homeDir: acc.homeDir }, true),
-                    }))}><X className="size-3.5" /></IconBtn>
+                    }))}>Remove</Button>
                   </>)}
                 </div>
               </li>

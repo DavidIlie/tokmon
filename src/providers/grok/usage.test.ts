@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { grokModelMapFingerprint, parseUnifiedLog } from './usage'
+import { detectGrok, grokModelMapFingerprint, parseUnifiedLog } from './usage'
 
 const FIXTURE_LOG = fileURLToPath(new URL('./__fixtures__/home/.grok/logs/unified.jsonl', import.meta.url))
 const SESSION_C = '019f478c-0985-7b60-84cc-791642c8f933' // absent from summary.json
@@ -9,6 +12,19 @@ const SESSION_D = '019f478d-6468-72e3-bf26-4298447f5eda' // summary.json current
 
 const turnsFor = (entries: { id?: string; ts: number; model: string; cost: number }[], sid: string) =>
   entries.filter((e) => (e.id ?? '').startsWith(`${sid}#`)).sort((a, b) => a.ts - b.ts)
+
+test('a Grok binary alone is installation evidence, not an account', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'tokmon-grok-detect-'))
+  try {
+    await mkdir(join(home, '.grok', 'bin'), { recursive: true })
+    await writeFile(join(home, '.grok', 'bin', 'grok'), '')
+    assert.equal(await detectGrok(home), false)
+    await writeFile(join(home, '.grok', 'auth.json'), '{}')
+    assert.equal(await detectGrok(home), true)
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
 
 test('Grok usage cache fingerprint tracks model-map content with stable ordering', () => {
   const first = new Map([

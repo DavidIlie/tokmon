@@ -35,7 +35,7 @@ export interface DesktopUpdateState {
 }
 
 /** Dashboard subpaths the popover is allowed to open (loopback-guarded in main). */
-export const DASHBOARD_PATHS = ['/', '/settings'] as const
+export const DASHBOARD_PATHS = ['/', '/settings', '/settings/accounts'] as const
 export type DashboardPath = typeof DASHBOARD_PATHS[number]
 
 /** Renderer → main composed menu-bar strip (a template image the renderer paints on canvas). */

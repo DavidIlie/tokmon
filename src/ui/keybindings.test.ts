@@ -278,7 +278,7 @@ test('account settings can ignore and restore an automatically detected account'
   ctx.settings.cursor = 0
   ctx.settings.trackedAccounts = [{
     id: 'claude-alt', providerId: 'claude', name: 'alt@example.com', homeDir: '/tmp/claude-alt',
-    color: 'green', source: 'auto',
+    color: 'green', source: 'auto', enabled: true,
   }]
   ctx.global.config = config
   ctx.global.updateConfig = updater => { config = updater(config); ctx.global.config = config }
@@ -289,7 +289,7 @@ test('account settings can ignore and restore an automatically detected account'
 
   ctx.settings.trackedAccounts = [{
     id: 'ignored:claude:/tmp/claude-alt', providerId: 'claude', name: 'Claude account', homeDir: '/tmp/claude-alt',
-    color: 'green', source: 'ignored', excludedRef: { providerId: 'claude', homeDir: '/tmp/claude-alt' },
+    color: 'green', source: 'ignored', enabled: false, excludedRef: { providerId: 'claude', homeDir: '/tmp/claude-alt' },
   }]
   handleKey('x', key, ctx)
   assert.deepEqual(config.accountDetection.excludedAccounts, [])

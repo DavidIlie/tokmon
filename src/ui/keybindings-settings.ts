@@ -115,6 +115,18 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
       deleteAccount(row.explicitId)
       return
     }
+    if (row.source === 'configured' && row.explicitId && input === 'e') {
+      updateConfig(current => ({
+        ...current,
+        activeAccountId:
+          !row.enabled || current.activeAccountId !== row.id
+            ? current.activeAccountId
+            : null,
+        accounts: current.accounts.map(account =>
+          account.id === row.explicitId ? { ...account, enabled: !row.enabled } : account),
+      }))
+      return
+    }
     if (row.source === 'auto' && input === 'x') {
       updateConfig(current => ({
         ...current,
@@ -126,7 +138,7 @@ export function handleSettings(input: string, key: InputKey, ctx: KeyContext): v
       }))
       return
     }
-    if (input === ' ') { updateConfig(current => ({ ...current, activeAccountId: row.id })); return }
+    if (input === ' ' && row.enabled) { updateConfig(current => ({ ...current, activeAccountId: row.id })); return }
     return
   }
   if (cursor === trackedAccounts.length && key.return) openAddAccount()

@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import type { DashboardData, TableData } from '../types'
-import type { BillingResult } from '../providers/types'
+import type { BillingResult, ProviderId } from '../providers/types'
 import { cacheDir, snapshotCacheFile } from '../config'
 import { withTimeout } from '../async'
 import { fetchPeak } from '../peak'
@@ -38,6 +38,7 @@ interface DataEngineOptions {
   summaryIntervalMs: number
   billingIntervalMs: number
   resolved: ResolvedAccount[]
+  installedProviders?: ProviderId[]
 }
 
 export interface DataEngine {
@@ -47,7 +48,13 @@ export interface DataEngine {
   subscribeConfig(onConfig: (config: Config) => void): () => void
   touch(): void
   refresh(scope?: RefreshScope): Promise<void>
-  setConfig(next: { resolved: ResolvedAccount[]; tz: string; summaryIntervalMs: number; billingIntervalMs: number }): void
+  setConfig(next: {
+    resolved: ResolvedAccount[]
+    installedProviders: ProviderId[]
+    tz: string
+    summaryIntervalMs: number
+    billingIntervalMs: number
+  }): void
   broadcastConfig(config: Config): void
   stop(): void
 }
@@ -83,6 +90,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   let summaryIntervalMs = opts.summaryIntervalMs
   let billingIntervalMs = opts.billingIntervalMs
   let resolved = opts.resolved
+  let installedProviders = opts.installedProviders ?? []
   let currentConfig = opts.config
 
   const usage = new Map<string, { dashboard: DashboardData | null; table: TableData | null }>()
@@ -123,7 +131,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
 
   const buildSnapshot = (): WebSnapshot => assembleSnapshot({
     version, tz, intervalMs: summaryIntervalMs,
-    billingIntervalMs, resolved, usage, billing,
+    billingIntervalMs, resolved, installedProviders, usage, billing,
     summaryState, billingState, tableState,
     summaryUpdatedAt, billingUpdatedAt, tableUpdatedAt, seeded, peak, config: currentConfig,
   })
@@ -365,6 +373,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       const sourceKey = (r: ResolvedAccount) => `${r.account.providerId}:${r.account.homeDir ?? ''}`
       const prevSources = new Map(resolved.map(r => [r.account.id, sourceKey(r)]))
       resolved = next.resolved
+      installedProviders = next.installedProviders
       hasClaude = resolved.some(r => r.account.providerId === 'claude')
       if (!hasClaude) peak = null
       usageAccounts = resolved.filter(r => r.hasUsage)

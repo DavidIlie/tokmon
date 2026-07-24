@@ -50,7 +50,7 @@ function priceFor(model: string) {
 
 export async function detectGrok(homeDir?: string): Promise<boolean> {
   for (const home of grokHomes(homeDir)) {
-    for (const p of [join(home, 'logs', 'unified.jsonl'), join(home, 'sessions'), join(home, 'auth.json'), join(home, 'bin', 'grok')]) {
+    for (const p of [join(home, 'logs', 'unified.jsonl'), join(home, 'sessions'), join(home, 'auth.json')]) {
       try { await access(p); return true } catch { /* next */ }
     }
   }

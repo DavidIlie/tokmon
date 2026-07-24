@@ -58,8 +58,13 @@ function getClaudeDirs(homeDir?: string): string[] {
 }
 
 export async function detectClaude(homeDir?: string): Promise<boolean> {
+  for (const configDir of claudeConfigDirs(homeDir)) {
+    try { await access(join(configDir, '.credentials.json')); return true } catch {}
+  }
   for (const dir of getClaudeDirs(homeDir)) {
-    try { await access(dir); return true } catch {}
+    try {
+      if ((await walkFiles(dir)).some(file => file.endsWith('.jsonl'))) return true
+    } catch {}
   }
   return false
 }

@@ -46,6 +46,11 @@ Ignoring a detected account does not remove credentials or files. The account
 stays restorable in settings. Manually configured accounts are independent from
 automatic discovery.
 
+Harness installation and account evidence are separate. Finding a Claude,
+Codex, or other provider executable can suggest that harness during onboarding,
+but it cannot create a runtime account. A full refresh rescans account homes
+before fetching usage and quota data.
+
 ## Multiple accounts
 
 Each manual account has a provider, name, home directory, and accent color.

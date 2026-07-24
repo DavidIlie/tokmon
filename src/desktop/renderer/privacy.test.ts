@@ -55,6 +55,15 @@ test('privacy mode keeps the daemon stable account ordinal instead of exposing e
   assert.equal(accountIdentity(value, true), 'Claude account 2')
 })
 
+test('privacy mode rejects a stale unredacted daemon identity', () => {
+  const value = account('david@example.com')
+  value.identity = {
+    title: 'david@example.com', subtitle: null,
+    accessibleLabel: 'david@example.com', redacted: false,
+  }
+  assert.equal(accountIdentity(value, true), '[redacted]')
+})
+
 test('privacy shortcut accepts configured P outside editable controls only', () => {
   assert.equal(matchesPrivacyShortcut({ key: 'p' }, 'p'), true)
   assert.equal(matchesPrivacyShortcut({ key: 'P' }, 'p'), true)

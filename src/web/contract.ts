@@ -107,6 +107,8 @@ export interface WebAccount {
   name: string
   color: string
   homeDir: string | null
+  /** Daemon-owned provenance for account lifecycle actions. Optional for cached/older snapshots. */
+  source?: 'auto' | 'configured'
   hasUsage: boolean
   hasBilling: boolean
   email?: string | null
@@ -143,6 +145,8 @@ export interface WebSnapshot {
   intervalMs: number
   /** Optional only for snapshots from daemons predating the split billing cadence. */
   billingIntervalMs?: number
+  /** Installed harnesses are separate from reconciled runtime accounts. */
+  installedProviders?: readonly ProviderId[]
   providers: WebProviderInfo[]
   accounts: WebAccount[]
   seeded: boolean

@@ -18,6 +18,7 @@ import {
   applyConfigUpdate,
   ConfigConflictError,
   ConfigPersistenceError as ConfigPersistenceWriteError,
+  rediscoverEngineAccounts,
   toConfigState,
 } from './config-control'
 import type { DataEngine } from './data-engine'
@@ -102,10 +103,14 @@ function refreshFailureEffect(error: unknown): Effect.Effect<never, RefreshFailu
 
 function refreshEffect(
   engine: DataEngine,
+  state: { config: Config },
   scope: Parameters<DataEngine['refresh']>[0],
 ): Effect.Effect<void, RefreshFailure> {
   return Effect.tryPromise({
-    try: () => engine.refresh(scope),
+    try: async () => {
+      if (scope === 'all') await rediscoverEngineAccounts(engine, state)
+      await engine.refresh(scope)
+    },
     catch: error => error,
   }).pipe(Effect.matchEffect({
     onFailure: refreshFailureEffect,
@@ -124,7 +129,7 @@ export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<
       [TOKMON_WS_METHODS.setConfig]: (config) =>
         configUpdateEffect(deps.engine, deps.state, config as never),
       [TOKMON_WS_METHODS.refresh]: ({ scope }) =>
-        refreshEffect(deps.engine, scope),
+        refreshEffect(deps.engine, deps.state, scope),
       [TOKMON_WS_METHODS.browseFs]: ({ path }) =>
         Effect.promise(() => listHomeDirectory(path)),
       [TOKMON_WS_METHODS.snapshot]: () => snapshotStream(deps.engine),

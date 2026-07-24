@@ -39,6 +39,7 @@ import {
   configAffectsEngine,
   ConfigConflictError,
   ConfigPersistenceError,
+  rediscoverEngineAccounts,
 } from './web/config-control'
 import { createDaemonRpcClient } from './client/daemon-rpc-client'
 import { startWebServer } from './web/server'
@@ -472,6 +473,13 @@ test('an old full-document CAS update preserves every capability-gated config fi
   const state: { config: Config } = {
     config: {
       ...DEFAULTS,
+      accounts: [{
+        id: 'disabled-manual',
+        providerId: 'claude',
+        name: 'Disabled manual',
+        homeDir: '/tmp/disabled-manual',
+        enabled: false,
+      }],
       appearance: currentAppearance,
       tray: {
         ...DEFAULTS.tray,
@@ -500,7 +508,11 @@ test('an old full-document CAS update preserves every capability-gated config fi
     menuBarValue: _unsupportedMenuBarValue,
     ...oldClientTray
   } = oldClientTopLevel.tray
-  const oldClientConfig = { ...oldClientTopLevel, tray: oldClientTray }
+  const oldClientConfig = {
+    ...oldClientTopLevel,
+    accounts: oldClientTopLevel.accounts.map(({ enabled: _unsupportedEnabled, ...account }) => account),
+    tray: oldClientTray,
+  }
 
   try {
     process.env.XDG_CONFIG_HOME = root
@@ -517,6 +529,7 @@ test('an old full-document CAS update preserves every capability-gated config fi
     assert.deepEqual(saved.config.desktop.expandedProviders, currentExpanded)
     assert.equal(saved.config.desktop.graphRangeDays, 30)
     assert.deepEqual(saved.config.accountDetection, currentDetection)
+    assert.equal(saved.config.accounts[0]?.enabled, false)
     assert.deepEqual(broadcasts[0]?.appearance, currentAppearance)
     assert.deepEqual(broadcasts[0]?.tray.pinnedProviders, currentPins)
     assert.deepEqual(broadcasts[0]?.tray.menuBar, currentMenuBar)
@@ -531,11 +544,42 @@ test('an old full-document CAS update preserves every capability-gated config fi
     assert.deepEqual(persisted.desktop.expandedProviders, currentExpanded)
     assert.equal(persisted.desktop.graphRangeDays, 30)
     assert.deepEqual(persisted.accountDetection, currentDetection)
+    assert.equal(persisted.accounts[0]?.enabled, false)
   } finally {
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME
     else process.env.XDG_CONFIG_HOME = previous
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test('full-refresh rediscovery retries instead of applying an older config revision', async () => {
+  let releaseFirst!: () => void
+  const firstGate = new Promise<void>(resolve => { releaseFirst = resolve })
+  const state = { config: { ...DEFAULTS, revision: 0 } }
+  const applied: string[] = []
+  let calls = 0
+  const engine = {
+    setConfig: (next: { tz: string }) => { applied.push(next.tz) },
+  } as never
+
+  const rediscovery = rediscoverEngineAccounts(engine, state, async config => {
+    calls++
+    if (calls === 1) await firstGate
+    return {
+      resolved: [],
+      installedProviders: [],
+      tz: `revision-${config.revision}`,
+      summaryIntervalMs: 8_000,
+      billingIntervalMs: 300_000,
+    }
+  })
+  await new Promise<void>(resolve => setImmediate(resolve))
+  state.config = { ...state.config, revision: 1 }
+  releaseFirst()
+  await rediscovery
+
+  assert.equal(calls, 2)
+  assert.deepEqual(applied, ['revision-1'])
 })
 
 test('legacy and builder-aware CAS updates reconcile menu-bar value visibility', async () => {

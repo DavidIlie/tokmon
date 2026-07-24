@@ -2,12 +2,11 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { type Config } from '../config'
 import { TOKMON_CAPABILITIES, TOKMON_PROTOCOL_VERSION } from '../rpc/contract'
-import { resolveAccounts, tzFor } from './data'
 import { appVersion, send, sendJson, serveStatic, findWebRoot } from './static'
 import { isDevMode, createViteDevServer, MISSING_BUILD_HTML, type ViteDevServerLike } from './vite-dev'
 import { createDataEngine } from './data-engine'
 import type { WebSnapshot } from './contract'
-import { billingIntervalFor, summaryIntervalFor } from './config-control'
+import { resolveEngineConfig } from './config-control'
 import { mountWsRpc } from './ws'
 import { isAllowedHostHeader, isSameOriginRequest } from './request-guard'
 import { resolveDaemonChannel, type DaemonChannel } from './daemon-channel'
@@ -135,18 +134,15 @@ function createRouter(
 
 export async function startWebServer(opts: StartOptions): Promise<WebServerController> {
   const state = { config: opts.config }
-  const tz = tzFor(state.config)
   const version = opts.version ?? appVersion()
   const protocolVersion = opts.protocolVersion ?? TOKMON_PROTOCOL_VERSION
   const capabilities = opts.capabilities ?? TOKMON_CAPABILITIES
   const ownerKind = opts.ownerKind ?? 'cli'
   const channel = resolveDaemonChannel(opts.channel)
-  const summaryIntervalMs = summaryIntervalFor(state.config)
-  const billingIntervalMs = billingIntervalFor(state.config)
   const wsToken = opts.wsToken ?? randomBytes(32).toString('base64url')
   const log = (msg: string) => { if (opts.log) process.stdout.write(msg + '\n') }
 
-  const resolved = await resolveAccounts(state.config)
+  const engineConfig = await resolveEngineConfig(state.config)
 
   const server = createServer()
   let vite: ViteDevServerLike | null = null
@@ -157,7 +153,7 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
     const webRoot = vite ? null : (opts.webRoot ?? findWebRoot())
     if (!vite && !webRoot) log('  ⚠ no dashboard available — see the page for build/dev instructions')
 
-    engine = createDataEngine({ version, config: state.config, tz, summaryIntervalMs, billingIntervalMs, resolved })
+    engine = createDataEngine({ version, config: state.config, ...engineConfig })
     server.addListener('request', createRouter(
       engine,
       state,

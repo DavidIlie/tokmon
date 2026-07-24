@@ -155,8 +155,16 @@ function providerPending(accounts: readonly WebAccount[]): boolean {
 }
 
 function accountErrorText(account: WebAccount): string | null {
-  if (account.billingState !== 'error') return null
-  return account.billing?.error ?? 'Could not refresh — check that this account is signed in.'
+  if (account.billing?.error) return account.billing.error
+  if (account.billingState === 'error') return 'Could not refresh — check that this account is signed in.'
+  return null
+}
+
+function accountHasUsageHistory(account: WebAccount): boolean {
+  const dashboard = account.dashboard
+  if (dashboard && (dashboard.today.tokens > 0 || dashboard.week.tokens > 0 || dashboard.month.tokens > 0)) return true
+  const table = account.table
+  return !!table && (table.daily.length > 0 || table.weekly.length > 0 || table.monthly.length > 0)
 }
 
 interface ProviderCardProps {
@@ -173,10 +181,11 @@ interface ProviderCardProps {
   onToggle(): void
   onPin(replaceSecond: boolean): void
   onArrow(direction: 'up' | 'down'): void
+  onRemoveAccount(account: WebAccount): void
 }
 
 export function ProviderCard({
-  group, snapshot, config, pinned, pinPosition = null, pinCount = 0, expanded, deny, refreshing, now, onToggle, onPin, onArrow,
+  group, snapshot, config, pinned, pinPosition = null, pinCount = 0, expanded, deny, refreshing, now, onToggle, onPin, onArrow, onRemoveAccount,
 }: ProviderCardProps) {
   const activeTimeoutMin = config.tray.activeTimeoutMin
   const rep = providerRepresentative(group.accounts, activeTimeoutMin, now)
@@ -277,6 +286,7 @@ export function ProviderCard({
                 providerName={group.name} showPlan={group.sharedPlan === null} first={index === 0}
                 showIdentity={multi}
                 activeTimeoutMin={activeTimeoutMin} now={now}
+                onRemove={() => onRemoveAccount(account)}
               />
             ))}
           </div>
@@ -286,9 +296,10 @@ export function ProviderCard({
   )
 }
 
-function ExpandedAccount({ account, snapshot, config, providerName, showPlan, showIdentity, first, activeTimeoutMin, now }: {
+function ExpandedAccount({ account, snapshot, config, providerName, showPlan, showIdentity, first, activeTimeoutMin, now, onRemove }: {
   account: WebAccount; snapshot: WebSnapshot; config: Config; providerName: string
   showPlan: boolean; showIdentity: boolean; first: boolean; activeTimeoutMin: number; now: number
+  onRemove(): void
 }) {
   const fresh = freshness(account, snapshot, now)
   const active = isActive(account, activeTimeoutMin, now)
@@ -297,7 +308,9 @@ function ExpandedAccount({ account, snapshot, config, providerName, showPlan, sh
   const plan = planLabel(account.plan)
   const identity = accountIdentity(account, config.privacyMode)
   const errorText = accountErrorText(account)
-  const showMetadata = showIdentity || (showPlan && !!plan) || fresh === 'error' || fresh === 'stale' || active
+  const removable = showIdentity && account.source === 'auto'
+  const showMetadata = showIdentity || (showPlan && !!plan) || fresh === 'error' || fresh === 'stale' || active || removable
+  const historyOnly = accountHasUsageHistory(account)
   return (
     <div className="account-block">
       {!first && <div className="divider" />}
@@ -308,6 +321,14 @@ function ExpandedAccount({ account, snapshot, config, providerName, showPlan, sh
           {fresh === 'error' && <ErrorMark message={errorText ?? 'Provider error'} />}
           {fresh === 'stale' && <StaleTag account={account} now={now} />}
           {active && <ActiveChip account={account} now={now} />}
+          {removable && (
+            <button
+              type="button" className="account-remove"
+              title={`Remove ${identity} from Tokmon. Provider files and sign-in are not changed.`}
+              aria-label={`Remove ${identity} from Tokmon`}
+              onClick={onRemove}
+            >Remove</button>
+          )}
         </div>
       )}
       {errorText && <p className="account-error">{errorText}</p>}
@@ -318,8 +339,8 @@ function ExpandedAccount({ account, snapshot, config, providerName, showPlan, sh
           ))
           : (
             <div className="row row--nodata">
-              <span className="row-label">{pending ? 'Loading…' : 'No data'}</span>
-              <span className="row-value">{pending ? '' : '—'}</span>
+              <span className="row-label">{pending ? 'Loading…' : historyOnly ? 'Usage history only' : 'No usage or quota data'}</span>
+              <span className="row-value">{pending ? '' : historyOnly ? 'No live quota' : '—'}</span>
             </div>
           )}
       </div>

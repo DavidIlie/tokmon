@@ -20,7 +20,12 @@ import {
 import { ProviderCard } from './provider-card'
 import { groupByProvider } from './presentation'
 import { providerMark } from './provider-icons'
-import { measuredPopoverHeight, pinProviderFromCard, pinProviderPreservingStoredPins } from './app'
+import {
+  measuredPopoverHeight,
+  pinProviderFromCard,
+  pinProviderPreservingStoredPins,
+  snapshotWithAccountPolicy,
+} from './app'
 
 // Server-render the components (no window, no effects) to catch runtime crashes in the
 // provider-disclosure UI that pure-function unit tests can't reach.
@@ -61,7 +66,7 @@ function renderCard(snap: WebSnapshot, expanded: boolean, pinned = false, cardCo
   return renderToStaticMarkup(createElement(ProviderCard, {
     group, snapshot: snap, config: cardConfig, pinned, pinPosition: pinned ? 1 : null, pinCount: pinned ? 1 : 0,
     expanded, deny: false, refreshing: false,
-    now: Date.now(), onToggle: () => {}, onPin: () => {}, onArrow: () => {},
+    now: Date.now(), onToggle: () => {}, onPin: () => {}, onArrow: () => {}, onRemoveAccount: () => {},
   }))
 }
 
@@ -264,6 +269,75 @@ test('a multi-account provider expands to both identities and Active, one card',
   assert.doesNotMatch(html, /@acme\.com/)
   assert.match(html, /Active/)
   assert.equal(html.match(/class="provider-card[^"]*"/g)?.length, 1)
+})
+
+test('detected accounts expose a direct, recoverable remove action', () => {
+  const html = renderCard(snapshot([
+    account({ id: 'a', source: 'auto', identity: { title: 'Claude account 1', subtitle: null, accessibleLabel: 'Claude account 1', redacted: true } }),
+    account({ id: 'b', source: 'auto', identity: { title: 'Claude account 2', subtitle: null, accessibleLabel: 'Claude account 2', redacted: true } }),
+  ]), true)
+  assert.match(html, /aria-label="Remove Claude account 1 from Tokmon"/)
+  assert.match(html, /aria-label="Remove Claude account 2 from Tokmon"/)
+})
+
+test('provider domain errors remain visible when the fetch itself completed', () => {
+  const html = renderCard(snapshot([
+    account({
+      source: 'auto',
+      billingState: 'ready',
+      billing: { plan: null, metrics: [], error: 'This Claude home is logged out.' },
+    }),
+  ]), true)
+  assert.match(html, /This Claude home is logged out\./)
+  assert.doesNotMatch(html, />No data</)
+})
+
+test('optimistic account policy removes only the selected detected home', () => {
+  const original = snapshot([
+    account({ id: 'default', source: 'auto', homeDir: null }),
+    account({ id: 'other', source: 'auto', homeDir: '/tmp/claude-other' }),
+  ])
+  original.providers[0]!.headroom = {
+    value: 55, unit: 'index-100', mode: 'single-window', basis: 'idle-runway',
+    representativeAccountId: 'other', activeAccountIds: [], factors: [], explanation: 'test',
+  }
+  const filtered = snapshotWithAccountPolicy(original, {
+    ...config,
+    accountDetection: {
+      ...config.accountDetection,
+      excludedAccounts: [{ providerId: 'claude', homeDir: '/tmp/claude-other' }],
+    },
+  })
+  assert.deepEqual(filtered.accounts.map(value => value.id), ['default'])
+  assert.equal(filtered.providers[0]?.headroom, undefined)
+})
+
+test('optimistic account policy overlays tracking, discovery, and manual enabled intent', () => {
+  const original = snapshot([
+    account({ id: 'auto', source: 'auto', homeDir: null }),
+    account({ id: 'manual', source: 'configured', homeDir: '/tmp/manual' }),
+  ])
+  const manualConfig = {
+    id: 'manual',
+    providerId: 'claude' as const,
+    name: 'Manual',
+    homeDir: '/tmp/manual',
+  }
+
+  assert.deepEqual(snapshotWithAccountPolicy(original, {
+    ...config,
+    accounts: [manualConfig],
+    accountDetection: { ...config.accountDetection, enabled: false },
+  }).accounts.map(value => value.id), ['manual'])
+  assert.deepEqual(snapshotWithAccountPolicy(original, {
+    ...config,
+    accounts: [{ ...manualConfig, enabled: false }],
+  }).accounts.map(value => value.id), ['auto'])
+  assert.deepEqual(snapshotWithAccountPolicy(original, {
+    ...config,
+    accounts: [manualConfig],
+    disabledProviders: ['claude'],
+  }).accounts, [])
 })
 
 test('desktop account labels are email-only even when daemon titles contain provider names and commas', () => {
@@ -554,8 +628,11 @@ test('providers and accounts separates global tracking from discovery controls',
   assert.match(html, /aria-pressed="false"[^>]*>Codex</)
   assert.ok(html.includes('/tmp/claude-alt'))
   assert.ok(html.includes('/tmp/old-claude'))
-  assert.match(html, />Turn off</)
-  assert.match(html, />Turn on</)
+  assert.match(html, /Accounts on this Mac/)
+  assert.match(html, /without changing its provider files, login, or the other accounts/)
+  assert.match(html, />Remove</)
+  assert.match(html, />Restore</)
+  assert.match(html, /Turning this off hides every detected account/)
 })
 
 test('provider pin segment reserves its ordinal and announces the menu bar position', () => {

@@ -1,10 +1,14 @@
-import { providerDetectionEnabled, PROVIDER_META, PROVIDER_ORDER, setProviderDetectionEnabled, setProviderTrackingEnabled, type Config, type ProviderId } from '@shared'
+import { providerDetectionEnabled, PROVIDER_META, PROVIDER_ORDER, setProviderDetectionEnabled, setProviderTrackingEnabled, type Config, type ProviderId, type WebSnapshot } from '@shared'
 import { namedColorHex } from '../../lib/colors'
 import { Check } from '../icons'
 import { FOCUS_RING } from '../ui/primitives'
 import { Section } from './primitives'
 
-export function ProvidersSection({ draft, patch }: { draft: Config; patch: (fn: (c: Config) => Config) => void }) {
+export function ProvidersSection({ draft, patch, snapshot }: {
+  draft: Config
+  patch: (fn: (c: Config) => Config) => void
+  snapshot: WebSnapshot | null
+}) {
   const toggle = (pid: ProviderId, enabled: boolean) =>
     patch(c => setProviderTrackingEnabled(c, pid, enabled))
   return (
@@ -17,12 +21,15 @@ export function ProvidersSection({ draft, patch }: { draft: Config; patch: (fn: 
         }`}
       >Auto-detect {draft.accountDetection.enabled ? 'on' : 'off'}</button>
     }>
-      <p className="mb-2.5 text-[11px] text-fg-faint">Tracking controls all provider data. Auto-detect only finds accounts; manual accounts keep working when it is off.</p>
+      <p className="mb-2.5 text-[11px] text-fg-faint">
+        Tracking controls a whole harness. Auto-detect controls every detected account; remove individual accounts from the Accounts section.
+      </p>
       <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
         {PROVIDER_ORDER.map(pid => {
           const enabled = !draft.disabledProviders.includes(pid)
           const detectorEnabled = providerDetectionEnabled(draft.accountDetection, pid)
           const meta = PROVIDER_META[pid]
+          const installed = snapshot?.installedProviders?.includes(pid) ?? false
           return (
             <div
               key={pid}
@@ -31,7 +38,9 @@ export function ProvidersSection({ draft, patch }: { draft: Config; patch: (fn: 
               }`}
             >
               <span className="size-2 shrink-0 rounded-full" style={{ background: namedColorHex(meta.color) }} aria-hidden />
-              <span className={`font-medium ${enabled ? 'text-fg' : 'text-fg-faint'}`}>{meta.name}</span>
+              <span className={`font-medium ${enabled ? 'text-fg' : 'text-fg-faint'}`}>
+                {meta.name}{installed ? ' · installed' : ''}
+              </span>
               <span className="ml-auto flex items-center gap-1">
                 <button
                   type="button" role="switch" aria-checked={enabled}

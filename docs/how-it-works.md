@@ -16,6 +16,12 @@ Provider readers normalize data into shared account, quota, dashboard, table,
 and billing types. Presentation adapters then shape the same snapshot for the
 TUI, desktop renderer, web socket, and JSON commands.
 
+Discovery separates installed harness signals from account evidence. The daemon
+publishes installed harnesses independently, adds explicit `auto` or
+`configured` provenance to each runtime account, applies per-home exclusions,
+and then sends the reconciled snapshot. Clients do not infer account ownership
+from display names.
+
 Configuration updates include a revision and use compare-and-swap semantics.
 Clients must retry against fresh state instead of overwriting concurrent edits.
 
