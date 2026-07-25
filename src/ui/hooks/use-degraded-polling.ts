@@ -21,6 +21,29 @@ function usageProviders(accounts: Account[]): ProviderId[] {
 }
 
 /**
+ * Whether the cached snapshot should be applied for the current collector epoch.
+ *
+ * The epoch advances — discarding every collected stat — whenever the account
+ * set, the timezone or the degraded flag changes. Seeding is therefore armed
+ * once per epoch rather than once per process: losing the daemon a second time
+ * would otherwise paint an empty dashboard until the first live poll returned,
+ * which is precisely what the cache exists to avoid. Re-seeding cannot clobber
+ * fresher data, because the caller only applies it to an empty stats map.
+ */
+export function shouldSeedLocalStats(input: {
+  seededEpoch: number | null
+  epoch: number
+  degraded: boolean
+  configReady: boolean
+  showPicker: boolean
+  accountCount: number
+}): boolean {
+  if (!input.degraded || !input.configReady || input.showPicker) return false
+  if (input.accountCount === 0) return false
+  return input.seededEpoch !== input.epoch
+}
+
+/**
  * Owns every in-process collector. Scheduled polling and manual refreshes share
  * the same in-flight promises, so pressing r/R cannot start duplicate provider work.
  */
@@ -59,7 +82,7 @@ export function useDegradedPolling({
   const [updatedLocal, setUpdated] = useState(new Date())
   const [tables, setTables] = useState<Map<ProviderId, TableData>>(new Map())
   const [loadingTables, setLoadingTables] = useState<Set<ProviderId>>(new Set())
-  const seededRef = useRef(false)
+  const seededEpochRef = useRef<number | null>(null)
   const epochRef = useRef(0)
   const summaryFlightRef = useRef<Promise<void> | null>(null)
   const billingFlightRef = useRef<Promise<void> | null>(null)
@@ -83,10 +106,12 @@ export function useDegradedPolling({
   }, [accountsKey, tz, degraded])
 
   useEffect(() => {
-    if (!degraded) return
-    if (seededRef.current || !configReady || showPicker || accountsRef.current.length === 0) return
-    seededRef.current = true
     const epoch = epochRef.current
+    if (!shouldSeedLocalStats({
+      seededEpoch: seededEpochRef.current, epoch,
+      degraded, configReady, showPicker, accountCount: accountsRef.current.length,
+    })) return
+    seededEpochRef.current = epoch
     void loadSeedSnapshot().then(snap => {
       if (epoch !== epochRef.current) return
       setStats(prev => {
@@ -105,7 +130,7 @@ export function useDegradedPolling({
         return next
       })
     })
-  }, [degraded, configReady, showPicker, accountsKey, accountsRef])
+  }, [degraded, configReady, showPicker, accountsKey, tz, accountsRef])
 
   const runSummary = useCallback((): Promise<void> => {
     if (summaryFlightRef.current) return summaryFlightRef.current
