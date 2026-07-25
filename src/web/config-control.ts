@@ -7,7 +7,7 @@ import {
 } from '../rpc/contract'
 import { detectInstalledProviders } from '../providers'
 import { resolveAccounts, tzFor } from './data'
-import type { DataEngine } from './data-engine'
+import { engineConfigKey, type DataEngine, type EngineConfig } from './data-engine'
 
 const MIN_SUMMARY_INTERVAL_MS = 8000
 const BILLING_INTERVAL_FALLBACK_MIN = 5
@@ -47,7 +47,7 @@ export class ConfigPersistenceError extends Error {
   }
 }
 
-export async function resolveEngineConfig(config: Config): Promise<Parameters<DataEngine['setConfig']>[0]> {
+export async function resolveEngineConfig(config: Config): Promise<EngineConfig> {
   const [resolved, installedProviders] = await Promise.all([
     resolveAccounts(config),
     detectInstalledProviders(),
@@ -73,7 +73,12 @@ export async function rediscoverEngineAccounts(
     const expected = state.config
     const next = await resolve(expected)
     if (state.config.revision !== expected.revision) continue
-    engine.setConfig(next)
+    // Rediscovery precedes the caller's own engine.refresh(). Reconfiguring is
+    // skipped outright when nothing moved, and never starts its own fetches —
+    // either would make one user-initiated refresh run every pass twice.
+    if (engine.configKey?.() !== engineConfigKey(next)) {
+      engine.setConfig(next, { startRefresh: false })
+    }
     return
   }
 }

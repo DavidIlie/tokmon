@@ -31,6 +31,33 @@ export function billingNeedsCatchUp(
 
 export type RefreshScope = 'all' | 'summary' | 'table' | 'billing' | 'peak'
 
+export interface EngineConfig {
+  resolved: ResolvedAccount[]
+  installedProviders: ProviderId[]
+  tz: string
+  summaryIntervalMs: number
+  billingIntervalMs: number
+}
+
+/**
+ * Identity of an applied engine configuration. Equal keys mean setConfig would
+ * change nothing observable, so the caller can skip it. Covers every field the
+ * engine or assembleSnapshot reads — an installedProviders-only or colour-only
+ * delta still renders differently and must reconfigure.
+ */
+export function engineConfigKey(next: EngineConfig): string {
+  return JSON.stringify([
+    next.tz,
+    next.summaryIntervalMs,
+    next.billingIntervalMs,
+    next.installedProviders,
+    next.resolved.map(r => [
+      r.account.id, r.account.providerId, r.account.homeDir, r.account.name,
+      r.hasUsage, r.hasBilling, r.color,
+    ]),
+  ])
+}
+
 interface DataEngineOptions {
   version: string
   config: Config
@@ -48,13 +75,16 @@ export interface DataEngine {
   subscribeConfig(onConfig: (config: Config) => void): () => void
   touch(): void
   refresh(scope?: RefreshScope): Promise<void>
-  setConfig(next: {
-    resolved: ResolvedAccount[]
-    installedProviders: ProviderId[]
-    tz: string
-    summaryIntervalMs: number
-    billingIntervalMs: number
-  }): void
+  /**
+   * Applies a resolved configuration. `startRefresh: false` reconfigures
+   * silently, for callers that follow with their own explicit refresh.
+   */
+  setConfig(next: EngineConfig, options?: { startRefresh?: boolean }): void
+  /**
+   * Key of the currently applied configuration, for skipping no-op setConfig
+   * calls. Optional: a double that omits it simply forgoes the optimization.
+   */
+  configKey?(): string
   broadcastConfig(config: Config): void
   stop(): void
 }
@@ -363,7 +393,11 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       return settleRefreshTasks(tasks)
     },
 
-    setConfig(next) {
+    configKey: () => engineConfigKey({
+      resolved, installedProviders, tz, summaryIntervalMs, billingIntervalMs,
+    }),
+
+    setConfig(next, options) {
       if (stopped) return
       clearTimers()
       configEpoch++
@@ -397,10 +431,14 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       }
 
       rebuild()
-      runInBackground(refreshSummary.run(true))
-      runInBackground(refreshTable.run(true))
-      runInBackground(refreshBillingIfStale())
-      if (hasClaude) runInBackground(refreshPeak.run(true))
+      // Reconfiguring normally implies "fetch against the new sources". Callers
+      // that own an explicit refresh opt out so the work happens exactly once.
+      if (options?.startRefresh !== false) {
+        runInBackground(refreshSummary.run(true))
+        runInBackground(refreshTable.run(true))
+        runInBackground(refreshBillingIfStale())
+        if (hasClaude) runInBackground(refreshPeak.run(true))
+      }
       startTimers()
     },
 

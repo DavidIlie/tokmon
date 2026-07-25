@@ -41,6 +41,7 @@ import {
   ConfigPersistenceError,
   rediscoverEngineAccounts,
 } from './web/config-control'
+import { engineConfigKey, type EngineConfig } from './web/data-engine'
 import { createDaemonRpcClient } from './client/daemon-rpc-client'
 import { startWebServer } from './web/server'
 
@@ -580,6 +581,59 @@ test('full-refresh rediscovery retries instead of applying an older config revis
 
   assert.equal(calls, 2)
   assert.deepEqual(applied, ['revision-1'])
+})
+
+function recordingEngine(current: EngineConfig) {
+  const calls: { next: EngineConfig; options?: { startRefresh?: boolean } }[] = []
+  return {
+    calls,
+    engine: {
+      configKey: () => engineConfigKey(current),
+      setConfig: (next: EngineConfig, options?: { startRefresh?: boolean }) => {
+        calls.push({ next, options })
+      },
+    } as never,
+  }
+}
+
+const engineConfigFor = (installedProviders: readonly string[]): EngineConfig => ({
+  resolved: [{
+    account: { id: 'claude', providerId: 'claude', name: 'Claude', homeDir: '/home/a/.claude' },
+    hasUsage: true,
+    hasBilling: true,
+    color: 'orange',
+  }] as never,
+  installedProviders: [...installedProviders] as never,
+  tz: 'UTC',
+  summaryIntervalMs: 8_000,
+  billingIntervalMs: 300_000,
+})
+
+test('full-refresh rediscovery leaves the engine alone when nothing was rediscovered', async () => {
+  const current = engineConfigFor(['claude'])
+  const { calls, engine } = recordingEngine(current)
+  const state = { config: { ...DEFAULTS, revision: 3 } }
+
+  await rediscoverEngineAccounts(engine, state, async () => engineConfigFor(['claude']))
+
+  // Reconfiguring here would bump the config epoch, prune caches and restart
+  // timers on every manual refresh for no gain.
+  assert.deepEqual(calls, [])
+})
+
+test('full-refresh rediscovery reconfigures without starting a second refresh', async () => {
+  const current = engineConfigFor(['claude'])
+  const { calls, engine } = recordingEngine(current)
+  const state = { config: { ...DEFAULTS, revision: 3 } }
+
+  // An installed-harness inventory delta carries no account change, but it
+  // feeds assembleSnapshot, so it must still reach the engine.
+  await rediscoverEngineAccounts(engine, state, async () => engineConfigFor(['claude', 'codex']))
+
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0]?.next.installedProviders, ['claude', 'codex'])
+  // ws.ts follows this with engine.refresh(scope); that is the only pass.
+  assert.equal(calls[0]?.options?.startRefresh, false)
 })
 
 test('legacy and builder-aware CAS updates reconcile menu-bar value visibility', async () => {

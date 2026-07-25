@@ -3,10 +3,13 @@ import test from 'node:test'
 import {
   DEFAULT_BILLING_STALE_MS,
   billingNeedsCatchUp,
+  createDataEngine,
+  engineConfigKey,
   forEachProviderSequentially,
   throwIfRefreshFailures,
 } from './data-engine'
 import { createRefreshQueue, settleRefreshTasks } from './refresh-queue'
+import { DEFAULTS } from '../config-schema'
 
 function deferred() {
   let resolve!: () => void
@@ -19,6 +22,7 @@ function deferred() {
 }
 
 const turn = () => new Promise<void>(resolve => setImmediate(resolve))
+const settleEngine = async () => { for (let i = 0; i < 8; i++) await turn() }
 
 test('a new viewer catches up missing or stale quota data', () => {
   const accounts = [{ account: { id: 'codex' } }] as never
@@ -204,4 +208,120 @@ test('partial account failures become a manual-refresh error after results are a
       return true
     },
   )
+})
+
+const resolvedAccount = (over: Partial<{
+  id: string; providerId: string; homeDir: string; name: string
+  hasUsage: boolean; hasBilling: boolean; color: string
+}> = {}) => ({
+  account: {
+    id: over.id ?? 'claude',
+    providerId: over.providerId ?? 'claude',
+    homeDir: over.homeDir ?? '/home/a/.claude',
+    name: over.name ?? 'Claude',
+  },
+  hasUsage: over.hasUsage ?? true,
+  hasBilling: over.hasBilling ?? true,
+  color: over.color ?? 'orange',
+}) as never
+
+const baseEngineConfig = () => ({
+  resolved: [resolvedAccount()],
+  installedProviders: ['claude'] as never,
+  tz: 'UTC',
+  summaryIntervalMs: 8_000,
+  billingIntervalMs: 300_000,
+})
+
+test('an unchanged resolution produces an identical engine configuration key', () => {
+  assert.equal(engineConfigKey(baseEngineConfig()), engineConfigKey(baseEngineConfig()))
+})
+
+test('every field the engine or snapshot reads changes the configuration key', () => {
+  const base = engineConfigKey(baseEngineConfig())
+  const differing: Record<string, ReturnType<typeof baseEngineConfig>> = {
+    // installedProviders feeds assembleSnapshot, so an inventory-only delta
+    // must still reconfigure even when the account set is untouched.
+    installedProviders: { ...baseEngineConfig(), installedProviders: ['claude', 'codex'] as never },
+    tz: { ...baseEngineConfig(), tz: 'Europe/Bucharest' },
+    summaryIntervalMs: { ...baseEngineConfig(), summaryIntervalMs: 30_000 },
+    billingIntervalMs: { ...baseEngineConfig(), billingIntervalMs: 60_000 },
+    id: { ...baseEngineConfig(), resolved: [resolvedAccount({ id: 'claude_auto' })] },
+    providerId: { ...baseEngineConfig(), resolved: [resolvedAccount({ providerId: 'codex' })] },
+    homeDir: { ...baseEngineConfig(), resolved: [resolvedAccount({ homeDir: '/home/b/.claude' })] },
+    name: { ...baseEngineConfig(), resolved: [resolvedAccount({ name: 'Claude work' })] },
+    hasUsage: { ...baseEngineConfig(), resolved: [resolvedAccount({ hasUsage: false })] },
+    hasBilling: { ...baseEngineConfig(), resolved: [resolvedAccount({ hasBilling: false })] },
+    color: { ...baseEngineConfig(), resolved: [resolvedAccount({ color: 'blue' })] },
+    accountCount: { ...baseEngineConfig(), resolved: [] },
+  }
+  for (const [field, config] of Object.entries(differing)) {
+    assert.notEqual(engineConfigKey(config), base, `${field} must change the key`)
+  }
+})
+
+test('a silent reconfiguration applies the new sources without starting fetches', async () => {
+  // No resolved accounts: every loop body is a no-op fetch-wise, so the only
+  // observable effect of a pass is the rebuild it publishes to subscribers.
+  const engine = createDataEngine({
+    version: 'test',
+    config: { ...DEFAULTS },
+    tz: 'UTC',
+    summaryIntervalMs: 8_000,
+    billingIntervalMs: 300_000,
+    resolved: [],
+    installedProviders: [],
+  })
+  try {
+    let rebuilds = 0
+    engine.subscribe(() => { rebuilds++ })
+    rebuilds = 0
+
+    engine.setConfig({
+      resolved: [], installedProviders: ['codex'] as never,
+      tz: 'Europe/Bucharest', summaryIntervalMs: 8_000, billingIntervalMs: 300_000,
+    }, { startRefresh: false })
+    await settleEngine()
+
+    // Exactly the reconfiguration's own rebuild — no summary or history pass.
+    assert.equal(rebuilds, 1)
+    assert.equal(engine.snapshot()?.tz, 'Europe/Bucharest')
+    assert.deepEqual(engine.snapshot()?.installedProviders, ['codex'])
+
+    rebuilds = 0
+    engine.setConfig({
+      resolved: [], installedProviders: ['codex'] as never,
+      tz: 'UTC', summaryIntervalMs: 8_000, billingIntervalMs: 300_000,
+    })
+    await settleEngine()
+
+    // The default still fetches: the reconfiguration rebuild plus one rebuild
+    // per background pass it starts.
+    assert.ok(rebuilds > 1, `expected background passes, saw ${rebuilds} rebuild(s)`)
+  } finally {
+    engine.stop()
+  }
+})
+
+test('the engine reports a configuration key that tracks what it applied', () => {
+  const engine = createDataEngine({
+    version: 'test',
+    config: { ...DEFAULTS },
+    tz: 'UTC',
+    summaryIntervalMs: 8_000,
+    billingIntervalMs: 300_000,
+    resolved: [],
+    installedProviders: [],
+  })
+  try {
+    const applied = {
+      resolved: [], installedProviders: ['codex'] as never,
+      tz: 'UTC', summaryIntervalMs: 8_000, billingIntervalMs: 300_000,
+    }
+    assert.notEqual(engine.configKey?.(), engineConfigKey(applied))
+    engine.setConfig(applied, { startRefresh: false })
+    assert.equal(engine.configKey?.(), engineConfigKey(applied))
+  } finally {
+    engine.stop()
+  }
 })
