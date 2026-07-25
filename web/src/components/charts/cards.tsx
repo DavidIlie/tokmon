@@ -1,4 +1,4 @@
-import { severity, usageFromHeadroom, type AppearanceConfig, type QuotaView, type Severity, type WebAccount } from '@shared'
+import { projectAccountIdentity, severity, usageFromHeadroom, type AppearanceConfig, type QuotaView, type Severity, type WebAccount } from '@shared'
 import type { Derived } from '../../lib/derive'
 import { fmtCost, fmtNum, fmtResetAt, fmtTokens } from '../../lib/format'
 import { providerHex, shortModel } from '../../lib/colors'
@@ -57,10 +57,12 @@ function Kpi({ label, value, accent = 'text-fg-bright', spark, sparkColor }: {
   )
 }
 
-export function ProviderCards({ accounts, nameOf, privacyMode, resetDisplay, tz }: {
+export function ProviderCards({ accounts, nameOf, privacyMode, ordinals, resetDisplay, tz }: {
   accounts: WebAccount[]
   nameOf: (id: string) => string
   privacyMode: boolean
+  /** Provider ordinals from the whole snapshot, so a filtered card keeps its real number. */
+  ordinals?: ReadonlyMap<string, number>
   resetDisplay: 'relative' | 'absolute'
   tz: string
 }) {
@@ -75,17 +77,19 @@ export function ProviderCards({ accounts, nameOf, privacyMode, resetDisplay, tz 
   }
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fit,minmax(min(340px,100%),1fr))]">
-      {accounts.map((a, i) => <ProviderCard key={a.id} account={a} index={i} preset={preset} providerName={nameOf(a.providerId)} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={tz} />)}
+      {accounts.map((a, i) => <ProviderCard key={a.id} account={a} index={i} preset={preset} providerName={nameOf(a.providerId)} privacyMode={privacyMode} ordinal={ordinals?.get(a.id) ?? null} resetDisplay={resetDisplay} tz={tz} />)}
     </div>
   )
 }
 
-function ProviderCard({ account, index, preset, providerName, privacyMode, resetDisplay, tz }: {
+export function ProviderCard({ account, index, preset, providerName, privacyMode, ordinal, resetDisplay, tz }: {
   account: WebAccount
   index: number
   preset: AppearanceConfig['preset']
   providerName: string
   privacyMode: boolean
+  /** 1-based position within the provider in snapshot.accounts; null if unknown. */
+  ordinal?: number | null
   resetDisplay: 'relative' | 'absolute'
   tz: string
 }) {
@@ -95,6 +99,12 @@ function ProviderCard({ account, index, preset, providerName, privacyMode, reset
   const activity = account.billing?.activity
   const providerColor = dataInkColor(preset, index, providerHex(account.providerId))
   const identity = accountIdentityText(account, providerName)
+  // The privacy toggle is optimistic, so this identity can be the unredacted one
+  // the daemon resolved before the toggle landed. Re-project it rather than
+  // trust it — the same rule the settings list and the TUI already follow.
+  const projected = projectAccountIdentity({
+    identity: account.identity, visible: identity, providerName, ordinal: ordinal ?? null, privacyMode,
+  })
   const showSub = identity !== providerName
   return (
     <div
@@ -108,9 +118,7 @@ function ProviderCard({ account, index, preset, providerName, privacyMode, reset
           {showSub && (
             <span className="flex min-w-0 items-center gap-1 text-xs text-fg-faint">
               <span aria-hidden>·</span>
-              {account.identity
-                ? <span className="truncate text-fg-faint" title={account.identity.accessibleLabel}>{identity}</span>
-                : <PrivacyLabel value={identity} privacyMode={privacyMode} className="truncate text-fg-faint" />}
+              <PrivacyLabel value={identity} projected={projected} privacyMode={privacyMode} className="truncate text-fg-faint" />
             </span>
           )}
         </div>

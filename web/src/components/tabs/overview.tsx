@@ -5,12 +5,13 @@ import { KpiStrip, ProviderCards } from '../charts/cards'
 
 const CostTimeline = lazy(() => import('../charts/timeline').then(module => ({ default: module.CostTimeline })))
 
-export function OverviewTab({ derived, periodLabel, scopeLabel, providers, privacyMode, resetDisplay, tz }: {
+export function OverviewTab({ derived, periodLabel, scopeLabel, providers, privacyMode, ordinals, resetDisplay, tz }: {
   derived: Derived
   periodLabel: string
   scopeLabel?: string
   providers: WebProviderInfo[]
   privacyMode: boolean
+  ordinals?: ReadonlyMap<string, number>
   resetDisplay: 'relative' | 'absolute'
   tz: string
 }) {
@@ -23,7 +24,7 @@ export function OverviewTab({ derived, periodLabel, scopeLabel, providers, priva
       <Suspense fallback={<div className="h-[clamp(320px,42vh,560px)]" role="status" aria-label="Loading cost timeline" />}>
         <CostTimeline derived={derived} periodLabel={scopeLabel} heightClass="h-[clamp(320px,42vh,560px)]" />
       </Suspense>
-      <ProviderCards accounts={derived.cardAccounts} nameOf={nameOf} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={tz} />
+      <ProviderCards accounts={derived.cardAccounts} nameOf={nameOf} privacyMode={privacyMode} ordinals={ordinals} resetDisplay={resetDisplay} tz={tz} />
     </div>
   )
 }

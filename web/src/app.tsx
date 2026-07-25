@@ -3,7 +3,7 @@ import {
   createHashHistory, createRootRoute, createRoute, createRouter,
   Link, Outlet, RouterProvider, useNavigate, useRouterState,
 } from '@tanstack/react-router'
-import { DEFAULTS, isDarkOnlyThemePreset, type ConfigState, type WebSnapshot } from '@shared'
+import { accountProviderOrdinals, DEFAULTS, isDarkOnlyThemePreset, type ConfigState, type WebSnapshot } from '@shared'
 
 import { FilterBar } from './components/filter-bar'
 import { ShareControl } from './components/share-card'
@@ -319,7 +319,9 @@ function RootLayout() {
 
 function OverviewRoute() {
   const { derived, periodLabel, scopeLabel, snapshot, privacyMode, resetDisplay } = useDashboard()
-  return <Suspense fallback={<RouteFallback label="overview" />}><OverviewTab derived={derived} periodLabel={periodLabel} scopeLabel={scopeLabel} providers={snapshot.providers} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={snapshot.tz} /></Suspense>
+  // Ordinals come from the whole snapshot, so a filtered card cannot renumber itself.
+  const ordinals = accountProviderOrdinals(snapshot.accounts)
+  return <Suspense fallback={<RouteFallback label="overview" />}><OverviewTab derived={derived} periodLabel={periodLabel} scopeLabel={scopeLabel} providers={snapshot.providers} privacyMode={privacyMode} ordinals={ordinals} resetDisplay={resetDisplay} tz={snapshot.tz} /></Suspense>
 }
 function AnalyticsRoute() {
   const { derived, scopeLabel } = useDashboard()
