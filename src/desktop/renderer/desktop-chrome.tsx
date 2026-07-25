@@ -8,6 +8,7 @@ import {
   DEFAULT_MENU_BAR_CONFIG,
   getTrackedAccountRows,
   providerDetectionEnabled,
+  removedRowCopy,
   setDetectedAccountExcluded,
   setProviderDetectionEnabled,
   setProviderTrackingEnabled,
@@ -651,7 +652,7 @@ export function ProvidersSettings({ config, snapshot, onPatch, onBack, onDashboa
   onBack(): void
   onDashboard(): void
 }) {
-  const rows = getTrackedAccountRows(config, [], snapshot.accounts)
+  const rows = getTrackedAccountRows(config, [], snapshot.accounts, snapshot.suppressedAccounts)
   const liveBySource = new Map(snapshot.accounts.map(account => [
     `${account.providerId}:${account.homeDir ?? '~'}`,
     account,
@@ -669,7 +670,7 @@ export function ProvidersSettings({ config, snapshot, onPatch, onBack, onDashboa
     })
   }
   const rowStatus = (row: typeof rows[number], live: WebAccount | undefined): string => {
-    if (row.source === 'ignored') return 'Removed · not tracked'
+    if (row.source === 'ignored') return removedRowCopy(row.live).status
     if (row.source === 'configured') return row.enabled ? 'Manual · tracking' : 'Manual · disabled'
     if (live?.billing?.error) return `Detected · ${live.billing.error}`
     if (live?.dashboard || live?.table) return 'Detected · usage found'
@@ -722,10 +723,10 @@ export function ProvidersSettings({ config, snapshot, onPatch, onBack, onDashboa
                     }, true),
                   }))}>Remove</button>
                 ) : ignored ? (
-                  <button type="button" aria-label={`Restore ${PROVIDER_META[row.providerId].name} account`} onClick={() => onPatch(next => ({
+                  <button type="button" aria-label={`${removedRowCopy(row.live).action} ${rowIdentity(row)}`} onClick={() => onPatch(next => ({
                     ...next,
                     accountDetection: setDetectedAccountExcluded(next.accountDetection, row.excludedRef!, false),
-                  }))}>Restore</button>
+                  }))}>{removedRowCopy(row.live).action}</button>
                 ) : (
                   <button type="button" onClick={() => onPatch(next => ({
                     ...next,

@@ -858,3 +858,50 @@ test('the accounts list names every account by its ordinal in privacy mode', () 
   assert.match(html, /Claude account 2/)
   assert.doesNotMatch(html, /tmp\/jane/)
 })
+
+test('a removed account reads as Restore or Forget by whether its source still exists', () => {
+  const removedConfig = (extra: Partial<Config> = {}): Config => ({
+    ...config,
+    privacyMode: false,
+    accountDetection: {
+      enabled: true,
+      disabledProviders: [],
+      excludedAccounts: [{ providerId: 'claude', homeDir: '/tmp/old-claude' }],
+    },
+    ...extra,
+  })
+  const render = (
+    suppressedAccounts: WebSnapshot['suppressedAccounts'],
+    cfg: Config = removedConfig(),
+  ) => renderToStaticMarkup(createElement(ProvidersSettings, {
+    config: cfg,
+    snapshot: { ...snapshot([account({ id: 'claude-alt', homeDir: '/tmp/claude-alt' })]), suppressedAccounts },
+    onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
+  }))
+
+  const live = render([{ providerId: 'claude', homeDir: '/tmp/old-claude' }])
+  assert.match(live, /Removed · not tracked/)
+  assert.match(live, />Restore</)
+  assert.doesNotMatch(live, />Forget</)
+
+  const stranded = render([])
+  assert.match(stranded, /Removed · source not found/)
+  assert.match(stranded, />Forget</)
+  // The row is never hidden — clearing the tombstone stays a deliberate action.
+  assert.ok(stranded.includes('/tmp/old-claude'))
+
+  // A daemon that cannot report liveness keeps the previous wording.
+  const unknown = render(undefined)
+  assert.match(unknown, /Removed · not tracked/)
+  assert.match(unknown, />Restore</)
+
+  // And with discovery off the exclusion suppresses nothing, so no row.
+  const discoveryOff = render([], removedConfig({
+    accountDetection: {
+      enabled: false, disabledProviders: [],
+      excludedAccounts: [{ providerId: 'claude', homeDir: '/tmp/old-claude' }],
+    },
+  }))
+  assert.doesNotMatch(discoveryOff, /Removed ·/)
+  assert.ok(!discoveryOff.includes('/tmp/old-claude'))
+})

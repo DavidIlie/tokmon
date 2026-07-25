@@ -93,13 +93,15 @@ export const DesktopConfigSchema = Schema.Struct({
   graphRangeDays: Schema.optionalKey(Schema.Literals(DESKTOP_GRAPH_RANGES)),
 })
 
+const DetectedAccountRefSchema = Schema.Struct({
+  providerId: ProviderIdSchema,
+  homeDir: Schema.String,
+})
+
 export const AccountDetectionConfigSchema = Schema.Struct({
   enabled: Schema.Boolean,
   disabledProviders: Schema.Array(ProviderIdSchema),
-  excludedAccounts: Schema.Array(Schema.Struct({
-    providerId: ProviderIdSchema,
-    homeDir: Schema.String,
-  })),
+  excludedAccounts: Schema.Array(DetectedAccountRefSchema),
 })
 
 const HexColorSchema = Schema.String.check(Schema.isPattern(/^#[0-9a-f]{6}$/i))
@@ -434,6 +436,7 @@ export const WebSnapshotSchema = Schema.Struct({
     headroom: Schema.optionalKey(HeadroomViewSchema),
   })),
   accounts: Schema.Array(WebAccountSchema),
+  suppressedAccounts: Schema.optionalKey(Schema.Array(DetectedAccountRefSchema)),
   seeded: Schema.Boolean,
   peak: Schema.NullOr(Schema.Struct({
     state: Schema.Literals(['peak', 'off-peak', 'weekend'] as const),

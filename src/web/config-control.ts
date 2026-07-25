@@ -48,13 +48,14 @@ export class ConfigPersistenceError extends Error {
 }
 
 export async function resolveEngineConfig(config: Config): Promise<EngineConfig> {
-  const [resolved, installedProviders] = await Promise.all([
+  const [{ resolved, suppressed }, installedProviders] = await Promise.all([
     resolveAccounts(config),
     detectInstalledProviders(),
   ])
   return {
     resolved,
     installedProviders,
+    suppressedAccounts: suppressed,
     tz: tzFor(config),
     summaryIntervalMs: summaryIntervalFor(config),
     billingIntervalMs: billingIntervalFor(config),

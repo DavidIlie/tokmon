@@ -1,7 +1,7 @@
 import { detectAccountProviders, PROVIDERS } from '../providers'
-import { buildAccounts } from '../accounts'
+import { collectAccounts } from '../accounts'
 import { resolveTimezone } from '../tz'
-import type { Config } from '../config'
+import type { Config, DetectedAccountRef } from '../config'
 import type { Account, BillingResult, ProviderId } from '../providers/types'
 import type { DashboardData, TableData } from '../types'
 import { colorHex, namedHex } from '../shared/colors'
@@ -17,18 +17,27 @@ export interface ResolvedAccount {
   color: string
 }
 
-export async function resolveAccounts(config: Config): Promise<ResolvedAccount[]> {
+export interface ResolvedAccounts {
+  resolved: ResolvedAccount[]
+  /** Exclusions that suppressed a home discovery actually found (see collectAccounts). */
+  suppressed: DetectedAccountRef[]
+}
+
+export async function resolveAccounts(config: Config): Promise<ResolvedAccounts> {
   const detected = await detectAccountProviders()
-  const accounts = buildAccounts(config, detected)
-  return accounts.map(a => {
-    const p = PROVIDERS[a.providerId]
-    return {
-      account: a,
-      hasUsage: p.hasUsage || !!p.fetchTable,
-      hasBilling: p.hasBilling,
-      color: colorHex(a.color, PROVIDERS[a.providerId].color),
-    }
-  })
+  const { accounts, suppressed } = collectAccounts(config, detected)
+  return {
+    resolved: accounts.map(a => {
+      const p = PROVIDERS[a.providerId]
+      return {
+        account: a,
+        hasUsage: p.hasUsage || !!p.fetchTable,
+        hasBilling: p.hasBilling,
+        color: colorHex(a.color, PROVIDERS[a.providerId].color),
+      }
+    }),
+    suppressed,
+  }
 }
 
 export async function fetchAccountSummary(account: Account, tz: string): Promise<DashboardData | null> {
@@ -64,6 +73,7 @@ export function assembleSnapshot(opts: {
   summaryUpdatedAt?: Map<string, number>
   billingUpdatedAt?: Map<string, number>
   tableUpdatedAt?: Map<string, number>
+  suppressedAccounts?: readonly DetectedAccountRef[]
   seeded?: boolean
   peak?: PeakStatus | null
   config: Config
@@ -152,6 +162,9 @@ export function assembleSnapshot(opts: {
     installedProviders: opts.installedProviders,
     providers,
     accounts,
+    // Omitted rather than empty when the resolution did not report liveness, so
+    // the field's absence keeps meaning "this daemon cannot tell you".
+    ...(opts.suppressedAccounts ? { suppressedAccounts: opts.suppressedAccounts } : {}),
     seeded: opts.seeded ?? false,
     peak: opts.peak ?? null,
   }

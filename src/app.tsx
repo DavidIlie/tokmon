@@ -124,8 +124,8 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
       }))
     : buildAccounts(cfg, detectedAccountProviders), [cfg, connected, detectedAccountProviders, snapshot])
   const trackedAccountRows = useMemo(
-    () => getTrackedAccountRows(cfg, detectedAccountProviders, accounts),
-    [cfg, detectedAccountProviders, accounts],
+    () => getTrackedAccountRows(cfg, detectedAccountProviders, accounts, snapshot?.suppressedAccounts),
+    [cfg, detectedAccountProviders, accounts, snapshot?.suppressedAccounts],
   )
   const settingsRowCount = settingsTab === 'general'
     ? GENERAL_ROWS

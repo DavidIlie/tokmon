@@ -9,7 +9,7 @@ import {
   type ResolvedAccount,
 } from './data'
 import type { WebSnapshot, AccountFetchState, PeakStatus } from './contract'
-import type { Config } from '../config-schema'
+import type { Config, DetectedAccountRef } from '../config-schema'
 import { createRefreshQueue, settleRefreshTasks, type RefreshQueue } from './refresh-queue'
 
 const TABLE_INTERVAL_MS = 300_000
@@ -34,6 +34,8 @@ export type RefreshScope = 'all' | 'summary' | 'table' | 'billing' | 'peak'
 export interface EngineConfig {
   resolved: ResolvedAccount[]
   installedProviders: ProviderId[]
+  /** Optional: a resolution that cannot report liveness leaves the field unset. */
+  suppressedAccounts?: readonly DetectedAccountRef[]
   tz: string
   summaryIntervalMs: number
   billingIntervalMs: number
@@ -51,6 +53,7 @@ export function engineConfigKey(next: EngineConfig): string {
     next.summaryIntervalMs,
     next.billingIntervalMs,
     next.installedProviders,
+    next.suppressedAccounts ?? [],
     next.resolved.map(r => [
       r.account.id, r.account.providerId, r.account.homeDir, r.account.name,
       r.hasUsage, r.hasBilling, r.color,
@@ -66,6 +69,7 @@ interface DataEngineOptions {
   billingIntervalMs: number
   resolved: ResolvedAccount[]
   installedProviders?: ProviderId[]
+  suppressedAccounts?: readonly DetectedAccountRef[]
 }
 
 export interface DataEngine {
@@ -121,6 +125,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   let billingIntervalMs = opts.billingIntervalMs
   let resolved = opts.resolved
   let installedProviders = opts.installedProviders ?? []
+  let suppressedAccounts = opts.suppressedAccounts
   let currentConfig = opts.config
 
   const usage = new Map<string, { dashboard: DashboardData | null; table: TableData | null }>()
@@ -161,7 +166,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
 
   const buildSnapshot = (): WebSnapshot => assembleSnapshot({
     version, tz, intervalMs: summaryIntervalMs,
-    billingIntervalMs, resolved, installedProviders, usage, billing,
+    billingIntervalMs, resolved, installedProviders, suppressedAccounts, usage, billing,
     summaryState, billingState, tableState,
     summaryUpdatedAt, billingUpdatedAt, tableUpdatedAt, seeded, peak, config: currentConfig,
   })
@@ -394,7 +399,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     },
 
     configKey: () => engineConfigKey({
-      resolved, installedProviders, tz, summaryIntervalMs, billingIntervalMs,
+      resolved, installedProviders, suppressedAccounts, tz, summaryIntervalMs, billingIntervalMs,
     }),
 
     setConfig(next, options) {
@@ -408,6 +413,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       const prevSources = new Map(resolved.map(r => [r.account.id, sourceKey(r)]))
       resolved = next.resolved
       installedProviders = next.installedProviders
+      suppressedAccounts = next.suppressedAccounts
       hasClaude = resolved.some(r => r.account.providerId === 'claude')
       if (!hasClaude) peak = null
       usageAccounts = resolved.filter(r => r.hasUsage)

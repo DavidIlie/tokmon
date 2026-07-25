@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { accountProviderOrdinals, getTrackedAccountRows, PROVIDER_META, projectAccountIdentity, setDetectedAccountExcluded, type Account, type Config, type TrackedAccountRow, type WebAccount, type WebSnapshot } from '@shared'
+import { accountProviderOrdinals, getTrackedAccountRows, PROVIDER_META, projectAccountIdentity, removedRowCopy, setDetectedAccountExcluded, type Account, type Config, type TrackedAccountRow, type WebAccount, type WebSnapshot } from '@shared'
 import { namedColorHex } from '../../lib/colors'
 import { ChevronUp, ChevronDown, Pencil, Plus, Trash } from '../icons'
 import { PrivacyLabel } from '../privacy-label'
@@ -21,7 +21,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
   onConfigure: (row: TrackedAccountRow) => void
   onAdd: () => void
 }) {
-  const accounts = getTrackedAccountRows(draft, undefined, snapshot?.accounts ?? undefined)
+  const accounts = getTrackedAccountRows(draft, undefined, snapshot?.accounts ?? undefined, snapshot?.suppressedAccounts)
   // Ordinals come from the snapshot's own ordering so they match the ones the
   // daemon baked into identity, not this list's row order.
   const ordinals = accountProviderOrdinals(snapshot?.accounts ?? [])
@@ -102,7 +102,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                       <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-dim">{plan}</span>
                     )}
                     <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fg-faint">
-                      {acc.source === 'auto' ? 'detected' : ignored ? 'removed' : acc.enabled ? 'manual' : 'manual · disabled'}
+                      {acc.source === 'auto' ? 'detected' : ignored ? (acc.live === false ? 'source not found' : 'removed') : acc.enabled ? 'manual' : 'manual · disabled'}
                     </span>
                   </div>
                   <div className="truncate font-mono text-[11px] text-fg-faint">{draft.privacyMode ? 'path hidden' : acc.homeDir}</div>
@@ -123,10 +123,10 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                       <IconBtn label={pendingDeleteId === acc.id ? 'Confirm delete account' : 'Delete account'} danger onClick={() => requestRemove(acc.id)}><Trash className="size-3.5" /></IconBtn>
                     </>
                   ) : ignored ? (
-                    <Button size="xs" aria-label={`Restore ${identity}`} onClick={() => acc.excludedRef && patch(c => ({
+                    <Button size="xs" aria-label={`${removedRowCopy(acc.live).action} ${identity}`} onClick={() => acc.excludedRef && patch(c => ({
                       ...c,
                       accountDetection: setDetectedAccountExcluded(c.accountDetection, acc.excludedRef!, false),
-                    }))}>Restore</Button>
+                    }))}>{removedRowCopy(acc.live).action}</Button>
                   ) : (<>
                     <IconBtn label="Configure as manual account" onClick={() => onConfigure(acc)}><Pencil className="size-3.5" /></IconBtn>
                     <Button size="xs" aria-label={`Remove ${identity} from Tokmon`} onClick={() => patch(c => ({

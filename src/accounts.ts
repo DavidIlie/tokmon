@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
-import { type Config, expandHome, slugify } from './config'
+import { type Config, type DetectedAccountRef, expandHome, slugify } from './config'
 import { PROVIDER_ORDER, PROVIDERS } from './providers'
 import { readClaudeIdentity } from './providers/claude/identity'
 import { isClaudeSessionFile } from './providers/claude/usage'
@@ -153,13 +153,38 @@ function discoverProviderAccounts(providerId: ProviderId): DiscoveredAccount[] {
   return []
 }
 
-export function buildAccounts(config: Config, detected: ProviderId[]): Account[] {
+export interface CollectedAccounts {
+  accounts: Account[]
+  /**
+   * Exclusions whose home was actually discovered this pass. An exclusion that
+   * matches nothing is a tombstone for a home that has been renamed or deleted,
+   * and cannot be restored into anything.
+   */
+  suppressed: DetectedAccountRef[]
+}
+
+/**
+ * Resolves the tracked account set, reporting which exclusions did real work.
+ * Single pass: liveness is only knowable while the candidates are in hand.
+ */
+export function collectAccounts(config: Config, detected: ProviderId[]): CollectedAccounts {
   const out: Account[] = []
   const seenKeys = new Set<string>()
   const seenIds = new Set<string>()
-  const excludedKeys = new Set(
-    config.accountDetection.excludedAccounts.map(ref => accountKey(ref.providerId, ref.homeDir)),
+  const suppressed: DetectedAccountRef[] = []
+  const suppressedKeys = new Set<string>()
+  const excludedByKey = new Map(
+    config.accountDetection.excludedAccounts.map(ref => [accountKey(ref.providerId, ref.homeDir), ref] as const),
   )
+  const excludedKeys = new Set(excludedByKey.keys())
+
+  /** Records that this exclusion suppressed a candidate that really exists. */
+  const noteSuppressed = (key: string): void => {
+    const ref = excludedByKey.get(key)
+    if (!ref || suppressedKeys.has(key)) return
+    suppressedKeys.add(key)
+    suppressed.push(ref)
+  }
 
   const add = (account: Account): void => {
     const key = accountKey(account.providerId, account.homeDir)
@@ -202,14 +227,21 @@ export function buildAccounts(config: Config, detected: ProviderId[]): Account[]
         id: pid, providerId: pid, name: provider.name, color: provider.color,
         homeDir: undefined, source: 'auto',
       }
-      if (!excludedKeys.has(accountKey(pid))) add(account)
+      const key = accountKey(pid)
+      if (excludedKeys.has(key)) noteSuppressed(key)
+      else add(account)
     }
     for (const account of discovered) {
-      if (excludedKeys.has(accountKey(account.providerId, account.homeDir))) continue
+      const key = accountKey(account.providerId, account.homeDir)
+      if (excludedKeys.has(key)) { noteSuppressed(key); continue }
       add(account)
     }
   }
-  return out
+  return { accounts: out, suppressed }
+}
+
+export function buildAccounts(config: Config, detected: ProviderId[]): Account[] {
+  return collectAccounts(config, detected).accounts
 }
 
 export function accountsByProvider(accounts: Account[]): { provider: ProviderId; accounts: Account[] }[] {

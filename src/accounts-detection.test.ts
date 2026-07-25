@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { homedir } from 'node:os'
-import { buildAccounts } from './accounts'
+import { buildAccounts, collectAccounts } from './accounts'
 import {
   canonicalizeConfigHomeRefs,
   DEFAULTS,
   getTrackedAccountRows,
   normalizeConfig,
+  removedRowCopy,
   setDetectedAccountExcluded,
   type Config,
 } from './config'
@@ -142,4 +143,90 @@ test('detector exclusions toggle idempotently and malformed persisted policy rep
     disabledProviders: ['claude'],
     excludedAccounts: [{ providerId: 'codex', homeDir: '/tmp/codex-old' }],
   })
+})
+
+const strandedRef = { providerId: 'claude' as const, homeDir: '/tmp/deleted-claude' }
+
+const withExclusion = (overrides: Partial<Config> = {}) => config({
+  accountDetection: {
+    ...DEFAULTS.accountDetection,
+    excludedAccounts: [strandedRef],
+    ...(overrides.accountDetection ?? {}),
+  },
+  ...overrides,
+})
+
+test('a removed account is not listed while nothing is being discovered', () => {
+  // Global discovery off, the provider's detector off, and the provider
+  // untracked all mean the exclusion is suppressing nothing; claiming a
+  // removal that is not in effect would be a lie about current state.
+  const cases: Config[] = [
+    withExclusion({ accountDetection: { ...DEFAULTS.accountDetection, enabled: false, excludedAccounts: [strandedRef] } }),
+    withExclusion({ accountDetection: { ...DEFAULTS.accountDetection, disabledProviders: ['claude'], excludedAccounts: [strandedRef] } }),
+    withExclusion({ disabledProviders: ['claude'] }),
+  ]
+  for (const next of cases) {
+    assert.deepEqual(getTrackedAccountRows(next, ['claude'], []).filter(row => row.source === 'ignored'), [])
+    // The exclusion itself is never discarded; only its row is withheld.
+    assert.deepEqual(next.accountDetection.excludedAccounts, [strandedRef])
+  }
+
+  const listed = getTrackedAccountRows(withExclusion(), ['claude'], [])
+  assert.equal(listed.filter(row => row.source === 'ignored').length, 1)
+})
+
+test('a removed row reads as restorable only while its source is still found', () => {
+  const next = withExclusion()
+
+  const live = getTrackedAccountRows(next, ['claude'], [], [strandedRef])
+    .find(row => row.source === 'ignored')
+  assert.equal(live?.live, true)
+  assert.deepEqual(removedRowCopy(live?.live), { status: 'Removed · not tracked', action: 'Restore' })
+
+  const stranded = getTrackedAccountRows(next, ['claude'], [], [])
+    .find(row => row.source === 'ignored')
+  assert.equal(stranded?.live, false)
+  assert.deepEqual(removedRowCopy(stranded?.live), { status: 'Removed · source not found', action: 'Forget' })
+
+  // Both offer the same un-exclude mutation; only the promise differs.
+  assert.deepEqual(stranded?.excludedRef, strandedRef)
+})
+
+test('a daemon that cannot report liveness renders exactly the previous output', () => {
+  const next = withExclusion()
+
+  const unknown = getTrackedAccountRows(next, ['claude'], [])
+  assert.deepEqual(unknown, getTrackedAccountRows(next, ['claude'], [], undefined))
+  const row = unknown.find(candidate => candidate.source === 'ignored')
+  assert.equal(Object.prototype.hasOwnProperty.call(row!, 'live'), false)
+  assert.deepEqual(removedRowCopy(row?.live), { status: 'Removed · not tracked', action: 'Restore' })
+})
+
+test('forgetting a stranded exclusion removes both the reference and its row', () => {
+  const next = withExclusion()
+
+  const forgotten: Config = {
+    ...next,
+    accountDetection: setDetectedAccountExcluded(next.accountDetection, strandedRef, false),
+  }
+
+  assert.deepEqual(forgotten.accountDetection.excludedAccounts, [])
+  assert.deepEqual(getTrackedAccountRows(forgotten, ['claude'], [], []), [])
+})
+
+test('discovery reports which exclusions actually suppressed something', () => {
+  const next = config({
+    accountDetection: {
+      ...DEFAULTS.accountDetection,
+      excludedAccounts: [{ providerId: 'claude', homeDir: '~' }, strandedRef],
+    },
+  })
+
+  const { accounts, suppressed } = collectAccounts(next, ['claude'])
+
+  // The default home was detected and suppressed; the deleted home matched
+  // nothing, so it is a tombstone rather than a live suppression.
+  assert.equal(accounts.some(account => account.id === 'claude'), false)
+  assert.deepEqual(suppressed, [{ providerId: 'claude', homeDir: '~' }])
+  assert.deepEqual(collectAccounts(next, []).suppressed, [])
 })

@@ -54,3 +54,58 @@ test('privacy off still shows the registered identity on the row and its control
   assert.match(html, /aria-label="Set Claude Jane Doe active"/)
   assert.doesNotMatch(html, /Claude account 1/)
 })
+
+// Privacy off, so the assertions can see whether the row is rendered at all.
+const removedDraft = (): Config => ({
+  ...structuredClone(DEFAULTS),
+  privacyMode: false,
+  accountDetection: {
+    enabled: true,
+    disabledProviders: [],
+    excludedAccounts: [{ providerId: 'claude', homeDir: '/home/jane/.claude-old' }],
+  },
+})
+
+function renderRemoved(suppressedAccounts: WebSnapshot['suppressedAccounts'], draft = removedDraft()) {
+  return renderToStaticMarkup(
+    <AccountsSection
+      draft={draft} patch={() => {}}
+      snapshot={{ ...snapshotOf([]), suppressedAccounts }}
+      onEdit={() => {}} onConfigure={() => {}} onAdd={() => {}}
+    />,
+  )
+}
+
+test('a removed account offers Restore while its source is still found', () => {
+  const html = renderRemoved([{ providerId: 'claude', homeDir: '/home/jane/.claude-old' }])
+
+  assert.match(html, />Restore</)
+  assert.doesNotMatch(html, />Forget</)
+  assert.match(html, /aria-label="Restore Claude account"/)
+})
+
+test('a removed account whose source is gone offers Forget instead of a false promise', () => {
+  const html = renderRemoved([])
+
+  assert.match(html, />Forget</)
+  assert.doesNotMatch(html, />Restore</)
+  assert.match(html, /source not found/)
+  // Never hidden: the row stays, so clearing it is the user's decision.
+  assert.ok(html.includes('/home/jane/.claude-old'))
+})
+
+test('a daemon without liveness keeps the previous removed-row output', () => {
+  const html = renderRemoved(undefined)
+
+  assert.match(html, />Restore</)
+  assert.doesNotMatch(html, /source not found/)
+})
+
+test('a removed account is not listed while its provider is not being discovered', () => {
+  const draft = removedDraft()
+  const html = renderRemoved([], { ...draft, disabledProviders: ['claude'] })
+
+  assert.doesNotMatch(html, />Restore</)
+  assert.doesNotMatch(html, />Forget</)
+  assert.ok(!html.includes('/home/jane/.claude-old'))
+})

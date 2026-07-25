@@ -189,6 +189,13 @@ export interface TrackedAccountRow {
   explicitId?: string
   explicitIndex?: number
   excludedRef?: DetectedAccountRef
+  /**
+   * For a removed row: whether the home it suppresses was still found. `true`
+   * means restoring brings an account back; `false` means the source is gone
+   * and only the tombstone itself can be cleared. Undefined when the daemon
+   * predates `suppressedAccounts` and liveness is simply unknown.
+   */
+  live?: boolean
 }
 
 export interface TrackedAccountCandidate {
@@ -312,6 +319,7 @@ export function getTrackedAccountRows(
   config: Config,
   trackedProviders: readonly ProviderId[] = PROVIDER_ORDER.filter(pid => !config.disabledProviders.includes(pid)),
   autoAccounts?: readonly TrackedAccountCandidate[],
+  suppressedAccounts?: readonly DetectedAccountRef[],
 ): TrackedAccountRow[] {
   const tracked = new Set(trackedProviders)
   const configuredIds = new Set<string>()
@@ -396,7 +404,14 @@ export function getTrackedAccountRows(
       enabled: true,
     })
   }
+  // An exclusion only suppresses anything while its provider is discovered at
+  // all. With discovery or the provider turned off nothing is being suppressed,
+  // so listing the tombstone would claim a removal that is not in effect.
+  const suppressedKeys = suppressedAccounts
+    && new Set(suppressedAccounts.map(ref => keyFor(ref.providerId, ref.homeDir)))
   for (const ref of config.accountDetection.excludedAccounts) {
+    if (!detectionEnabled || detectorDisabled.has(ref.providerId)) continue
+    if (config.disabledProviders.includes(ref.providerId)) continue
     if (configuredKeys.has(keyFor(ref.providerId, ref.homeDir))) continue
     const meta = PROVIDER_META[ref.providerId]
     rememberRow({
@@ -408,10 +423,23 @@ export function getTrackedAccountRows(
       source: 'ignored',
       enabled: false,
       excludedRef: ref,
+      ...(suppressedKeys ? { live: suppressedKeys.has(keyFor(ref.providerId, ref.homeDir)) } : {}),
     })
   }
 
   return rows
+}
+
+/**
+ * How a removed row reads. `live: false` means the home behind the exclusion is
+ * gone, so there is nothing to restore — the only honest action is clearing the
+ * tombstone. Both actions are the same un-exclude mutation; only the promise
+ * differs. Undefined liveness keeps the pre-`suppressedAccounts` wording.
+ */
+export function removedRowCopy(live: boolean | undefined): { status: string; action: string } {
+  return live === false
+    ? { status: 'Removed · source not found', action: 'Forget' }
+    : { status: 'Removed · not tracked', action: 'Restore' }
 }
 
 export function providerDetectionEnabled(config: AccountDetectionConfig, providerId: ProviderId): boolean {

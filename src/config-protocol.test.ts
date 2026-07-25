@@ -42,6 +42,7 @@ import {
   rediscoverEngineAccounts,
 } from './web/config-control'
 import { engineConfigKey, type EngineConfig } from './web/data-engine'
+import { assembleSnapshot } from './web/data'
 import { createDaemonRpcClient } from './client/daemon-rpc-client'
 import { startWebServer } from './web/server'
 
@@ -907,4 +908,40 @@ test('a recovered settings stream clears an initial-load dead end without overwr
   })
   assert.equal(stale.draft, remote)
   assert.equal(stale.revision, 2)
+})
+
+test('suppressed detections travel as an optional field in both directions', () => {
+  const base = {
+    version: 'test', generatedAt: Date.now(), tz: 'UTC', intervalMs: 1_000,
+    providers: [], accounts: [], seeded: true, peak: null,
+  }
+
+  // An older daemon simply omits it, and clients must still accept the stream.
+  const legacy = Schema.decodeUnknownSync(WebSnapshotSchema)(base)
+  assert.equal(Object.prototype.hasOwnProperty.call(legacy, 'suppressedAccounts'), false)
+
+  const current = Schema.decodeUnknownSync(WebSnapshotSchema)({
+    ...base,
+    suppressedAccounts: [{ providerId: 'claude', homeDir: '/tmp/claude-alt' }],
+  })
+  assert.deepEqual(current.suppressedAccounts, [{ providerId: 'claude', homeDir: '/tmp/claude-alt' }])
+
+  assert.throws(() => Schema.decodeUnknownSync(WebSnapshotSchema)({
+    ...base,
+    suppressedAccounts: [{ providerId: 'not-a-provider', homeDir: '/tmp/x' }],
+  }))
+})
+
+test('the assembled snapshot reports suppressed detections only when it knows them', () => {
+  const assemble = (suppressedAccounts?: readonly { providerId: 'claude'; homeDir: string }[]) => assembleSnapshot({
+    version: 'test', tz: 'UTC', intervalMs: 1_000, billingIntervalMs: 300_000,
+    resolved: [], usage: new Map(), billing: new Map(),
+    suppressedAccounts, config: { ...DEFAULTS },
+  })
+
+  assert.equal(Object.prototype.hasOwnProperty.call(assemble(), 'suppressedAccounts'), false)
+  assert.deepEqual(
+    assemble([{ providerId: 'claude', homeDir: '~' }]).suppressedAccounts,
+    [{ providerId: 'claude', homeDir: '~' }],
+  )
 })

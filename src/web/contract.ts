@@ -1,5 +1,6 @@
 import type { DashboardData, TableData } from '../types'
 import type { BillingResult, ProviderId } from '../providers/types'
+import type { DetectedAccountRef } from '../config-schema'
 import type { AccountIdentityView, HeadroomView, QuotaView } from '../usage-semantics'
 
 export type {
@@ -44,6 +45,7 @@ export {
   PROVIDER_META,
   PROVIDER_ORDER,
   getTrackedAccountRows,
+  removedRowCopy,
   providerDetectionEnabled,
   setProviderTrackingEnabled,
   setProviderDetectionEnabled,
@@ -149,6 +151,12 @@ export interface WebSnapshot {
   installedProviders?: readonly ProviderId[]
   providers: WebProviderInfo[]
   accounts: WebAccount[]
+  /**
+   * Exclusions whose home was still discovered on this pass. Absent on daemons
+   * predating the field, in which case clients cannot tell a live suppression
+   * from a tombstone and must treat every removed row as restorable.
+   */
+  suppressedAccounts?: readonly DetectedAccountRef[]
   seeded: boolean
   peak: PeakStatus | null
 }

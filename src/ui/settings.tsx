@@ -1,7 +1,7 @@
 import { Fragment, memo, type ReactNode } from 'react'
 import { Box, Text } from 'ink'
 import { glyphs } from '../glyphs'
-import { configLocation, DEFAULT_MENU_BAR_CONFIG, DESKTOP_GRAPH_RANGES, generateAccountId, COLOR_PALETTE, providerDetectionEnabled, redactEmail, sanitizeTyped, toggleProviderSelection, type Config, type Account, type MenuBarConfig, type TrackedAccountRow } from '../config'
+import { configLocation, DEFAULT_MENU_BAR_CONFIG, DESKTOP_GRAPH_RANGES, generateAccountId, COLOR_PALETTE, providerDetectionEnabled, redactEmail, removedRowCopy, sanitizeTyped, toggleProviderSelection, type Config, type Account, type MenuBarConfig, type TrackedAccountRow } from '../config'
 import { PROVIDER_ORDER, PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
 import { systemTimezone } from '../tz'
@@ -521,7 +521,11 @@ export const SettingsView = memo(function SettingsView({
               ?? (config.privacyMode ? redactEmail(rawIdentityLabel) : rawIdentityLabel)
             const plan = identity?.plan ?? null
             const ignored = acc.source === 'ignored'
-            const sourceLabel = acc.source === 'auto' ? 'auto tracking' : ignored ? 'removed' : acc.enabled ? 'configured' : 'disabled'
+            const sourceLabel = acc.source === 'auto'
+              ? 'auto tracking'
+              : ignored
+                ? (acc.live === false ? 'source gone' : 'removed')
+                : acc.enabled ? 'configured' : 'disabled'
             return (
               <Box key={`${acc.source}:${acc.id}`}>
                 <Text color={selected ? theme.accent : undefined}>{selected ? glyphs().caretR : ' '} </Text>
@@ -561,7 +565,7 @@ export const SettingsView = memo(function SettingsView({
         trackedAccounts[cursor]?.source === 'auto' ? (
           <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter configure  {glyphs().middot}  space activate  {glyphs().middot}  x remove  {glyphs().middot}  s/Esc close</Text>
         ) : trackedAccounts[cursor]?.source === 'ignored' ? (
-          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter/x restore  {glyphs().middot}  s/Esc close</Text>
+          <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  Enter/x {removedRowCopy(trackedAccounts[cursor]?.live).action.toLowerCase()}  {glyphs().middot}  s/Esc close</Text>
         ) : (
           <Text dimColor>{glyphs().arrowU}{glyphs().arrowD} select  {glyphs().middot}  {glyphs().shift}{glyphs().arrowU}{glyphs().arrowD} reorder  {glyphs().middot}  Enter edit  {glyphs().middot}  e enable/disable  {glyphs().middot}  d delete  {glyphs().middot}  s/Esc close</Text>
         )

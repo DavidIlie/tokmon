@@ -21,6 +21,7 @@ export {
   PROVIDER_META,
   getTrackedAccountRows,
   providerDetectionEnabled,
+  removedRowCopy,
   setProviderTrackingEnabled,
   setProviderDetectionEnabled,
   setDetectedAccountExcluded,
