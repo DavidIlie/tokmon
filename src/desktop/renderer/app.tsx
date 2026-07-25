@@ -434,6 +434,9 @@ export function App() {
               onQuit={() => { void window.tokmon.quit() }}
             />
         : surface === 'providers'
+          // Deliberately the raw snapshot, not effectiveSnapshot: this panel must
+          // see pre-filter truth so a removed account renders as Removed instead
+          // of vanishing from the list that manages it. Non-null is safe under !ready.
           ? <ProvidersSettings config={config} snapshot={snapshot!} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings/accounts')} />
         : !hasAccounts
           ? <EmptyState onDashboard={() => openDashboard('/settings/accounts')} />

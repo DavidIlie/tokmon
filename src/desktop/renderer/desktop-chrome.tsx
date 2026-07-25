@@ -693,10 +693,10 @@ export function ProvidersSettings({ config, snapshot, onPatch, onBack, onDashboa
           </div>
         </div>
         <div className="settings-subsection-heading">
-          <b>Accounts on this Mac</b>
+          <b>Accounts on this computer</b>
           <small>Remove one detected account without changing its provider files, login, or the other accounts.</small>
         </div>
-        <div className="detection-accounts" aria-label="Accounts on this Mac">
+        <div className="detection-accounts" aria-label="Accounts on this computer">
           {rows.length === 0 && <p className="settings-empty">No accounts found. Leave automatic discovery on or add one manually.</p>}
           {rows.map(row => {
             const live = snapshot.accounts.find(account => account.id === row.id)

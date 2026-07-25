@@ -199,7 +199,8 @@ export function deriveAccountIdentity(input: {
   const title = registered
   const subtitleCandidate = email && !registered.toLowerCase().includes(email.toLowerCase()) ? email : displayName
   const subtitle = subtitleCandidate && subtitleCandidate !== title ? subtitleCandidate : null
-  return { title, subtitle, accessibleLabel: subtitle ? `${title}, ${subtitle}` : title, redacted: input.privacyMode && title !== registered }
+  // Privacy mode returned above, so this path is always the unredacted title.
+  return { title, subtitle, accessibleLabel: subtitle ? `${title}, ${subtitle}` : title, redacted: false }
 }
 
 export interface AccountIdentityInput {

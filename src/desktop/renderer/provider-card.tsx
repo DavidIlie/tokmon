@@ -310,7 +310,7 @@ function ExpandedAccount({ account, snapshot, config, providerName, showPlan, sh
   const errorText = accountErrorText(account)
   const removable = showIdentity && account.source === 'auto'
   const showMetadata = showIdentity || (showPlan && !!plan) || fresh === 'error' || fresh === 'stale' || active || removable
-  const historyOnly = accountHasUsageHistory(account)
+  const hasHistory = accountHasUsageHistory(account)
   return (
     <div className="account-block">
       {!first && <div className="divider" />}
@@ -339,8 +339,8 @@ function ExpandedAccount({ account, snapshot, config, providerName, showPlan, sh
           ))
           : (
             <div className="row row--nodata">
-              <span className="row-label">{pending ? 'Loading…' : historyOnly ? 'Usage history only' : 'No usage or quota data'}</span>
-              <span className="row-value">{pending ? '' : historyOnly ? 'No live quota' : '—'}</span>
+              <span className="row-label">{pending ? 'Loading…' : hasHistory ? 'Usage history only' : 'No usage or quota data'}</span>
+              <span className="row-value">{pending ? '' : hasHistory ? 'No live quota' : '—'}</span>
             </div>
           )}
       </div>

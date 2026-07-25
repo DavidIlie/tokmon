@@ -162,6 +162,24 @@ test('canonical identity uses registered title and global privacy ordinals', () 
   assert.equal(privateView.accessibleLabel.includes('@'), false)
 })
 
+test('redaction is reported only when privacy mode is on', () => {
+  // Privacy mode always returns the ordinal early, so nothing on the visible
+  // path can carry redacted: true. Locks that in, since consumers branch on it.
+  const visible = [
+    { name: 'Claude Work', email: 'david@example.com', displayName: 'David' },
+    { name: '', email: null, displayName: null },
+    { name: 'Claude david@example.com', email: 'david@example.com', displayName: null },
+  ]
+  for (const input of visible) {
+    const identity = deriveAccountIdentity({ ...input, providerName: 'Claude', ordinal: 1, privacyMode: false })
+    assert.equal(identity.redacted, false, `${input.name || '<empty>'} must not report redaction`)
+  }
+  assert.equal(
+    deriveAccountIdentity({ name: 'Claude Work', providerName: 'Claude', ordinal: 1, privacyMode: true }).redacted,
+    true,
+  )
+})
+
 test('severity bands are single-sourced at the ≤10 / ≤25 boundaries', () => {
   assert.equal(severity(null), 'unknown')
   assert.equal(severity(Number.NaN), 'unknown')

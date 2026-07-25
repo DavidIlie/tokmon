@@ -628,7 +628,7 @@ test('providers and accounts separates global tracking from discovery controls',
   assert.match(html, /aria-pressed="false"[^>]*>Codex</)
   assert.ok(html.includes('/tmp/claude-alt'))
   assert.ok(html.includes('/tmp/old-claude'))
-  assert.match(html, /Accounts on this Mac/)
+  assert.match(html, /Accounts on this computer/)
   assert.match(html, /without changing its provider files, login, or the other accounts/)
   assert.match(html, />Remove</)
   assert.match(html, />Restore</)
