@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -7,13 +7,16 @@ import {
   SPARK_DAYS,
   dedupe,
   flushDisk,
+  hasFileMatching,
   lastDayKeys,
   loadCachedEntries,
   summarize,
   tableSince,
   tabulate,
+  walkFiles,
   type Entry,
 } from './usage-core'
+import { isClaudeSessionFile } from './claude/usage'
 import { startOfDay, startOfMonth, startOfWeek } from '../tz'
 
 // Build a fully populated Entry, overriding only the fields a test cares about.
@@ -244,4 +247,66 @@ test('tabulate groups rows per day with per-model breakdowns', () => {
   assert.deepEqual(day2.models, ['m1'])
   assert.equal(day2.total, 2)
   assert.equal(day2.count, 1)
+})
+
+/** A wide tree whose only root-level file is the match, plus a deep miss tree. */
+async function sessionTree(options: { rootMatch: boolean }) {
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-walk-'))
+  if (options.rootMatch) await writeFile(join(root, 'session.jsonl'), '{}\n')
+  let branch = root
+  for (let depth = 0; depth < 12; depth++) {
+    branch = join(branch, `level-${depth}`)
+    await mkdir(branch, { recursive: true })
+    for (let file = 0; file < 8; file++) {
+      await writeFile(join(branch, `note-${file}.md`), 'x')
+    }
+  }
+  await writeFile(join(branch, 'deepest.jsonl'), '{}\n')
+  return { root, deepest: branch }
+}
+
+test('session detection stops at the first match instead of walking the tree', async () => {
+  const { root } = await sessionTree({ rootMatch: true })
+  try {
+    const inspected: string[] = []
+    const found = await hasFileMatching(root, name => {
+      inspected.push(name)
+      return isClaudeSessionFile(name)
+    })
+
+    assert.equal(found, true)
+    // Everything inspected lives in the root directory, so exactly one readdir
+    // ran: the 97-file subtree below was never opened.
+    assert.deepEqual(inspected, ['session.jsonl'])
+    // Control: the tree really is large, and the old walk collected all of it.
+    assert.equal((await walkFiles(root)).length, 98)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('session detection still finds a match buried at the bottom of the tree', async () => {
+  const { root } = await sessionTree({ rootMatch: false })
+  try {
+    assert.equal(await hasFileMatching(root, isClaudeSessionFile), true)
+    assert.equal(await hasFileMatching(root, name => name.endsWith('.sqlite')), false)
+    assert.equal(await hasFileMatching(join(root, 'does-not-exist'), () => true), false)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('session detection does not follow symlinks back into the tree', async () => {
+  const { root, deepest } = await sessionTree({ rootMatch: false })
+  try {
+    await symlink(root, join(deepest, 'loop'), 'dir')
+    await symlink(join(deepest, 'deepest.jsonl'), join(root, 'linked.jsonl'), 'file')
+
+    // A symlink is neither isFile() nor isDirectory(), so the loop cannot be
+    // entered and the linked session file is not accepted as evidence.
+    assert.equal(await hasFileMatching(root, name => name === 'linked.jsonl'), false)
+    assert.equal(await hasFileMatching(root, isClaudeSessionFile), true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })

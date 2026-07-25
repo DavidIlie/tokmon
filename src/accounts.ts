@@ -4,6 +4,7 @@ import { basename, join, resolve } from 'node:path'
 import { type Config, expandHome, slugify } from './config'
 import { PROVIDER_ORDER, PROVIDERS } from './providers'
 import { readClaudeIdentity } from './providers/claude/identity'
+import { isClaudeSessionFile } from './providers/claude/usage'
 import { codexAuthPaths, readCodexIdentity } from './providers/codex/identity'
 import type { Account, ProviderId } from './providers/types'
 
@@ -40,6 +41,8 @@ function discoveredId(providerId: ProviderId, homeDir: string): string {
   return `${providerId}_${label}_${stableHash(resolve(homeDir))}`
 }
 
+// Synchronous on purpose: buildAccounts is called from a React useMemo in the
+// TUI, so this shares detectClaude's predicate but not its async walker.
 function containsClaudeSession(root: string): boolean {
   if (!existsSync(root)) return false
   const pending = [root]
@@ -47,7 +50,7 @@ function containsClaudeSession(root: string): boolean {
     const current = pending.pop()!
     try {
       for (const entry of readdirSync(current, { withFileTypes: true })) {
-        if (entry.isFile() && entry.name.endsWith('.jsonl')) return true
+        if (entry.isFile() && isClaudeSessionFile(entry.name)) return true
         if (entry.isDirectory()) pending.push(join(current, entry.name))
       }
     } catch {}

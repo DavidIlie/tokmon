@@ -186,6 +186,34 @@ export async function walkFiles(root: string): Promise<string[]> {
   return files
 }
 
+/**
+ * Existence-only counterpart to walkFiles: stops at the first match instead of
+ * collecting the whole tree. Detection asks "is there any session file here?"
+ * on trees that can hold thousands of files, so the answer must not cost a
+ * full traversal. Symlinks are neither files nor directories under
+ * withFileTypes, so they are skipped and cannot form a loop.
+ */
+export async function hasFileMatching(
+  root: string,
+  predicate: (name: string) => boolean,
+): Promise<boolean> {
+  const stack = [root]
+  while (stack.length > 0) {
+    const dir = stack.pop()!
+    let entries: Dirent<string>[]
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (entry.isFile()) { if (predicate(entry.name)) return true }
+      else if (entry.isDirectory()) stack.push(join(dir, entry.name))
+    }
+  }
+  return false
+}
+
 async function mapLimit<T>(items: T[], limit: number, fn: (t: T) => Promise<void>): Promise<void> {
   let i = 0
   const worker = async () => { while (i < items.length) await fn(items[i++]) }

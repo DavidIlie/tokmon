@@ -5,7 +5,7 @@ import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
 import { envDir } from '../../config'
-import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince, walkFiles } from '../usage-core'
+import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince, hasFileMatching, walkFiles } from '../usage-core'
 import { timestampMs } from '../_shared/time'
 
 const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> = {
@@ -57,13 +57,19 @@ function getClaudeDirs(homeDir?: string): string[] {
   return claudeConfigDirs(homeDir).map(d => join(d, 'projects'))
 }
 
+/** What counts as evidence of a Claude session on disk. */
+export const isClaudeSessionFile = (name: string): boolean => name.endsWith('.jsonl')
+
 export async function detectClaude(homeDir?: string): Promise<boolean> {
   for (const configDir of claudeConfigDirs(homeDir)) {
     try { await access(join(configDir, '.credentials.json')); return true } catch {}
   }
   for (const dir of getClaudeDirs(homeDir)) {
+    // Keychain-only homes always reach here, and this runs at daemon start and
+    // on every engine-affecting config save, so it stops at the first session
+    // file rather than collecting the tree first.
     try {
-      if ((await walkFiles(dir)).some(file => file.endsWith('.jsonl'))) return true
+      if (await hasFileMatching(dir, isClaudeSessionFile)) return true
     } catch {}
   }
   return false
