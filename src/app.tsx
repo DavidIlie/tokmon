@@ -615,7 +615,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
           </Box>
           {tab === 0 && (
             <>
-              <DashboardView groups={groups} stats={stats} cols={cols} budget={gridBudget} computed={dashLayout} page={dashPage} privacyMode={cfg.privacyMode} resetDisplay={cfg.resetDisplay} tz={tz} />
+              <DashboardView groups={groups} stats={stats} cols={cols} budget={gridBudget} computed={dashLayout} page={dashPage} privacyMode={cfg.privacyMode} privacyLabels={privacyLabels} resetDisplay={cfg.resetDisplay} tz={tz} />
               {slots.length > 1 && (
                 <Box marginTop={1}>
                   <Text dimColor>focus  </Text>

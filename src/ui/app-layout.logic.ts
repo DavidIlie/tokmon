@@ -1,7 +1,7 @@
 import { PROVIDERS, type Account, type ProviderId } from '../providers'
 import type { Slot } from '../app.logic'
 import { redactEmail } from '../config'
-import { accountProviderOrdinals, projectAccountIdentity, type AccountIdentityView } from '../usage-semantics'
+import { accountIdentityText, accountProviderOrdinals, projectAccountIdentity, type AccountIdentityView } from '../usage-semantics'
 import { truncateName } from './shared'
 
 interface PrivacyLabelRow {
@@ -47,6 +47,28 @@ export function derivePrivacyLabels(input: {
     }))
   }
   return labels
+}
+
+/**
+ * The account title on a dashboard provider card. Privacy mode takes the strict
+ * projection (`privacyLabel`) ahead of the snapshot identity, which the optimistic
+ * local toggle outruns — trusting it names an account the strip already hid.
+ */
+export function resolveAccountTitle(input: {
+  name: string
+  email?: string | null
+  identity?: AccountIdentityView | null
+  providerName: string
+  privacyMode: boolean
+  privacyLabel?: string
+}): string {
+  if (input.privacyMode && input.privacyLabel) return input.privacyLabel
+  if (input.identity) {
+    const visible = accountIdentityText({ identity: input.identity, name: input.name }, input.providerName)
+    return input.privacyMode ? redactEmail(visible) : visible
+  }
+  const title = input.email && !input.name.includes('@') ? `${input.name} ${input.email}` : input.name
+  return input.privacyMode ? redactEmail(title) : title
 }
 
 /**

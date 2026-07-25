@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Account } from '../providers'
 import { deriveAccountIdentity } from '../usage-semantics'
-import { derivePrivacyLabels, deriveSlots, findActiveSlot } from './app-layout.logic'
+import { derivePrivacyLabels, deriveSlots, findActiveSlot, resolveAccountTitle } from './app-layout.logic'
 
 const account = (over: Partial<Account> = {}): Account => ({
   id: 'claude-1', providerId: 'claude', name: 'Claude Jane Doe', homeDir: '~', color: 'green', ...over,
@@ -100,4 +100,63 @@ test('slot selection is unaffected by relabelling', () => {
   const slots = deriveSlots(accounts, true, labels)
 
   assert.deepEqual(findActiveSlot(slots, 'claude-2'), { activeSlotIdx: 2, focusId: 'claude-2' })
+})
+
+// The local privacy toggle is optimistic (useConfigState/app.tsx), so the
+// snapshot in hand can still be the identity the daemon resolved while privacy
+// was off. Every other surface re-projects; the dashboard card must too.
+test('the dashboard card title matches the strip under a stale unredacted identity', () => {
+  const stale = deriveAccountIdentity({
+    name: 'Claude jane@example.com',
+    email: 'jane@example.com',
+    displayName: 'Jane Doe',
+    providerName: 'Claude',
+    ordinal: 1,
+    privacyMode: false,
+  })
+  const accounts = [account({ id: 'claude-1', name: 'Claude jane@example.com' })]
+  const resolved = [{ id: 'claude-1', providerId: 'claude' as const, identity: stale }]
+  const labels = derivePrivacyLabels({ privacyMode: true, rows: accounts, resolved })
+
+  const title = resolveAccountTitle({
+    name: 'Claude jane@example.com',
+    email: 'jane@example.com',
+    identity: stale,
+    providerName: 'Claude',
+    privacyMode: true,
+    privacyLabel: labels.get('claude-1'),
+  })
+
+  assert.equal(title, 'Claude account 1')
+  assert.equal(title, deriveSlots(accounts, true, labels)[0]!.name)
+  assert.doesNotMatch(title, /@/)
+})
+
+test('a display-name-only identity is still hidden, since redactEmail finds nothing to mask', () => {
+  const stale = deriveAccountIdentity({
+    name: 'Claude Jane Doe', displayName: 'Jane Doe',
+    providerName: 'Claude', ordinal: 2, privacyMode: false,
+  })
+  const title = resolveAccountTitle({
+    name: 'Claude Jane Doe', identity: stale, providerName: 'Claude',
+    privacyMode: true, privacyLabel: 'Claude account 2',
+  })
+
+  assert.equal(title, 'Claude account 2')
+})
+
+test('privacy off keeps the daemon title-first identity byte for byte', () => {
+  const identity = deriveAccountIdentity({
+    name: 'Work', email: 'jane@example.com',
+    providerName: 'Claude', ordinal: 1, privacyMode: false,
+  })
+
+  assert.equal(
+    resolveAccountTitle({ name: 'Work', email: 'jane@example.com', identity, providerName: 'Claude', privacyMode: false }),
+    'Work \u00b7 jane@example.com',
+  )
+  assert.equal(
+    resolveAccountTitle({ name: 'Work', email: 'jane@example.com', providerName: 'Claude', privacyMode: false }),
+    'Work jane@example.com',
+  )
 })

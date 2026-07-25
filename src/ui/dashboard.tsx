@@ -2,14 +2,15 @@ import { memo } from 'react'
 import { Box, Text } from 'ink'
 import * as fmt from '../format'
 import { PROVIDERS } from '../providers'
-import type { Account, BillingResult, ProviderId } from '../providers/types'
+import type { Account, ProviderId } from '../providers/types'
 import type { UsageSummary, DashboardData } from '../types'
 import type { AccountStats } from '../stats'
 import { Bar, sparkline, truncateName } from './shared'
 import { glyphs } from '../glyphs'
 import { redactEmail } from '../config'
 import { planDisplay, normalizePlan, billingStaleLabel } from './provider-card.logic'
-import { accountIdentityText, resolveQuotaViews, severity, usageFromHeadroom, type QuotaView } from '../usage-semantics'
+import { resolveQuotaViews, severity, usageFromHeadroom, type QuotaView } from '../usage-semantics'
+import { resolveAccountTitle } from './app-layout.logic'
 import { aggregateDashboardData, cachedTokenPercentage } from '../dashboard-data'
 import { useTuiTheme } from './theme'
 
@@ -134,7 +135,7 @@ export function computeDashLayout(
   return chooseLayout(content, budget, groups.length, single, cols, heights)
 }
 
-export const DashboardView = memo(function DashboardView({ groups, stats, cols, budget, computed, page = 0, privacyMode = false, resetDisplay = 'relative', tz }: {
+export const DashboardView = memo(function DashboardView({ groups, stats, cols, budget, computed, page = 0, privacyMode = false, privacyLabels, resetDisplay = 'relative', tz }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
   stats: Map<string, AccountStats>
   cols: number
@@ -144,6 +145,8 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
   computed: GridLayout
   page?: number
   privacyMode?: boolean
+  /** Shared strict privacy projection, keyed by account id (see derivePrivacyLabels). */
+  privacyLabels?: ReadonlyMap<string, string>
   resetDisplay?: 'relative' | 'absolute'
   tz?: string
 }) {
@@ -167,7 +170,7 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
       <Box width={content} flexWrap="wrap" columnGap={GAP} rowGap={1} alignItems="flex-start">
         {visible.map(g => (
           <Box key={g.provider} flexShrink={0}>
-            <ProviderCard provider={g.provider} accounts={g.accounts} stats={stats} width={cardW} variant={variant} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={tz} />
+            <ProviderCard provider={g.provider} accounts={g.accounts} stats={stats} width={cardW} variant={variant} privacyMode={privacyMode} privacyLabels={privacyLabels} resetDisplay={resetDisplay} tz={tz} />
           </Box>
         ))}
       </Box>
@@ -178,13 +181,14 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
   )
 })
 
-function ProviderCard({ provider, accounts, stats, width, variant, privacyMode = false, resetDisplay, tz }: {
+function ProviderCard({ provider, accounts, stats, width, variant, privacyMode = false, privacyLabels, resetDisplay, tz }: {
   provider: ProviderId
   accounts: Account[]
   stats: Map<string, AccountStats>
   width: number
   variant: Variant
   privacyMode?: boolean
+  privacyLabels?: ReadonlyMap<string, string>
   resetDisplay: 'relative' | 'absolute'
   tz?: string
 }) {
@@ -232,7 +236,7 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
       {meta.hasBilling && showBars && (
         <>
           {meta.hasUsage && <Rule inner={inner} />}
-          <LimitsBlock items={items} inner={inner} showRowPlans={planView.mode === 'perRow'} privacyMode={privacyMode} resetDisplay={resetDisplay} tz={tz} providerName={meta.name} />
+          <LimitsBlock items={items} inner={inner} showRowPlans={planView.mode === 'perRow'} privacyMode={privacyMode} privacyLabels={privacyLabels} resetDisplay={resetDisplay} tz={tz} providerName={meta.name} />
         </>
       )}
       {meta.hasBilling && !showBars && !meta.hasUsage && (
@@ -305,20 +309,12 @@ function KpiLine({ agg }: { agg: DashboardData }) {
   )
 }
 
-function accountTitle(account: Account, billing: BillingResult | null | undefined, privacyMode = false, identity?: AccountStats['identity'], providerName = ''): string {
-  // Daemon identity is already privacy-aware; resolve the visible label through
-  // the shared title-first resolver so the TUI matches the web dashboard.
-  if (identity) return accountIdentityText({ identity, name: account.name }, providerName)
-  const email = billing?.email
-  const title = email && !account.name.includes('@') ? `${account.name} ${email}` : account.name
-  return privacyMode ? redactEmail(title) : title
-}
-
-function LimitsBlock({ items, inner, showRowPlans, privacyMode, resetDisplay, tz, providerName }: {
+function LimitsBlock({ items, inner, showRowPlans, privacyMode, privacyLabels, resetDisplay, tz, providerName }: {
   items: Item[]
   inner: number
   showRowPlans: boolean
   privacyMode?: boolean
+  privacyLabels?: ReadonlyMap<string, string>
   resetDisplay: 'relative' | 'absolute'
   tz?: string
   providerName: string
@@ -350,10 +346,14 @@ function LimitsBlock({ items, inner, showRowPlans, privacyMode, resetDisplay, tz
               const shownPlan = rowPlan && planCap >= 4 ? truncateName(rowPlan, planCap) : ''
               const planReserve = shownPlan ? shownPlan.length + 1 : 0 // +1 for the gap before the plan
               const nameBudget = Math.max(22, inner - 2 - planReserve) // -2 for the "• " dot glyph
+              const title = resolveAccountTitle({
+                name: account.name, email: billing?.email, identity: s?.identity, providerName,
+                privacyMode: privacyMode === true, privacyLabel: privacyLabels?.get(account.id),
+              })
               return (
                 <Box>
                   <Text color={account.color}>{glyphs().dot} </Text>
-                  <Text bold>{truncateName(accountTitle(account, billing, privacyMode, s?.identity, providerName), nameBudget)}</Text>
+                  <Text bold>{truncateName(title, nameBudget)}</Text>
                   {shownPlan && <><Box flexGrow={1} /><Text dimColor>{shownPlan}</Text></>}
                 </Box>
               )
