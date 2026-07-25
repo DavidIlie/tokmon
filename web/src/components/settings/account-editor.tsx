@@ -14,7 +14,7 @@ import { Check, ChevronUp, ChevronDown, Folder, X } from '../icons'
 import { Dialog } from '../ui/dialog'
 import { Button } from '../ui/button'
 import { FOCUS_RING } from '../ui/primitives'
-import { type AccountDraft, previewAccountId, buildAccountFromDraft } from './account-editor.logic'
+import { type AccountDraft, type AccountSubmission, previewAccountId, buildAccountFromDraft } from './account-editor.logic'
 import { Field } from './primitives'
 
 export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }: {
@@ -22,7 +22,7 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
   accounts: Account[]
   onChange: (d: AccountDraft) => void
   onCancel: () => void
-  onSubmit: (acct: Account, mode: 'add' | 'edit', editingId: string | null) => void
+  onSubmit: (submission: AccountSubmission) => void
 }) {
   const nameRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
@@ -33,7 +33,7 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
   const submit = () => {
     const result = buildAccountFromDraft(editor, accounts)
     if (!result.ok) { setError(result.error); return }
-    onSubmit(result.account, result.mode, result.editingId)
+    onSubmit(result)
   }
 
   return (

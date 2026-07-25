@@ -6,6 +6,37 @@ import {
 import { PROVIDERS, PROVIDER_ORDER, type ProviderId } from '../../providers'
 import { COLOR_PALETTE, FORM_FIELDS, type AccountForm } from '../settings'
 
+export type AccountFormDefaults =
+  Pick<TrackedAccountRow, 'providerId' | 'name' | 'homeDir' | 'color'>
+  & { convertedFromId?: string | null }
+
+/**
+ * Applies a completed account form to the config. Converting an auto row to a
+ * manual account mints a fresh id, so an active selection pointing at the auto
+ * row would be orphaned by its own conversion; it moves to the new id instead.
+ */
+export function applyAccountForm(config: Config, form: AccountForm): Config {
+  const { name, homeDir } = form
+  if (form.mode === 'add') {
+    const id = generateAccountId(name, config.accounts)
+    const account: StoredAccount = { id, providerId: form.providerId, name, homeDir, color: form.color }
+    return {
+      ...config,
+      accounts: [...config.accounts, account],
+      activeAccountId: form.convertedFromId !== null && config.activeAccountId === form.convertedFromId
+        ? id
+        : config.activeAccountId,
+    }
+  }
+  return {
+    ...config,
+    accounts: config.accounts.map(a =>
+      a.id === form.editingId
+        ? { ...a, providerId: form.providerId, name, homeDir, color: form.color }
+        : a),
+  }
+}
+
 export function useAccountForm({ cfg, detected, updateConfig, trackedAccountRows, setSettingsCursor }: {
   cfg: Config
   detected: ProviderId[]
@@ -15,7 +46,7 @@ export function useAccountForm({ cfg, detected, updateConfig, trackedAccountRows
 }): {
   accountForm: AccountForm | null
   setAccountForm: Dispatch<SetStateAction<AccountForm | null>>
-  openAddAccount: (defaults?: Pick<TrackedAccountRow, 'providerId' | 'name' | 'homeDir' | 'color'>) => void
+  openAddAccount: (defaults?: AccountFormDefaults) => void
   openConfigureAccount: (row: TrackedAccountRow) => void
   openEditAccount: (acc: StoredAccount) => void
   commitAccountForm: () => void
@@ -27,24 +58,26 @@ export function useAccountForm({ cfg, detected, updateConfig, trackedAccountRows
 } {
   const [accountForm, setAccountForm] = useState<AccountForm | null>(null)
 
-  function openAddAccount(defaults?: Pick<TrackedAccountRow, 'providerId' | 'name' | 'homeDir' | 'color'>): void {
+  function openAddAccount(defaults?: AccountFormDefaults): void {
     const providerId = defaults?.providerId ?? ((detected[0] ?? 'claude') as ProviderId)
     setAccountForm({
       mode: 'add', field: 'provider', providerId,
       name: defaults?.name ?? '', homeDir: defaults?.homeDir ?? '~', color: defaults?.color ?? pickAccentColor(cfg.accounts),
       caret: defaults?.name?.length ?? 0,
-      editingId: null, error: null,
+      editingId: null, convertedFromId: defaults?.convertedFromId ?? null, error: null,
     })
   }
   function openConfigureAccount(row: TrackedAccountRow): void {
-    openAddAccount(row)
+    // The prefilled name is the row's registered name, never a privacy
+    // placeholder: this writes a durable account, not a label.
+    openAddAccount({ ...row, convertedFromId: row.id })
   }
   function openEditAccount(acc: StoredAccount): void {
     setAccountForm({
       mode: 'edit', field: 'provider', providerId: acc.providerId,
       name: acc.name, homeDir: acc.homeDir, color: acc.color || PROVIDERS[acc.providerId].color,
       caret: acc.name.length,
-      editingId: acc.id, error: null,
+      editingId: acc.id, convertedFromId: null, error: null,
     })
   }
   function commitAccountForm(): void {
@@ -52,20 +85,7 @@ export function useAccountForm({ cfg, detected, updateConfig, trackedAccountRows
     const name = accountForm.name.trim()
     const homeDir = accountForm.homeDir.trim() || '~'
     if (!name) { setAccountForm({ ...accountForm, error: 'Name required', field: 'name', caret: accountForm.name.length }); return }
-    updateConfig(c => {
-      if (accountForm.mode === 'add') {
-        const id = generateAccountId(name, c.accounts)
-        const account: StoredAccount = { id, providerId: accountForm.providerId, name, homeDir, color: accountForm.color }
-        return { ...c, accounts: [...c.accounts, account] }
-      }
-      return {
-        ...c,
-        accounts: c.accounts.map(a =>
-          a.id === accountForm.editingId
-            ? { ...a, providerId: accountForm.providerId, name, homeDir, color: accountForm.color }
-            : a),
-      }
-    })
+    updateConfig(c => applyAccountForm(c, { ...accountForm, name, homeDir }))
     setAccountForm(null)
   }
   const cycleFormField = useCallback((dir: 1 | -1): void => {

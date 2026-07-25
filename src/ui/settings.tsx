@@ -373,6 +373,8 @@ export interface AccountForm {
   color: string
   caret: number
   editingId: string | null
+  /** Auto row this form is converting to a manual account, if any. */
+  convertedFromId: string | null
   error: string | null
 }
 

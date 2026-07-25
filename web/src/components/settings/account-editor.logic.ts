@@ -7,6 +7,8 @@ import {
 export interface AccountDraft {
   mode: 'add' | 'edit'
   editingId: string | null
+  /** Auto row this draft is converting to a manual account, if any. */
+  convertedFromId: string | null
   providerId: ProviderId
   name: string
   homeDir: string
@@ -18,11 +20,13 @@ export interface AccountDraftDefaults {
   name?: string
   homeDir?: string
   color?: string
+  convertedFromId?: string | null
 }
 
 export function newDraft(cfg: Config, defaults: AccountDraftDefaults = {}): AccountDraft {
   return {
     mode: 'add', editingId: null,
+    convertedFromId: defaults.convertedFromId ?? null,
     providerId: defaults.providerId ?? PROVIDER_ORDER[0],
     name: defaults.name ?? '',
     homeDir: defaults.homeDir ?? '~',
@@ -33,6 +37,7 @@ export function newDraft(cfg: Config, defaults: AccountDraftDefaults = {}): Acco
 export function toDraft(a: Account): AccountDraft {
   return {
     mode: 'edit', editingId: a.id,
+    convertedFromId: null,
     providerId: a.providerId,
     name: a.name, homeDir: a.homeDir,
     color: a.color || PROVIDER_META[a.providerId].color,
@@ -46,9 +51,15 @@ export function previewAccountId(editor: AccountDraft, accounts: Account[]): str
     : generateAccountId(editor.name.trim() || 'account', others)
 }
 
-export type BuildAccountResult =
-  | { ok: true; account: Account; mode: 'add' | 'edit'; editingId: string | null }
-  | { ok: false; error: string }
+export interface AccountSubmission {
+  ok: true
+  account: Account
+  mode: 'add' | 'edit'
+  editingId: string | null
+  convertedFromId: string | null
+}
+
+export type BuildAccountResult = AccountSubmission | { ok: false; error: string }
 
 export function buildAccountFromDraft(editor: AccountDraft, accounts: Account[]): BuildAccountResult {
   const name = editor.name.trim()
@@ -56,13 +67,42 @@ export function buildAccountFromDraft(editor: AccountDraft, accounts: Account[])
   if (!name) return { ok: false, error: 'Name required' }
   if (editor.mode === 'add') {
     const id = generateAccountId(name, accounts)
-    return { ok: true, account: { id, providerId: editor.providerId, name, homeDir, color: editor.color }, mode: 'add', editingId: null }
+    return {
+      ok: true,
+      account: { id, providerId: editor.providerId, name, homeDir, color: editor.color },
+      mode: 'add',
+      editingId: null,
+      convertedFromId: editor.convertedFromId,
+    }
   }
   return {
     ok: true,
     account: { id: editor.editingId!, providerId: editor.providerId, name, homeDir, color: editor.color },
     mode: 'edit',
     editingId: editor.editingId,
+    convertedFromId: null,
+  }
+}
+
+/**
+ * Applies a completed editor submission to the config. Converting an auto row
+ * to a manual account mints a fresh id, so an active selection pointing at the
+ * auto row would be orphaned by its own conversion; it moves to the new id.
+ */
+export function applyAccountSubmission(config: Config, submission: AccountSubmission): Config {
+  const { account, mode, editingId, convertedFromId } = submission
+  if (mode !== 'add') {
+    return {
+      ...config,
+      accounts: config.accounts.map(a => a.id === editingId ? { ...account, enabled: a.enabled } : a),
+    }
+  }
+  return {
+    ...config,
+    accounts: [...config.accounts, account],
+    activeAccountId: convertedFromId !== null && config.activeAccountId === convertedFromId
+      ? account.id
+      : config.activeAccountId,
   }
 }
 

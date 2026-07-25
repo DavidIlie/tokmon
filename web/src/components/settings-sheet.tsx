@@ -10,7 +10,7 @@ import { Check } from './icons'
 import { Dialog } from './ui/dialog'
 import { Button } from './ui/button'
 import { FOCUS_RING } from './ui/primitives'
-import { type AccountDraft, newDraft, toDraft } from './settings/account-editor.logic'
+import { type AccountDraft, applyAccountSubmission, newDraft, toDraft } from './settings/account-editor.logic'
 import { GeneralSection } from './settings/general-section'
 import { ProvidersSection } from './settings/providers-section'
 import { AccountsSection } from './settings/accounts-section'
@@ -212,9 +212,12 @@ export function SettingsSheet({ onClose, snapshot, initialTab = 'general', reque
                       onEdit={a => setAcctEditor(toDraft(a))}
                       onConfigure={row => setAcctEditor(newDraft(draft, {
                         providerId: row.providerId,
+                        // The row's registered name, never a privacy placeholder:
+                        // this writes a durable account, not a label.
                         name: row.name,
                         homeDir: row.homeDir,
                         color: row.color,
+                        convertedFromId: row.id,
                       }))}
                       onAdd={() => setAcctEditor(newDraft(draft))}
                     />
@@ -245,10 +248,8 @@ export function SettingsSheet({ onClose, snapshot, initialTab = 'general', reque
           accounts={draft.accounts}
           onChange={setAcctEditor}
           onCancel={() => setAcctEditor(null)}
-          onSubmit={(acct, mode, editingId) => {
-            patch(c => mode === 'add'
-              ? { ...c, accounts: [...c.accounts, acct] }
-              : { ...c, accounts: c.accounts.map(a => a.id === editingId ? { ...acct, enabled: a.enabled } : a) })
+          onSubmit={submission => {
+            patch(c => applyAccountSubmission(c, submission))
             setAcctEditor(null)
           }}
         />
