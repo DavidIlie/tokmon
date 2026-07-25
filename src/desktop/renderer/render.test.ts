@@ -831,3 +831,30 @@ test('single default instances omit redundant account labels while multiple acco
   assert.match(multiple, /Claude account 1/)
   assert.match(multiple, /Claude account 2/)
 })
+
+test('the accounts list names every account by its ordinal in privacy mode', () => {
+  const privateConfig: Config = { ...config, privacyMode: true }
+  const rendered = (accounts: WebAccount[]) => renderToStaticMarkup(createElement(ProvidersSettings, {
+    config: privateConfig,
+    snapshot: snapshot(accounts),
+    onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
+  }))
+
+  // A display-name-only identity: there is no email for redaction to find, and
+  // the daemon identity is stale-unredacted because privacy was just turned on.
+  const html = rendered([
+    account({
+      id: 'claude-1', name: 'Claude Jane Doe', homeDir: '/tmp/jane',
+      identity: { title: 'Claude Jane Doe', subtitle: null, accessibleLabel: 'Claude Jane Doe', redacted: false },
+    }),
+    account({
+      id: 'claude-2', name: 'Claude Jane Doe (alt)', homeDir: '/tmp/jane-alt',
+      identity: { title: 'Claude account 2', subtitle: null, accessibleLabel: 'Claude account 2', redacted: true },
+    }),
+  ])
+
+  assert.doesNotMatch(html, /Jane Doe/)
+  assert.match(html, /Claude account 1/)
+  assert.match(html, /Claude account 2/)
+  assert.doesNotMatch(html, /tmp\/jane/)
+})

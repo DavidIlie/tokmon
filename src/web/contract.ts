@@ -18,7 +18,7 @@ export type {
 export type { AccountIdentityView, HeadroomFactor, HeadroomView, MetricRole, QuotaView } from '../usage-semantics'
 export { usageFromHeadroom } from '../usage-semantics'
 export type { Severity } from '../usage-semantics'
-export { severity, severityTag, accountIdentityText } from '../usage-semantics'
+export { severity, severityTag, accountIdentityText, accountProviderOrdinals, projectAccountIdentity } from '../usage-semantics'
 
 export type {
   Config, Account, TrayConfig, MenuBarConfig, MenuBarMode, MenuBarDensity,

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Metric } from './providers/types'
-import { accountIdentityText, blendHeadroom, deriveAccountIdentity, deriveProviderHeadroom, deriveQuotaView, deriveQuotaViews, resolveQuotaViews, severity, severityTag, tightestQuotaView, usageFromHeadroom } from './usage-semantics'
+import { accountIdentityText, accountProviderOrdinals, blendHeadroom, deriveAccountIdentity, deriveProviderHeadroom, deriveQuotaView, deriveQuotaViews, projectAccountIdentity, resolveQuotaViews, severity, severityTag, tightestQuotaView, usageFromHeadroom } from './usage-semantics'
 
 const pct = (label: string, used: number, extra: Partial<Metric> = {}): Metric => ({
   label, used, limit: 100, format: { kind: 'percent' }, ...extra,
@@ -210,4 +210,32 @@ test('shared account identity is title/subtitle-first, de-duped, provider-filter
   // No daemon identity falls back to the registered name, else the provider.
   assert.equal(accountIdentityText({ name: 'Personal' }, 'Claude'), 'Personal')
   assert.equal(accountIdentityText({ name: '' }, 'Claude'), 'Claude')
+})
+
+test('the shared privacy projection agrees with the daemon and distrusts stale identities', () => {
+  const daemon = deriveAccountIdentity({
+    name: 'Claude Jane Doe', email: null, providerName: 'Claude', ordinal: 2, privacyMode: true,
+  })
+  const project = (identity: typeof daemon | null) => projectAccountIdentity({
+    identity, visible: 'Claude Jane Doe', providerName: 'Claude', ordinal: 2, privacyMode: true,
+  })
+
+  assert.equal(project(daemon), daemon.accessibleLabel)
+  assert.equal(project(daemon), 'Claude account 2')
+  // A snapshot resolved before the toggle, and a snapshot too old to carry one.
+  assert.equal(project({ title: 'Jane', subtitle: null, accessibleLabel: 'Jane', redacted: false }), 'Claude account 2')
+  assert.equal(project(null), 'Claude account 2')
+  // Privacy off hands back the surface's own label untouched.
+  assert.equal(projectAccountIdentity({
+    identity: null, visible: 'Claude Jane Doe', providerName: 'Claude', ordinal: 2, privacyMode: false,
+  }), 'Claude Jane Doe')
+})
+
+test('provider ordinals number accounts within their provider, in snapshot order', () => {
+  const ordinals = accountProviderOrdinals([
+    { id: 'c1', providerId: 'claude' },
+    { id: 'x1', providerId: 'codex' },
+    { id: 'c2', providerId: 'claude' },
+  ])
+  assert.deepEqual([...ordinals], [['c1', 1], ['x1', 1], ['c2', 2]])
 })

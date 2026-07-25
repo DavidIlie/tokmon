@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { getTrackedAccountRows, PROVIDER_META, setDetectedAccountExcluded, type Account, type Config, type TrackedAccountRow, type WebAccount, type WebSnapshot } from '@shared'
+import { accountProviderOrdinals, getTrackedAccountRows, PROVIDER_META, projectAccountIdentity, setDetectedAccountExcluded, type Account, type Config, type TrackedAccountRow, type WebAccount, type WebSnapshot } from '@shared'
 import { namedColorHex } from '../../lib/colors'
 import { ChevronUp, ChevronDown, Pencil, Plus, Trash } from '../icons'
 import { PrivacyLabel } from '../privacy-label'
@@ -22,6 +22,9 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
   onAdd: () => void
 }) {
   const accounts = getTrackedAccountRows(draft, undefined, snapshot?.accounts ?? undefined)
+  // Ordinals come from the snapshot's own ordering so they match the ones the
+  // daemon baked into identity, not this list's row order.
+  const ordinals = accountProviderOrdinals(snapshot?.accounts ?? [])
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
 
   const setActive = (id: string | null) => patch(c => ({ ...c, activeAccountId: id }))
@@ -60,7 +63,16 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
           {accounts.map(acc => {
             const meta = PROVIDER_META[acc.providerId]
             const live = accountFromSnapshot(acc, snapshot)
-            const identity = live ? accountIdentityText(live, meta.name) : acc.name || meta.name
+            const visible = live ? accountIdentityText(live, meta.name) : acc.name || meta.name
+            // The draft's privacy mode can be ahead of the snapshot it is
+            // reading, so the label is re-projected here rather than trusted.
+            const identity = projectAccountIdentity({
+              identity: live?.identity,
+              visible,
+              providerName: meta.name,
+              ordinal: ordinals.get(acc.id) ?? 1,
+              privacyMode: draft.privacyMode,
+            })
             const plan = live?.plan ?? live?.billing?.plan ?? null
             const hex = namedColorHex(acc.color || meta.color)
             const active = acc.enabled && acc.id === draft.activeAccountId
@@ -73,7 +85,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                   role="radio"
                   aria-checked={active}
                   disabled={ignored || !acc.enabled}
-                  aria-label={`Set ${acc.name} active`}
+                  aria-label={`Set ${identity} active`}
                   title={active ? 'Active account (click to clear)' : 'Set active'}
                   onClick={() => setActive(active ? null : acc.id)}
                   className={`relative inline-flex size-4 shrink-0 items-center justify-center rounded-full border transition ${FOCUS_RING}`}
@@ -84,7 +96,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                 <span className="size-2.5 shrink-0 rounded-full" style={{ background: hex }} aria-hidden />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <PrivacyLabel value={identity} privacyMode={draft.privacyMode} className="truncate text-sm text-fg-bright" />
+                    <PrivacyLabel value={visible} projected={identity} privacyMode={draft.privacyMode} className="truncate text-sm text-fg-bright" />
                     <span className="shrink-0 rounded bg-bg-3 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-fg-dim">{meta.name}</span>
                     {plan && (
                       <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-dim">{plan}</span>
@@ -111,13 +123,13 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                       <IconBtn label={pendingDeleteId === acc.id ? 'Confirm delete account' : 'Delete account'} danger onClick={() => requestRemove(acc.id)}><Trash className="size-3.5" /></IconBtn>
                     </>
                   ) : ignored ? (
-                    <Button size="xs" aria-label={`Restore ${acc.name}`} onClick={() => acc.excludedRef && patch(c => ({
+                    <Button size="xs" aria-label={`Restore ${identity}`} onClick={() => acc.excludedRef && patch(c => ({
                       ...c,
                       accountDetection: setDetectedAccountExcluded(c.accountDetection, acc.excludedRef!, false),
                     }))}>Restore</Button>
                   ) : (<>
                     <IconBtn label="Configure as manual account" onClick={() => onConfigure(acc)}><Pencil className="size-3.5" /></IconBtn>
-                    <Button size="xs" aria-label={`Remove ${acc.name} from Tokmon`} onClick={() => patch(c => ({
+                    <Button size="xs" aria-label={`Remove ${identity} from Tokmon`} onClick={() => patch(c => ({
                       ...c,
                       activeAccountId: c.activeAccountId === acc.id ? null : c.activeAccountId,
                       accountDetection: setDetectedAccountExcluded(c.accountDetection, { providerId: acc.providerId, homeDir: acc.homeDir }, true),

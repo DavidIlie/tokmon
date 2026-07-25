@@ -227,6 +227,46 @@ export function accountIdentityText(account: AccountIdentityInput, providerName:
   return parts.join(' · ') || identity.title || providerName
 }
 
+/**
+ * The one privacy projection every account surface must agree on.
+ *
+ * Privacy is baked into the daemon snapshot, so a client whose local draft has
+ * privacy on can be holding an identity resolved while it was off. In privacy
+ * mode this therefore never trusts a `redacted: false` identity and falls back
+ * to a locally recomputed provider ordinal — the same ordinal assembleSnapshot
+ * assigns, which is why callers pass position within `providerId`.
+ *
+ * With privacy off it returns `visible` untouched: each surface keeps its own
+ * visible identity (billing-first in the TUI, title · subtitle on the web,
+ * accessible label on the desktop), and privacy mode is what discards them.
+ */
+export function projectAccountIdentity(input: {
+  identity?: AccountIdentityView | null
+  visible: string
+  providerName: string
+  ordinal: number
+  privacyMode: boolean
+}): string {
+  if (!input.privacyMode) return input.visible
+  return input.identity?.redacted
+    ? input.identity.accessibleLabel
+    : `${input.providerName} account ${input.ordinal}`
+}
+
+/** 1-based position within each provider, matching assembleSnapshot's ordinals. */
+export function accountProviderOrdinals(
+  accounts: readonly { id: string; providerId: string }[],
+): Map<string, number> {
+  const perProvider = new Map<string, number>()
+  const ordinals = new Map<string, number>()
+  for (const account of accounts) {
+    const ordinal = (perProvider.get(account.providerId) ?? 0) + 1
+    perProvider.set(account.providerId, ordinal)
+    ordinals.set(account.id, ordinal)
+  }
+  return ordinals
+}
+
 /** Conservative two-window composite: never exceeds the tighter real window. */
 export function blendHeadroom(a: number, b: number): number {
   const low = Math.min(clampPct(a), clampPct(b))

@@ -23,7 +23,7 @@ import {
   SettingsView, DESKTOP_FIXED_ROWS, GENERAL_ROWS, THEME_ROWS,
   type AccountIdentity, type SettingsTab,
 } from './ui/settings'
-import { deriveSlots, findActiveSlot, computeChrome } from './ui/app-layout.logic'
+import { derivePrivacyLabels, deriveSlots, findActiveSlot, computeChrome } from './ui/app-layout.logic'
 import { ResizingView } from './ui/resizing'
 import { AccountStrip } from './ui/account-strip'
 import { Footer } from './ui/footer'
@@ -236,7 +236,18 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
     return statsReadyInput(statsLocal.get(id))
   }, [connected, snapshot, statsLocal])
 
-  const slots: Slot[] = useMemo(() => deriveSlots(accounts, cfg.privacyMode), [accounts, cfg.privacyMode])
+  // Built once so the account strip and the settings list can never disagree
+  // with the dashboard about who an account is.
+  const privacyLabels = useMemo(() => derivePrivacyLabels({
+    privacyMode: cfg.privacyMode,
+    rows: [...trackedAccountRows, ...accounts],
+    resolved: connected ? (snapshot?.accounts ?? []) : accounts,
+  }), [accounts, cfg.privacyMode, connected, snapshot, trackedAccountRows])
+
+  const slots: Slot[] = useMemo(
+    () => deriveSlots(accounts, cfg.privacyMode, privacyLabels),
+    [accounts, cfg.privacyMode, privacyLabels],
+  )
   const { activeSlotIdx, focusId } = useMemo(
     () => findActiveSlot(slots, cfg.activeAccountId),
     [slots, cfg.activeAccountId],
@@ -594,6 +605,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
           activeAccountId={cfg.activeAccountId}
           trackedAccounts={trackedAccountRows}
           accountIdentities={accountIdentities}
+          privacyLabels={privacyLabels}
         />
       ) : (
         <>

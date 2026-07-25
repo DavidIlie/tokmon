@@ -1,5 +1,7 @@
 import React from 'react'
 import {
+  accountProviderOrdinals,
+  projectAccountIdentity,
   PROVIDER_META,
   PROVIDER_ORDER,
   DESKTOP_GRAPH_RANGES,
@@ -654,15 +656,17 @@ export function ProvidersSettings({ config, snapshot, onPatch, onBack, onDashboa
     `${account.providerId}:${account.homeDir ?? '~'}`,
     account,
   ]))
+  const ordinals = accountProviderOrdinals(snapshot.accounts)
   const rowIdentity = (row: typeof rows[number]): string => {
     const live = snapshot.accounts.find(account => account.id === row.id)
       ?? liveBySource.get(`${row.providerId}:${row.homeDir}`)
-    if (config.privacyMode) {
-      return live?.identity?.redacted
-        ? live.identity.accessibleLabel
-        : `${PROVIDER_META[row.providerId].name} account`
-    }
-    return live?.identity?.accessibleLabel ?? row.name
+    return projectAccountIdentity({
+      identity: live?.identity,
+      visible: live?.identity?.accessibleLabel ?? row.name,
+      providerName: PROVIDER_META[row.providerId].name,
+      ordinal: (live && ordinals.get(live.id)) ?? 1,
+      privacyMode: config.privacyMode,
+    })
   }
   const rowStatus = (row: typeof rows[number], live: WebAccount | undefined): string => {
     if (row.source === 'ignored') return 'Removed · not tracked'

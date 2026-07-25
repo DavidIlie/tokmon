@@ -388,7 +388,7 @@ export { COLOR_PALETTE } from '../config'
 
 export const SettingsView = memo(function SettingsView({
   config, cursor, activeTab, tzEdit, tzCaret, tzError, allowedHostsEdit, allowedHostsCaret, allowedHostsError,
-  resolvedTz, accountForm, activeAccountId, trackedAccounts, accountIdentities,
+  resolvedTz, accountForm, activeAccountId, trackedAccounts, accountIdentities, privacyLabels,
 }: {
   config: Config
   cursor: number
@@ -404,6 +404,8 @@ export const SettingsView = memo(function SettingsView({
   activeAccountId: string | null
   trackedAccounts: TrackedAccountRow[]
   accountIdentities: Map<string, AccountIdentity>
+  /** Shared strict privacy projection, empty when privacy mode is off. */
+  privacyLabels?: ReadonlyMap<string, string>
 }) {
   const theme = useTuiTheme()
   if (accountForm) return <AccountFormView form={accountForm} accounts={config.accounts} />
@@ -511,7 +513,10 @@ export const SettingsView = memo(function SettingsView({
             const provider = PROVIDERS[acc.providerId]
             const identity = accountIdentities.get(acc.id)
             const rawIdentityLabel = identity?.email || identity?.displayName || acc.name
-            const identityLabel = config.privacyMode ? redactEmail(rawIdentityLabel) : rawIdentityLabel
+            // redactEmail cannot hide a display name that carries no email, so
+            // privacy mode reads the shared projection first.
+            const identityLabel = (config.privacyMode ? privacyLabels?.get(acc.id) : undefined)
+              ?? (config.privacyMode ? redactEmail(rawIdentityLabel) : rawIdentityLabel)
             const plan = identity?.plan ?? null
             const ignored = acc.source === 'ignored'
             const sourceLabel = acc.source === 'auto' ? 'auto tracking' : ignored ? 'removed' : acc.enabled ? 'configured' : 'disabled'
