@@ -36,19 +36,15 @@ export function derivePrivacyLabels(input: {
   const identities = new Map(input.resolved.map(account => [account.id, account.identity ?? null]))
   for (const row of input.rows) {
     if (labels.has(row.id)) continue
-    const providerName = PROVIDERS[row.providerId].name
-    const ordinal = ordinals.get(row.id)
-    labels.set(row.id, ordinal === undefined
-      // Removed or not-yet-resolved rows have no account behind them, so there
-      // is no stable ordinal to name them by.
-      ? `${providerName} account`
-      : projectAccountIdentity({
-          identity: identities.get(row.id),
-          visible: row.name,
-          providerName,
-          ordinal,
-          privacyMode: true,
-        }))
+    labels.set(row.id, projectAccountIdentity({
+      identity: identities.get(row.id),
+      visible: row.name,
+      providerName: PROVIDERS[row.providerId].name,
+      // Removed and unresolved rows have no account behind them, so they carry
+      // no ordinal rather than reusing a live account's.
+      ordinal: ordinals.get(row.id) ?? null,
+      privacyMode: true,
+    }))
   }
   return labels
 }

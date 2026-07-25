@@ -857,6 +857,25 @@ test('the accounts list names every account by its ordinal in privacy mode', () 
   assert.match(html, /Claude account 1/)
   assert.match(html, /Claude account 2/)
   assert.doesNotMatch(html, /tmp\/jane/)
+
+  // A removed row has no resolved account, so it must not borrow an ordinal
+  // that already names a live one.
+  const withRemoved = renderToStaticMarkup(createElement(ProvidersSettings, {
+    config: {
+      ...privateConfig,
+      accountDetection: {
+        enabled: true, disabledProviders: [],
+        excludedAccounts: [{ providerId: 'claude', homeDir: '/tmp/gone' }],
+      },
+    },
+    snapshot: {
+      ...snapshot([account({ id: 'claude-1', identity: { title: 'Claude account 1', subtitle: null, accessibleLabel: 'Claude account 1', redacted: true } })]),
+      suppressedAccounts: [],
+    },
+    onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
+  }))
+  assert.equal(withRemoved.match(/<b>Claude account 1<\/b>/g)?.length, 1)
+  assert.equal(withRemoved.match(/<b>Claude account<\/b>/g)?.length, 1)
 })
 
 test('a removed account reads as Restore or Forget by whether its source still exists', () => {

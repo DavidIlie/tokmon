@@ -665,7 +665,8 @@ export function ProvidersSettings({ config, snapshot, onPatch, onBack, onDashboa
       identity: live?.identity,
       visible: live?.identity?.accessibleLabel ?? row.name,
       providerName: PROVIDER_META[row.providerId].name,
-      ordinal: (live && ordinals.get(live.id)) ?? 1,
+      // Removed rows resolve to no account and must not borrow a live ordinal.
+      ordinal: (live && ordinals.get(live.id)) ?? null,
       privacyMode: config.privacyMode,
     })
   }

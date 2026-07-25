@@ -234,7 +234,10 @@ export function accountIdentityText(account: AccountIdentityInput, providerName:
  * privacy on can be holding an identity resolved while it was off. In privacy
  * mode this therefore never trusts a `redacted: false` identity and falls back
  * to a locally recomputed provider ordinal — the same ordinal assembleSnapshot
- * assigns, which is why callers pass position within `providerId`.
+ * assigns, which is why callers pass position within `providerId`. A row with
+ * no resolved account behind it (a removed one) passes `null` and is named
+ * without a number, rather than borrowing one that already names a live
+ * account.
  *
  * With privacy off it returns `visible` untouched: each surface keeps its own
  * visible identity (billing-first in the TUI, title · subtitle on the web,
@@ -244,12 +247,13 @@ export function projectAccountIdentity(input: {
   identity?: AccountIdentityView | null
   visible: string
   providerName: string
-  ordinal: number
+  ordinal: number | null
   privacyMode: boolean
 }): string {
   if (!input.privacyMode) return input.visible
-  return input.identity?.redacted
-    ? input.identity.accessibleLabel
+  if (input.identity?.redacted) return input.identity.accessibleLabel
+  return input.ordinal === null
+    ? `${input.providerName} account`
     : `${input.providerName} account ${input.ordinal}`
 }
 

@@ -94,6 +94,22 @@ test('a removed account whose source is gone offers Forget instead of a false pr
   assert.ok(html.includes('/home/jane/.claude-old'))
 })
 
+test('a removed row in privacy mode is not named after a live account', () => {
+  const draft: Config = { ...removedDraft(), privacyMode: true }
+  const html = renderToStaticMarkup(
+    <AccountsSection
+      draft={draft} patch={() => {}}
+      snapshot={{ ...snapshotOf([account()]), suppressedAccounts: [] }}
+      onEdit={() => {}} onConfigure={() => {}} onAdd={() => {}}
+    />,
+  )
+
+  assert.match(html, /Claude account 1/)
+  assert.match(html, /aria-label="Forget Claude account"/)
+  // The removed row carries no ordinal, so it cannot read as the live account.
+  assert.doesNotMatch(html, /aria-label="Forget Claude account 1"/)
+})
+
 test('a daemon without liveness keeps the previous removed-row output', () => {
   const html = renderRemoved(undefined)
 

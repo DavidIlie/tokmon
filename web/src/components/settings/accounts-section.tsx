@@ -70,7 +70,8 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
               identity: live?.identity,
               visible,
               providerName: meta.name,
-              ordinal: ordinals.get(acc.id) ?? 1,
+              // A removed row has no resolved account, so it carries no ordinal.
+              ordinal: ordinals.get(acc.id) ?? null,
               privacyMode: draft.privacyMode,
             })
             const plan = live?.plan ?? live?.billing?.plan ?? null

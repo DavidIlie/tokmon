@@ -69,9 +69,10 @@ test('privacy ordinals follow snapshot order and survive extra settings rows', (
   assert.equal(labels.get('claude-1'), 'Claude account 1')
   assert.equal(labels.get('claude-2'), 'Claude account 2')
   assert.equal(labels.get('codex-1'), 'Codex account 1')
-  // A removed row has no resolved account, so it gets no invented ordinal — and
-  // still never shows the home it came from.
+  // A removed row has no resolved account, so it gets no invented ordinal —
+  // borrowing one would name it identically to a live account.
   assert.equal(labels.get('ignored:codex:/old'), 'Codex account')
+  assert.notEqual(labels.get('ignored:codex:/old'), labels.get('codex-1'))
 })
 
 test('privacy off leaves every label exactly as it was', () => {
