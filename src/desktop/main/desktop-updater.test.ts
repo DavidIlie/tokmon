@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import test from 'node:test'
 import type { DesktopUpdateState } from '../shared/desktop-contract'
 import {
+  compareReleaseVersions,
   DesktopUpdaterController,
   INITIAL_UPDATE_DELAY_MS,
   UPDATE_CHECK_INTERVAL_MS,
@@ -93,7 +94,7 @@ test('release updater configures automatic install and schedules launch plus hou
   controller.start()
 
   assert.equal(updater.autoDownload, true)
-  assert.equal(updater.autoInstallOnAppQuit, true)
+  assert.equal(updater.autoInstallOnAppQuit, false)
   assert.equal(scheduler.timeouts[0]?.delayMs, INITIAL_UPDATE_DELAY_MS)
   assert.equal(scheduler.intervals[0]?.delayMs, UPDATE_CHECK_INTERVAL_MS)
   assert.equal(states.at(-1)?.status, 'idle')
@@ -150,15 +151,105 @@ test('updater publishes availability, progress, completion and stages only downl
   })
 })
 
-test('graceful shutdown installs a downloaded update after cleanup and otherwise exits', () => {
+test('an install preflight replaces a stale staged update before restart', async () => {
+  const { controller, updater, states } = setup()
+  controller.start()
+  updater.emit('update-downloaded', { version: '0.29.5' })
+  updater.onCheck = () => {
+    updater.emit('update-available', { version: '0.29.7' })
+    updater.emit('update-downloaded', { version: '0.29.7' })
+  }
+
+  const prepared = await controller.prepareInstall()
+
+  assert.equal(updater.checks, 1)
+  assert.equal(states.at(-1)?.availableVersion, '0.29.7')
+  assert.equal(states.at(-1)?.status, 'restarting')
+  assert.equal(prepared, true)
+})
+
+test('an install preflight keeps the staged update when the feed has nothing newer', async () => {
+  const { controller, updater, states } = setup()
+  controller.start()
+  updater.emit('update-downloaded', { version: '0.29.7' })
+  updater.onCheck = () => updater.emit('update-not-available', { version: '0.29.7' })
+
+  assert.equal(await controller.prepareInstall(), true)
+
+  assert.equal(updater.checks, 1)
+  assert.equal(states.at(-1)?.availableVersion, '0.29.7')
+  assert.equal(states.at(-1)?.status, 'restarting')
+})
+
+test('an install preflight blocks restart when the freshness check fails', async () => {
+  const { controller, updater, states } = setup()
+  controller.start()
+  updater.emit('update-downloaded', { version: '0.29.7' })
+  updater.nextError = new Error('feed unavailable')
+
+  assert.equal(await controller.prepareInstall(), false)
+
+  assert.equal(updater.checks, 1)
+  assert.equal(states.at(-1)?.status, 'error')
+  assert.deepEqual(updater.installs, [])
+})
+
+test('a macOS install preflight waits for the newer native payload to finish staging', async () => {
+  const { controller, updater, states } = setup(true, true, true)
+  controller.start()
+  updater.emit('update-downloaded', { version: '0.29.5' })
+  controller.markNativeReady()
+  assert.equal(states.at(-1)?.status, 'downloaded')
+
+  let finishDownload!: () => void
+  updater.nextResult = { downloadPromise: new Promise<void>(resolve => { finishDownload = resolve }) }
+  updater.onCheck = () => {
+    updater.emit('update-available', { version: '0.29.7' })
+    updater.emit('update-downloaded', { version: '0.29.7' })
+  }
+
+  const preparation = controller.prepareInstall()
+  await Promise.resolve()
+  finishDownload()
+  await flushAsyncWork()
+  assert.notEqual(states.at(-1)?.status, 'restarting')
+
+  controller.markNativeReady()
+  assert.equal(await preparation, true)
+  assert.equal(states.at(-1)?.status, 'restarting')
+  assert.equal(states.at(-1)?.availableVersion, '0.29.7')
+})
+
+test('an install preflight rejects a feed rollback below the staged version', async () => {
+  const { controller, updater, states } = setup()
+  controller.start()
+  updater.emit('update-downloaded', { version: '0.29.7' })
+  updater.onCheck = () => updater.emit('update-downloaded', { version: '0.29.5' })
+
+  assert.equal(await controller.prepareInstall(), false)
+
+  assert.equal(states.at(-1)?.status, 'error')
+  assert.match(states.at(-1)?.error ?? '', /older than staged/)
+})
+
+test('graceful shutdown installs only an explicitly preflighted update', () => {
   const downloaded = setup()
   downloaded.controller.start()
   downloaded.updater.emit('update-downloaded', { version: '2.0.0' })
   let downloadedExit = false
-  assert.equal(downloaded.controller.completeQuit(() => { downloadedExit = true }), 'install')
-  assert.equal(downloadedExit, false)
-  assert.deepEqual(downloaded.updater.installs, [[false, true]])
-  assert.equal(downloaded.updater.listenerCount('update-downloaded'), 1)
+  assert.equal(downloaded.controller.completeQuit(() => { downloadedExit = true }), 'exit')
+  assert.equal(downloadedExit, true)
+  assert.deepEqual(downloaded.updater.installs, [])
+
+  const preflighted = setup()
+  preflighted.controller.start()
+  preflighted.updater.emit('update-downloaded', { version: '2.0.0' })
+  assert.equal(preflighted.controller.requestInstall(), true)
+  let preflightedExit = false
+  assert.equal(preflighted.controller.completeQuit(() => { preflightedExit = true }), 'install')
+  assert.equal(preflightedExit, false)
+  assert.deepEqual(preflighted.updater.installs, [[false, true]])
+  assert.equal(preflighted.updater.listenerCount('update-downloaded'), 1)
 
   const idle = setup()
   idle.controller.start()
@@ -387,6 +478,7 @@ test('graceful update quit remains operational when native install throws', () =
   updater.installError = new Error('installer unavailable')
   let exited = false
 
+  assert.equal(controller.requestInstall(), true)
   assert.equal(controller.completeQuit(() => { exited = true }), 'error')
   assert.equal(exited, false)
   assert.equal(updater.listenerCount('update-downloaded'), 1)
@@ -430,4 +522,12 @@ test('stop clears an armed download watchdog', () => {
   controller.stop()
 
   assert.ok(scheduler.clearedTimeouts.includes(watchdog.handle))
+})
+
+test('release comparison prevents a preflight downgrade', () => {
+  assert.equal(compareReleaseVersions('0.29.7', '0.29.5'), 1)
+  assert.equal(compareReleaseVersions('1.0.0', '1.0.0-rc.2'), 1)
+  assert.equal(compareReleaseVersions('1.0.0-rc.10', '1.0.0-rc.2'), 1)
+  assert.equal(compareReleaseVersions('0.29.7', '0.29.7'), 0)
+  assert.equal(compareReleaseVersions('0.29.5', '0.29.7'), -1)
 })

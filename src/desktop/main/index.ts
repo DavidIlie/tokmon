@@ -324,8 +324,8 @@ async function bootstrap(): Promise<void> {
     installQuitTimer = null
     installHandoffTimer = null
   }
-  const requestUpdateInstall = (): boolean => {
-    if (!updater.requestInstall()) return false
+  const requestUpdateInstall = async (): Promise<boolean> => {
+    if (!await updater.prepareInstall()) return false
     // Give the renderer one calm paint of “Restarting…” before app.quit begins.
     installQuitTimer = setTimeout(() => {
       installQuitTimer = null
@@ -512,7 +512,7 @@ async function bootstrap(): Promise<void> {
       current.update.status === 'downloaded'
         ? {
             label: `Restart to Install ${current.update.availableVersion ?? 'Update'}`,
-            click: () => { requestUpdateInstall() },
+            click: () => { void requestUpdateInstall() },
           }
         : current.update.status === 'restarting'
           ? { label: 'Restarting to Install…', enabled: false }
@@ -562,16 +562,12 @@ async function bootstrap(): Promise<void> {
     if (closing) return
     closing = true
     ;(globalThis as { __tokmonQuitting?: boolean }).__tokmonQuitting = true
-    if (state.get().update.status === 'downloaded') updater.requestInstall()
     clearReconnectTimer()
     if (installQuitTimer) {
       clearTimeout(installQuitTimer)
       installQuitTimer = null
     }
     void closeDaemonSession().finally(() => {
-      // Native readiness can arrive while daemon cleanup is in flight. Promote
-      // that newly downloaded update before allowing quitAndInstall's app.quit.
-      if (updater.state.status === 'downloaded') updater.requestInstall()
       if (updater.state.status === 'restarting') nativeUpdateQuitAllowed = true
       const outcome = updater.completeQuit(() => app.exit(0))
       if (outcome === 'install') {

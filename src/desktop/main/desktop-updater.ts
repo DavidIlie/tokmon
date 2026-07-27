@@ -87,6 +87,9 @@ export class DesktopUpdaterController {
   private deferredDownloadedInfo: { version?: unknown } | null = null
   private deferredDownloadSettled = false
   private deferredNativeReady = false
+  private readyBeforeCheck: DesktopUpdateState | null = null
+  private installPreparation: Promise<boolean> | null = null
+  private readonly terminalWaiters = new Set<(state: DesktopUpdateState | null) => void>()
 
   constructor(private readonly options: DesktopUpdaterControllerOptions) {
     this.scheduler = options.scheduler ?? systemScheduler
@@ -110,8 +113,10 @@ export class DesktopUpdaterController {
         })
       }],
       ['update-not-available', () => {
+        const readyBeforeCheck = this.readyBeforeCheck
+        this.readyBeforeCheck = null
         this.abandonCheck()
-        this.publish(idleUpdateState())
+        this.publish(readyBeforeCheck ?? idleUpdateState())
       }],
       ['download-progress', (progress: { percent?: unknown }) => this.publish({
         status: 'downloading',
@@ -146,7 +151,10 @@ export class DesktopUpdaterController {
     if (!this.active) return
 
     this.options.updater.autoDownload = true
-    this.options.updater.autoInstallOnAppQuit = true
+    // Installation is explicit: prepareInstall() re-checks the feed immediately
+    // before restart. Letting electron-updater install on an unrelated app quit
+    // would bypass that freshness guarantee.
+    this.options.updater.autoInstallOnAppQuit = false
     for (const [event, listener] of this.listeners) this.options.updater.on(event, listener)
 
     this.initialTimer = this.scheduler.setTimeout(() => {
@@ -159,11 +167,55 @@ export class DesktopUpdaterController {
   }
 
   async checkForUpdates(): Promise<void> {
+    return this.runCheck()
+  }
+
+  /**
+   * Re-check the feed before accepting a staged update. If a newer release
+   * appeared since the original download, autoDownload replaces the staged
+   * payload and this waits for both its download and native macOS staging.
+   */
+  async prepareInstall(): Promise<boolean> {
+    if (!this.started || !this.options.enabled) throw new Error('Updates are disabled in this build')
+    if (!this.supported) throw new Error('Updates are unsupported on this platform')
+    if (this.installPreparation) return this.installPreparation
+    if (this.stateValue.status !== 'downloaded') return false
+
+    const stagedVersion = this.stateValue.availableVersion
+    const preparation = (async () => {
+      this.readyBeforeCheck = { ...this.stateValue }
+      await this.runCheck(true)
+      await this.waitForInstallCandidate()
+      if (this.stateValue.status !== 'downloaded') return false
+      const candidateVersion = this.stateValue.availableVersion
+      if (stagedVersion && candidateVersion && compareReleaseVersions(candidateVersion, stagedVersion) < 0) {
+        this.readyBeforeCheck = null
+        this.fail(new Error(
+          `Update feed returned ${candidateVersion}, older than staged ${stagedVersion}. Check for updates again before installing.`,
+        ))
+        return false
+      }
+      return this.requestInstall()
+    })()
+    this.installPreparation = preparation
+    try {
+      return await preparation
+    } finally {
+      if (this.installPreparation === preparation) this.installPreparation = null
+    }
+  }
+
+  private async runCheck(allowDownloaded = false): Promise<void> {
     if (!this.started || !this.options.enabled) throw new Error('Updates are disabled in this build')
     if (!this.supported) throw new Error('Updates are unsupported on this platform')
     // Preserve the actionable ready-to-install state and never start a second
     // network cycle while the current update is still downloading.
-    if (this.stateValue.status === 'available' || this.stateValue.status === 'downloading' || this.stateValue.status === 'downloaded' || this.stateValue.status === 'restarting') return
+    if (
+      this.stateValue.status === 'available'
+      || this.stateValue.status === 'downloading'
+      || (this.stateValue.status === 'downloaded' && !allowDownloaded)
+      || this.stateValue.status === 'restarting'
+    ) return
     if (this.inFlight) return this.inFlight
     const generation = this.generation
     const attempt = ++this.checkAttempt
@@ -182,11 +234,14 @@ export class DesktopUpdaterController {
           this.publishDownloadedIfReady()
         }
         if (this.isCurrentCheck(generation, attempt) && this.stateValue.status === 'checking') {
-          this.publish(idleUpdateState())
+          const readyBeforeCheck = this.readyBeforeCheck
+          this.readyBeforeCheck = null
+          this.publish(readyBeforeCheck ?? idleUpdateState())
           this.clearDeferredDownload(attempt)
         }
       } catch (error) {
         if (this.isCurrentCheck(generation, attempt)) {
+          this.readyBeforeCheck = null
           this.clearDeferredDownload(attempt)
           this.fail(error)
         }
@@ -237,8 +292,7 @@ export class DesktopUpdaterController {
 
   /** Complete Tokmon's intercepted quit after daemon cleanup has finished. */
   completeQuit(exitWithoutUpdate: () => void): 'install' | 'exit' | 'error' {
-    const wasReadyToInstall = this.stateValue.status === 'downloaded' || this.stateValue.status === 'restarting'
-    if (this.stateValue.status === 'downloaded') this.requestInstall()
+    const wasReadyToInstall = this.stateValue.status === 'restarting'
     if (this.commitInstall()) return 'install'
     if (wasReadyToInstall && this.stateValue.status === 'error') return 'error'
     this.stop()
@@ -257,10 +311,14 @@ export class DesktopUpdaterController {
     this.initialTimer = null
     this.intervalTimer = null
     this.inFlight = null
+    this.installPreparation = null
     this.deferredDownloadAttempt = null
     this.deferredDownloadedInfo = null
     this.deferredDownloadSettled = false
     this.deferredNativeReady = !this.options.requireNativeReady
+    this.readyBeforeCheck = null
+    for (const waiter of this.terminalWaiters) waiter(null)
+    this.terminalWaiters.clear()
     if (this.active) {
       for (const [event, listener] of this.listeners) this.options.updater.removeListener(event, listener)
     }
@@ -275,6 +333,7 @@ export class DesktopUpdaterController {
       this.clearDownloadWatchdog()
     }
     this.options.onState(this.stateValue)
+    for (const waiter of this.terminalWaiters) waiter(this.stateValue)
   }
 
   private armDownloadWatchdog(): void {
@@ -302,6 +361,7 @@ export class DesktopUpdaterController {
     this.deferredDownloadedInfo = null
     this.deferredDownloadSettled = false
     this.deferredNativeReady = !this.options.requireNativeReady
+    this.readyBeforeCheck = null
   }
 
   private publishDownloadedIfReady(): void {
@@ -311,6 +371,7 @@ export class DesktopUpdaterController {
     this.deferredDownloadedInfo = null
     this.deferredDownloadSettled = false
     this.deferredNativeReady = !this.options.requireNativeReady
+    this.readyBeforeCheck = null
     this.publish({
       status: 'downloaded',
       availableVersion: versionOf(info) ?? this.stateValue.availableVersion,
@@ -329,6 +390,18 @@ export class DesktopUpdaterController {
 
   private isCurrentCheck(generation: number, attempt: number): boolean {
     return this.started && this.generation === generation && this.checkAttempt === attempt
+  }
+
+  private waitForInstallCandidate(): Promise<void> {
+    if (!isUpdateWorkInProgress(this.stateValue.status)) return Promise.resolve()
+    return new Promise(resolve => {
+      const waiter = (state: DesktopUpdateState | null) => {
+        if (state && isUpdateWorkInProgress(state.status)) return
+        this.terminalWaiters.delete(waiter)
+        resolve()
+      }
+      this.terminalWaiters.add(waiter)
+    })
   }
 
   private fail(error: unknown): void {
@@ -358,4 +431,27 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return (typeof value === 'object' && value !== null) || typeof value === 'function'
     ? typeof (value as { then?: unknown }).then === 'function'
     : false
+}
+
+function isUpdateWorkInProgress(status: DesktopUpdateState['status']): boolean {
+  return status === 'checking' || status === 'available' || status === 'downloading'
+}
+
+/** SemVer release precedence for the production x.y.z versions in update feeds. */
+export function compareReleaseVersions(left: string, right: string): number {
+  const parse = (value: string): [number, number, number, string | null] | null => {
+    const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(value)
+    if (!match) return null
+    return [Number(match[1]), Number(match[2]), Number(match[3]), match[4] ?? null]
+  }
+  const a = parse(left)
+  const b = parse(right)
+  if (!a || !b) return left === right ? 0 : -1
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index]! < b[index]! ? -1 : 1
+  }
+  if (a[3] === b[3]) return 0
+  if (a[3] === null) return 1
+  if (b[3] === null) return -1
+  return a[3].localeCompare(b[3], 'en', { numeric: true })
 }

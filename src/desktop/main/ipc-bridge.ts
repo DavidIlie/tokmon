@@ -22,7 +22,7 @@ export interface DesktopIpcOptions {
   getDashboardUrl(): string | null
   retryConnection(): Promise<void>
   checkForUpdates(): Promise<void>
-  installUpdate(): boolean
+  installUpdate(): Promise<boolean>
   setPopoverHeight(height: number): void
   onConfig?(config: Config): void
   /** Consume the renderer-painted menu-bar strip (macOS). Absent → strip is ignored. */
@@ -86,9 +86,9 @@ export function registerDesktopIpc(opts: DesktopIpcOptions): () => void {
     assertSender(event)
     await opts.checkForUpdates()
   })
-  ipcMain.handle(DESKTOP_CHANNELS.installUpdate, event => {
+  ipcMain.handle(DESKTOP_CHANNELS.installUpdate, async event => {
     assertSender(event)
-    return opts.installUpdate()
+    return await opts.installUpdate()
   })
   ipcMain.handle(DESKTOP_CHANNELS.trayStrip, (event, payload: unknown) => {
     assertSender(event)
