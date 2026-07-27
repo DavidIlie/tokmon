@@ -115,7 +115,6 @@ export interface MenuBarPlan {
   reservedSlack: number
   /** Offset applied to the literal provider geometry within the stable image. */
   contentOffsetX: number
-  updateCenterX: number | null
   /** The heuristic budget used by auto mode. Null means custom mode is literal. */
   budget: number | null
   /** True when auto mode hid any requested content to fit its heuristic budget. */
@@ -127,7 +126,6 @@ export interface BuildMenuBarPlanInput {
   config: MenuBarConfig
   /** Width of the display in device-independent points. */
   displayWidthPt: number
-  updateReady?: boolean
   /** Primarily useful for deterministic preview/test constraints. */
   availableWidthPt?: number
   measureText: (text: string, font: string) => number
@@ -144,8 +142,6 @@ export interface MenuBarRenderSignatureInput {
   updateStatus?: string
 }
 
-const UPDATE_GAP = 6
-const UPDATE_BOX = 9
 const DENSITY_ORDER: MenuBarDensity[] = ['comfortable', 'compact', 'tight']
 
 const half = (value: number) => Math.ceil(value * 2) / 2
@@ -286,7 +282,6 @@ function createPlan(
   config: MenuBarConfig,
   density: MenuBarDensity,
   measureText: BuildMenuBarPlanInput['measureText'],
-  updateReady: boolean,
   budget: number | null,
   collapsed: boolean,
 ): MenuBarPlan {
@@ -355,16 +350,10 @@ function createPlan(
   // Keep every valid plan inside the native IPC contract. Tight mark-only and
   // progress-only layouts are 11pt intrinsically, but Electron status items
   // need the same 12pt discoverable floor as the procedural fallback icon.
-  const intrinsicWidth = providerWidth + (updateReady ? (providerWidth > 0 ? UPDATE_GAP : 0) + UPDATE_BOX : 0)
-  const width = Math.max(12, intrinsicWidth)
-  const updateCenterX = updateReady
-    ? providerWidth > 0
-      ? providerWidth + UPDATE_GAP + UPDATE_BOX / 2
-      : width / 2
-    : null
+  const width = Math.max(12, providerWidth)
   return {
     width, height: tokens.height, density, tokens, segments, valueSlotWidth,
-    reservedSlack, contentOffsetX, updateCenterX, budget, collapsed,
+    reservedSlack, contentOffsetX, budget, collapsed,
   }
 }
 
@@ -374,7 +363,6 @@ function createPlan(
  */
 export function buildMenuBarPlan(input: BuildMenuBarPlanInput): MenuBarPlan {
   const values = input.values.slice(0, 2)
-  const updateReady = input.updateReady ?? false
   const initialDensity = input.config.mode === 'auto'
     ? autoDensity(input.config.density, input.displayWidthPt)
     : input.config.density
@@ -384,12 +372,12 @@ export function buildMenuBarPlan(input: BuildMenuBarPlanInput): MenuBarPlan {
   const visibility = requestedVisibility(input.config, values.length)
   let density = initialDensity
   let collapsed = false
-  let plan = createPlan(values, visibility, input.config, density, input.measureText, updateReady, budget, collapsed)
+  let plan = createPlan(values, visibility, input.config, density, input.measureText, budget, collapsed)
   if (budget === null || plan.width <= budget) return plan
 
   const rebuild = () => {
     collapsed = true
-    plan = createPlan(values, visibility, input.config, density, input.measureText, updateReady, budget, collapsed)
+    plan = createPlan(values, visibility, input.config, density, input.measureText, budget, collapsed)
   }
   if (density !== 'tight') {
     density = 'tight'

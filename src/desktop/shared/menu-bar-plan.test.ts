@@ -31,7 +31,6 @@ test('comfortable production geometry is exact and keeps migrated default propor
     values,
     config: config({ mode: 'custom' }),
     displayWidthPt: 1440,
-    updateReady: true,
     measureText: measure,
   })
   assert.deepEqual(plan.tokens, MENU_BAR_DENSITIES.comfortable)
@@ -41,9 +40,8 @@ test('comfortable production geometry is exact and keeps migrated default propor
   assert.equal(plan.segments[0]?.x, 1)
   assert.equal(plan.segments[0]?.width, 34)
   assert.equal(plan.segments[1]?.x, 43)
-  assert.equal(plan.width, 93)
+  assert.equal(plan.width, 78)
   assert.equal(plan.height, 22)
-  assert.equal(plan.updateCenterX, 88.5)
 })
 
 test('visibility combinations recover an all-hidden strip to provider marks', () => {
@@ -275,16 +273,15 @@ test('progress plan distinguishes zero, sub-one, half, full, and unknown without
   assert.equal(new Set(plans.map(plan => plan.width)).size, 1)
 })
 
-test('an update-only plan stays discoverable and centres its action glyph', () => {
+test('an empty plan keeps the native discoverability floor without an action glyph', () => {
   const plan = buildMenuBarPlan({
     values: [],
     config: config(),
     displayWidthPt: 1440,
-    updateReady: true,
     measureText: measure,
   })
   assert.equal(plan.width, 12)
-  assert.equal(plan.updateCenterX, 6)
+  assert.deepEqual(plan.segments, [])
 })
 
 test('render signature changes for every presentation leaf and only buckets display width', () => {

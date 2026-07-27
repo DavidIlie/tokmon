@@ -35,18 +35,17 @@ export function menuBarTitle(
   usedPct: number | null,
   _critical: boolean,
   alternate?: string,
-  updateReady = false,
+  _updateReady = false,
 ): string {
-  const suffix = updateReady ? ' ↑' : ''
-  if (!showText) return updateReady ? '↑' : ''
-  if (alternate !== undefined) return `${alternate}${suffix}`
-  if (usedPct === null || !Number.isFinite(usedPct)) return updateReady ? '↑' : ''
+  if (!showText) return ''
+  if (alternate !== undefined) return alternate
+  if (usedPct === null || !Number.isFinite(usedPct)) return ''
   const bounded = Math.max(0, Math.min(100, usedPct))
   const used = bounded > 0 && bounded < 1 ? '<1' : String(Math.round(bounded))
-  return `${used}%${suffix}`
+  return `${used}%`
 }
 
 /** Disconnected state is conveyed by the icon's critical ring + tooltip words, not "!". */
-export function disconnectedMenuBarTitle(_error: boolean, updateReady = false): string {
-  return updateReady ? '↑' : ''
+export function disconnectedMenuBarTitle(_error: boolean, _updateReady = false): string {
+  return ''
 }

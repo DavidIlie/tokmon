@@ -21,7 +21,9 @@ test('menu-bar titles are terse and never carry a cryptic "!" prefix', () => {
   assert.equal(menuBarTitle(false, null, false, '1.2B'), '')
   assert.equal(disconnectedMenuBarTitle(true), '')
   assert.equal(disconnectedMenuBarTitle(false), '')
-  assert.equal(menuBarTitle(true, 64.4, false, undefined, true), '64% ↑')
-  assert.equal(menuBarTitle(false, 64.4, false, undefined, true), '↑')
-  assert.equal(disconnectedMenuBarTitle(true, true), '↑')
+  // Update state already has an icon badge, tooltip and popover action. It must
+  // not add a second, unexplained arrow beside the menu-bar value.
+  assert.equal(menuBarTitle(true, 64.4, false, undefined, true), '64%')
+  assert.equal(menuBarTitle(false, 64.4, false, undefined, true), '')
+  assert.equal(disconnectedMenuBarTitle(true, true), '')
 })

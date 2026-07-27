@@ -470,7 +470,7 @@ export function MenuBarSettings({ config, snapshot, pins, platform, displayWidth
                 ? <span className="menubar-preview-empty"><i aria-hidden="true" />Pin a provider from Usage</span>
                 : <MenuBarStripPreview
                     values={values} menuBar={menuBar} displayWidthPt={displayWidthPt}
-                    updateReady={update.status === 'downloaded'} className="menubar-live-preview"
+                    className="menubar-live-preview"
                     ariaLabel={`Tokmon menu bar preview with ${pins.length} pinned provider${pins.length === 1 ? '' : 's'}`}
                     onPlan={setPreviewPlan}
                   />}

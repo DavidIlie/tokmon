@@ -103,14 +103,6 @@ export function paintMenuBarStrip(canvas: HTMLCanvasElement, scale: number, plan
     }
   }
 
-  if (plan.updateCenterX !== null) {
-    ctx.save()
-    ctx.font = '700 11px -apple-system, system-ui, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'alphabetic'
-    ctx.fillText('↑', plan.updateCenterX, 14.5)
-    ctx.restore()
-  }
   return plan.width
 }
 
@@ -118,7 +110,6 @@ function measuredPlan(
   values: readonly MenuBarSegmentValue[],
   menuBar: MenuBarConfig,
   displayWidthPt: number,
-  updateReady: boolean,
   availableWidthPt?: number,
 ): MenuBarPlan | null {
   const context = document.createElement('canvas').getContext('2d')
@@ -127,7 +118,6 @@ function measuredPlan(
     values,
     config: menuBar,
     displayWidthPt,
-    updateReady,
     ...(availableWidthPt === undefined ? {} : { availableWidthPt }),
     measureText: (text, font) => {
       context.font = font
@@ -145,7 +135,6 @@ export function MenuBarStripPreview({
   menuBar,
   displayWidthPt = 1440,
   availableWidthPt,
-  updateReady = false,
   className,
   ariaLabel = 'Menu bar preview',
   onPlan,
@@ -154,15 +143,14 @@ export function MenuBarStripPreview({
   menuBar: MenuBarConfig
   displayWidthPt?: number
   availableWidthPt?: number
-  updateReady?: boolean
   className?: string
   ariaLabel?: string
   onPlan?(plan: MenuBarPlan | null): void
 }) {
   const canvas = useRef<HTMLCanvasElement>(null)
-  const dependency = JSON.stringify({ values, menuBar, displayWidthPt, availableWidthPt, updateReady })
+  const dependency = JSON.stringify({ values, menuBar, displayWidthPt, availableWidthPt })
   const plan = useMemo(
-    () => measuredPlan(values, menuBar, displayWidthPt, updateReady, availableWidthPt),
+    () => measuredPlan(values, menuBar, displayWidthPt, availableWidthPt),
     // `dependency` deliberately includes every builder leaf and segment leaf.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dependency],
@@ -205,7 +193,7 @@ export function TrayStripPainter({ snapshot, config, pins, platform, update, dis
       valueMemory.current = retained.memory
       const values = retained.values
       const updateReady = update.status === 'downloaded'
-      const plan = measuredPlan(values, config.tray.menuBar, effectiveDisplayWidth, updateReady)
+      const plan = measuredPlan(values, config.tray.menuBar, effectiveDisplayWidth)
       if (!plan) return
       const logicalWidth = paintMenuBarStrip(canvas1, 1, plan)
       paintMenuBarStrip(canvas2, 2, plan)
