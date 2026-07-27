@@ -275,6 +275,10 @@ test('a silent reconfiguration applies the new sources without starting fetches'
   try {
     let rebuilds = 0
     engine.subscribe(() => { rebuilds++ })
+    // Subscribing to an empty engine starts the initial summary, table, and
+    // billing passes. Let those finish before measuring the reconfiguration;
+    // otherwise a slow runner can attribute their rebuilds to setConfig().
+    await settleEngine()
     rebuilds = 0
 
     engine.setConfig({
