@@ -67,7 +67,7 @@ function fakeHandle(): ReturnType<typeof setTimeout> {
   return { unref() { return this } } as unknown as ReturnType<typeof setTimeout>
 }
 
-function setup(enabled = true, supported = true, requireNativeReady = false) {
+function setup(enabled = true, supported = true) {
   const updater = new FakeUpdater()
   const scheduler = new FakeScheduler()
   const states: DesktopUpdateState[] = []
@@ -75,7 +75,6 @@ function setup(enabled = true, supported = true, requireNativeReady = false) {
   const controller = new DesktopUpdaterController({
     enabled,
     supported,
-    requireNativeReady,
     updater,
     scheduler,
     onState: state => states.push({ ...state }),
@@ -194,11 +193,10 @@ test('an install preflight blocks restart when the freshness check fails', async
   assert.deepEqual(updater.installs, [])
 })
 
-test('a macOS install preflight waits for the newer native payload to finish staging', async () => {
-  const { controller, updater, states } = setup(true, true, true)
+test('an install preflight waits for the newer updater download to settle', async () => {
+  const { controller, updater, states } = setup()
   controller.start()
   updater.emit('update-downloaded', { version: '0.29.5' })
-  controller.markNativeReady()
   assert.equal(states.at(-1)?.status, 'downloaded')
 
   let finishDownload!: () => void
@@ -210,11 +208,9 @@ test('a macOS install preflight waits for the newer native payload to finish sta
 
   const preparation = controller.prepareInstall()
   await Promise.resolve()
-  finishDownload()
-  await flushAsyncWork()
   assert.notEqual(states.at(-1)?.status, 'restarting')
 
-  controller.markNativeReady()
+  finishDownload()
   assert.equal(await preparation, true)
   assert.equal(states.at(-1)?.status, 'restarting')
   assert.equal(states.at(-1)?.availableVersion, '0.29.7')
@@ -319,41 +315,26 @@ test('does not publish downloaded until the nested updater download promise sett
   assert.equal(controller.requestInstall(), true)
 })
 
-test('macOS readiness waits for both the updater promise and native staging in either order', async () => {
-  const nativeLast = setup(true, true, true)
+test('macOS explicit install offers restart after the updater download settles without native pre-staging', async () => {
+  const { controller, updater, states } = setup()
   let finishDownload!: () => void
-  nativeLast.updater.nextResult = { downloadPromise: new Promise<void>(resolve => { finishDownload = resolve }) }
-  nativeLast.updater.onCheck = () => {
-    nativeLast.updater.emit('update-available', { version: '3.2.0' })
-    nativeLast.updater.emit('update-downloaded', { version: '3.2.0' })
+  updater.nextResult = { downloadPromise: new Promise<void>(resolve => { finishDownload = resolve }) }
+  updater.onCheck = () => {
+    updater.emit('update-available', { version: '3.2.0' })
+    updater.emit('update-downloaded', { version: '3.2.0' })
   }
-  nativeLast.controller.start()
+  controller.start()
 
-  const firstCheck = nativeLast.controller.checkForUpdates()
+  const check = controller.checkForUpdates()
   await Promise.resolve()
   finishDownload()
-  await firstCheck
-  assert.notEqual(nativeLast.states.at(-1)?.status, 'downloaded')
-  assert.equal(nativeLast.controller.requestInstall(), false)
-  nativeLast.controller.markNativeReady()
-  assert.equal(nativeLast.states.at(-1)?.status, 'downloaded')
+  await check
 
-  const nativeFirst = setup(true, true, true)
-  let finishStagingDownload!: () => void
-  nativeFirst.updater.nextResult = { downloadPromise: new Promise<void>(resolve => { finishStagingDownload = resolve }) }
-  nativeFirst.updater.onCheck = () => {
-    nativeFirst.updater.emit('update-available', { version: '3.3.0' })
-    nativeFirst.updater.emit('update-downloaded', { version: '3.3.0' })
-  }
-  nativeFirst.controller.start()
-
-  const secondCheck = nativeFirst.controller.checkForUpdates()
-  await Promise.resolve()
-  nativeFirst.controller.markNativeReady()
-  assert.notEqual(nativeFirst.states.at(-1)?.status, 'downloaded')
-  finishStagingDownload()
-  await secondCheck
-  assert.equal(nativeFirst.states.at(-1)?.status, 'downloaded')
+  assert.equal(updater.autoInstallOnAppQuit, false)
+  assert.equal(states.at(-1)?.status, 'downloaded')
+  assert.equal(controller.requestInstall(), true)
+  assert.equal(controller.completeQuit(() => assert.fail('explicit update should own app quit')), 'install')
+  assert.deepEqual(updater.installs, [[false, true]])
 })
 
 test('available and downloading states block duplicate checks until progress completes or errors', async () => {

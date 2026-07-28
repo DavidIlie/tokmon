@@ -1,4 +1,4 @@
-import { app, autoUpdater as nativeAutoUpdater, Menu, nativeImage, nativeTheme, screen, shell, Tray, type MenuItemConstructorOptions } from 'electron'
+import { app, Menu, nativeImage, nativeTheme, screen, shell, Tray, type MenuItemConstructorOptions } from 'electron'
 import updaterPackage from 'electron-updater'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -98,6 +98,7 @@ let closing = false
 let nativeUpdateQuitAllowed = false
 const runtimeDir = path.dirname(fileURLToPath(import.meta.url))
 const { autoUpdater } = updaterPackage
+const UPDATE_INSTALL_HANDOFF_TIMEOUT_MS = 2 * 60 * 1_000
 // Stable macOS/Windows identity keeps the user's chosen status-item position
 // across launches instead of registering a brand-new item every time.
 const RELEASE_TRAY_GUID = '6515998a-4215-4ba2-b9be-c1f2fe105d2a'
@@ -150,7 +151,6 @@ async function bootstrap(): Promise<void> {
   const updater = new DesktopUpdaterController({
     enabled: app.isPackaged && channel === 'release',
     supported: process.platform !== 'linux' || Boolean(process.env.APPIMAGE),
-    requireNativeReady: process.platform === 'darwin',
     updater: autoUpdater as DesktopAutoUpdater,
     onState: update => {
       state.updater(update)
@@ -312,8 +312,6 @@ async function bootstrap(): Promise<void> {
     // Main-process signature validation prevents stale pixels being accepted.
     updatePresentation()
   }
-  const onNativeUpdateDownloaded = () => updater.markNativeReady()
-  if (process.platform === 'darwin') nativeAutoUpdater.on('update-downloaded', onNativeUpdateDownloaded)
   updater.start()
 
   let installQuitTimer: ReturnType<typeof setTimeout> | null = null
@@ -573,8 +571,8 @@ async function bootstrap(): Promise<void> {
       if (outcome === 'install') {
         installHandoffTimer = setTimeout(() => {
           installHandoffTimer = null
-          updater.failInstallHandoff('Tokmon could not hand off to the installer within 10 seconds. Choose Check for Updates to retry.')
-        }, 10_000)
+          updater.failInstallHandoff('Tokmon could not hand off to the installer within 2 minutes. Choose Check for Updates to retry.')
+        }, UPDATE_INSTALL_HANDOFF_TIMEOUT_MS)
         installHandoffTimer.unref?.()
         return
       }
@@ -588,7 +586,6 @@ async function bootstrap(): Promise<void> {
     screen.removeListener('display-metrics-changed', onDisplayMetricsChanged)
     screen.removeListener('display-added', onDisplayTopologyChanged)
     screen.removeListener('display-removed', onDisplayTopologyChanged)
-    if (process.platform === 'darwin') nativeAutoUpdater.removeListener('update-downloaded', onNativeUpdateDownloaded)
     disposeIpc()
     updater.stop()
   })

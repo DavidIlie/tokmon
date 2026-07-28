@@ -58,8 +58,6 @@ export interface DesktopUpdaterControllerOptions {
   enabled: boolean
   /** Platform/provider capability. Unsupported release builds remain distinct from disabled dev builds. */
   supported?: boolean
-  /** macOS must also confirm Squirrel's native staging before Restart is offered. */
-  requireNativeReady?: boolean
   updater: DesktopAutoUpdater
   onState(state: DesktopUpdateState): void
   scheduler?: DesktopUpdaterScheduler
@@ -86,7 +84,6 @@ export class DesktopUpdaterController {
   private deferredDownloadAttempt: number | null = null
   private deferredDownloadedInfo: { version?: unknown } | null = null
   private deferredDownloadSettled = false
-  private deferredNativeReady = false
   private readyBeforeCheck: DesktopUpdateState | null = null
   private installPreparation: Promise<boolean> | null = null
   private readonly terminalWaiters = new Set<(state: DesktopUpdateState | null) => void>()
@@ -96,7 +93,6 @@ export class DesktopUpdaterController {
     this.initialDelayMs = options.initialDelayMs ?? INITIAL_UPDATE_DELAY_MS
     this.intervalMs = options.intervalMs ?? UPDATE_CHECK_INTERVAL_MS
     this.downloadWatchdogMs = options.downloadWatchdogMs ?? UPDATE_DOWNLOAD_WATCHDOG_MS
-    this.deferredNativeReady = !options.requireNativeReady
     this.stateValue = !options.enabled
       ? disabledUpdateState()
       : this.supported
@@ -124,8 +120,9 @@ export class DesktopUpdaterController {
         error: null,
       })],
       ['update-downloaded', (info: { version?: unknown }) => {
-        // MacUpdater emits this public event before its nested downloadPromise
-        // and native Squirrel staging finish. Readiness requires every signal.
+        // MacUpdater can emit this public event before its nested downloadPromise
+        // settles. Native Squirrel staging intentionally starts later, inside
+        // quitAndInstall(), when autoInstallOnAppQuit is disabled.
         if (this.deferredDownloadAttempt === null) this.deferredDownloadSettled = true
         this.deferredDownloadedInfo = info
         this.publishDownloadedIfReady()
@@ -173,7 +170,7 @@ export class DesktopUpdaterController {
   /**
    * Re-check the feed before accepting a staged update. If a newer release
    * appeared since the original download, autoDownload replaces the staged
-   * payload and this waits for both its download and native macOS staging.
+   * payload and this waits for its verified updater download to settle.
    */
   async prepareInstall(): Promise<boolean> {
     if (!this.started || !this.options.enabled) throw new Error('Updates are disabled in this build')
@@ -222,7 +219,6 @@ export class DesktopUpdaterController {
     this.deferredDownloadAttempt = attempt
     this.deferredDownloadedInfo = null
     this.deferredDownloadSettled = false
-    this.deferredNativeReady = !this.options.requireNativeReady
     this.publish({ status: 'checking', progressPercent: null, error: null })
     const check = (async () => {
       try {
@@ -253,13 +249,6 @@ export class DesktopUpdaterController {
     })()
     if (this.isCurrentCheck(generation, attempt)) this.inFlight = check
     return check
-  }
-
-  /** Electron's native macOS updater has fully staged the archive. */
-  markNativeReady(): void {
-    if (!this.started || !this.active || !this.options.requireNativeReady) return
-    this.deferredNativeReady = true
-    this.publishDownloadedIfReady()
   }
 
   /** Stage one visible, idempotent restart request. Main owns cleanup and app.quit(). */
@@ -315,7 +304,6 @@ export class DesktopUpdaterController {
     this.deferredDownloadAttempt = null
     this.deferredDownloadedInfo = null
     this.deferredDownloadSettled = false
-    this.deferredNativeReady = !this.options.requireNativeReady
     this.readyBeforeCheck = null
     for (const waiter of this.terminalWaiters) waiter(null)
     this.terminalWaiters.clear()
@@ -360,17 +348,15 @@ export class DesktopUpdaterController {
     this.deferredDownloadAttempt = null
     this.deferredDownloadedInfo = null
     this.deferredDownloadSettled = false
-    this.deferredNativeReady = !this.options.requireNativeReady
     this.readyBeforeCheck = null
   }
 
   private publishDownloadedIfReady(): void {
     const info = this.deferredDownloadedInfo
-    if (!info || !this.deferredDownloadSettled || !this.deferredNativeReady) return
+    if (!info || !this.deferredDownloadSettled) return
     this.deferredDownloadAttempt = null
     this.deferredDownloadedInfo = null
     this.deferredDownloadSettled = false
-    this.deferredNativeReady = !this.options.requireNativeReady
     this.readyBeforeCheck = null
     this.publish({
       status: 'downloaded',
@@ -385,7 +371,6 @@ export class DesktopUpdaterController {
     this.deferredDownloadAttempt = null
     this.deferredDownloadedInfo = null
     this.deferredDownloadSettled = false
-    this.deferredNativeReady = !this.options.requireNativeReady
   }
 
   private isCurrentCheck(generation: number, attempt: number): boolean {
