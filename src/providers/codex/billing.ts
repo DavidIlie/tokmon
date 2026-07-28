@@ -148,11 +148,23 @@ function additionalRateLimits(rl: any): any[] {
   return []
 }
 
-function appendWindowMetrics(metrics: Metric[], rl: any, headerPct?: (name: string) => number | undefined): void {
+export function codexWindowMetrics(rl: any, headerPct?: (name: string) => number | undefined): Metric[] {
+  const metrics: Metric[] = []
   const primary = rl?.primary_window ?? rl?.primary ?? null
   const secondary = rl?.secondary_window ?? rl?.secondary ?? null
-  const primaryPct = normalizedUsedPercent(primary, primary?.used_percent ?? primary?.percent_used ?? headerPct?.('x-codex-primary-used-percent'))
-  const secondaryPct = normalizedUsedPercent(secondary, secondary?.used_percent ?? secondary?.percent_used ?? headerPct?.('x-codex-secondary-used-percent'))
+  // Some unlimited plans expose generic zero-valued headers without exposing
+  // quota windows. A header can fill a missing percentage on a real window,
+  // but it must never manufacture a bounded quota from an absent window.
+  const primaryPct = normalizedUsedPercent(
+    primary,
+    primary?.used_percent ?? primary?.percent_used
+      ?? (primary ? headerPct?.('x-codex-primary-used-percent') : undefined),
+  )
+  const secondaryPct = normalizedUsedPercent(
+    secondary,
+    secondary?.used_percent ?? secondary?.percent_used
+      ?? (secondary ? headerPct?.('x-codex-secondary-used-percent') : undefined),
+  )
 
   if (primaryPct !== undefined) metrics.push(percentMetric('Session', primaryPct, resetFrom(primary), true))
   if (secondaryPct !== undefined) metrics.push(percentMetric('Weekly', secondaryPct, resetFrom(secondary)))
@@ -164,6 +176,7 @@ function appendWindowMetrics(metrics: Metric[], rl: any, headerPct?: (name: stri
     if (used === undefined) continue
     metrics.push(percentMetric(label, used, resetFrom(item)))
   }
+  return metrics
 }
 
 export function creditBalanceMetric(source: any): Metric | null {
@@ -221,7 +234,7 @@ async function liveBilling(auth: CodexAuth, failure?: { status?: number }): Prom
     }
 
     const metrics: Metric[] = []
-    appendWindowMetrics(metrics, data.rate_limit ?? data, headerPct)
+    metrics.push(...codexWindowMetrics(data.rate_limit ?? data, headerPct))
     appendCredits(metrics, data)
 
     // Prefer the value already in the usage response; only pay for a second round-trip when absent.
@@ -302,7 +315,7 @@ async function snapshotBilling(homeDir?: string, auth: CodexAuth | null = null):
     if (!last) continue
 
     const metrics: Metric[] = []
-    appendWindowMetrics(metrics, last.rate_limit ?? last)
+    metrics.push(...codexWindowMetrics(last.rate_limit ?? last))
     appendCredits(metrics, last)
     const resetCredits = numberValue(last?.rate_limit_reset_credits?.available_count ?? last?.rate_limit_reset_credits?.available)
     if (resetCredits !== undefined && resetCredits >= 0) {
