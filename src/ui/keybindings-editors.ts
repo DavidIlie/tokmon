@@ -1,5 +1,5 @@
 import { normalizeAllowedHost, sanitizeTyped } from '../config'
-import { clampCaret, spliceBackspace } from '../app.logic'
+import { clampCaret, spliceBackspace } from './app.logic'
 import { isValidTimezone } from '../tz'
 import type { InputKey, KeyContext } from './keybinding-context'
 

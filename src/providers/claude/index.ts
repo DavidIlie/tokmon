@@ -1,11 +1,11 @@
+import { PROVIDER_META } from '../../config-schema'
 import type { Provider } from '../types'
 import { detectClaude, claudeDashboard, claudeTable } from './usage'
 import { claudeBilling } from './billing'
 
 export const claudeProvider: Provider = {
   id: 'claude',
-  name: 'Claude',
-  color: 'green',
+  ...PROVIDER_META.claude,
   hasUsage: true,
   hasBilling: true,
   detect: (homeDir) => detectClaude(homeDir),

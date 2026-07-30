@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Box, Text, Transform } from 'ink'
-import { glyphs } from '../glyphs'
+import { glyphs } from './glyphs'
 import { LinkBox } from './shared'
 import { openUrl, osc8, REPO_URL, SITE_URL, IS_APPLE_TERMINAL } from './terminal'
 

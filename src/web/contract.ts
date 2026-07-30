@@ -20,6 +20,8 @@ export type { AccountIdentityView, HeadroomFactor, HeadroomView, MetricRole, Quo
 export { usageFromHeadroom } from '../usage-semantics'
 export type { Severity } from '../usage-semantics'
 export { severity, severityTag, accountIdentityText, accountProviderOrdinals, projectAccountIdentity } from '../usage-semantics'
+export { MONTHS } from '../shared/format'
+export { dayKey, mondayDayIndex, systemTimezone, weekStartDayKey } from '../tz'
 
 export type {
   Config, Account, TrayConfig, MenuBarConfig, MenuBarMode, MenuBarDensity,

@@ -62,6 +62,19 @@ const WEEKDAY_MAP: Record<string, number> = {
   Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
 }
 
+/** Convert a Sunday-first weekday (0..6) to a Monday-first index (0..6). */
+export function mondayDayIndex(weekday: number): number {
+  return (weekday + 6) % 7
+}
+
+/** Return the Monday calendar key for an ISO-like day label. */
+export function weekStartDayKey(label: string): string {
+  const [year, month, day] = label.split('-').map(Number)
+  const instant = Date.UTC(year, (month || 1) - 1, day || 1)
+  const monday = instant - mondayDayIndex(new Date(instant).getUTCDay()) * 86_400_000
+  return new Date(monday).toISOString().slice(0, 10)
+}
+
 function tzParts(ts: number, tz: string): TzParts {
   const parts = partsFmt(tz).formatToParts(new Date(ts))
   const get = (t: string): string => parts.find(p => p.type === t)?.value ?? ''
@@ -96,7 +109,7 @@ export function startOfMonth(ts: number, tz: string): number {
 
 export function startOfWeek(ts: number, tz: string): number {
   const p = tzParts(ts, tz)
-  const offset = p.weekday === 0 ? 6 : p.weekday - 1
+  const offset = mondayDayIndex(p.weekday)
   return instantFromTz(p.y, p.m, p.d - offset, 0, 0, 0, tz)
 }
 

@@ -1,7 +1,7 @@
 import { memo } from 'react'
 import { Box, Text } from 'ink'
-import { glyphs } from '../glyphs'
-import type { Slot } from '../app.logic'
+import { glyphs } from './glyphs'
+import type { Slot } from './app.logic'
 import { ClickableBox, truncateName } from './shared'
 
 export const AccountStrip = memo(function AccountStrip({ slots, activeIdx, onSelect }: { slots: Slot[]; activeIdx: number; onSelect: (i: number) => void }) {

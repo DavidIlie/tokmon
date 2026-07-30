@@ -1,6 +1,6 @@
 import { Fragment, memo, type ReactNode } from 'react'
 import { Box, Text } from 'ink'
-import { glyphs } from '../glyphs'
+import { glyphs } from './glyphs'
 import { configLocation, DEFAULT_MENU_BAR_CONFIG, DESKTOP_GRAPH_RANGES, generateAccountId, COLOR_PALETTE, providerDetectionEnabled, redactEmail, removedRowCopy, sanitizeTyped, toggleProviderSelection, type Config, type Account, type MenuBarConfig, type TrackedAccountRow } from '../config'
 import { PROVIDER_ORDER, PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'

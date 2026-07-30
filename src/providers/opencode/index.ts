@@ -1,10 +1,10 @@
+import { PROVIDER_META } from '../../config-schema'
 import type { Provider } from '../types'
 import { detectOpencode, opencodeDashboard, opencodeTable } from './usage'
 
 export const opencodeProvider: Provider = {
   id: 'opencode',
-  name: 'opencode',
-  color: 'yellow',
+  ...PROVIDER_META.opencode,
   hasUsage: true,
   hasBilling: false,
   detect: (homeDir) => detectOpencode(homeDir),

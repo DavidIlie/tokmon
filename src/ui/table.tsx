@@ -1,11 +1,11 @@
 import { memo } from 'react'
 import { Box, Text } from 'ink'
-import * as fmt from '../format'
+import * as fmt from './format'
 import { PROVIDERS } from '../providers'
 import type { ProviderId } from '../providers/types'
 import type { TableRow } from '../types'
 import { CaretText, ClickableBox } from './shared'
-import { glyphs } from '../glyphs'
+import { glyphs } from './glyphs'
 import { modelColor } from '../shared/colors'
 import { useTuiTheme } from './theme'
 

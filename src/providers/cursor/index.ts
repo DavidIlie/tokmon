@@ -1,11 +1,11 @@
+import { PROVIDER_META } from '../../config-schema'
 import type { Provider } from '../types'
 import { detectCursor, cursorBilling } from './billing'
 import { cursorDashboard, cursorTableFull } from './usage'
 
 export const cursorProvider: Provider = {
   id: 'cursor',
-  name: 'Cursor',
-  color: 'magenta',
+  ...PROVIDER_META.cursor,
   hasUsage: true,
   hasBilling: true,
   detect: (homeDir) => detectCursor(homeDir),

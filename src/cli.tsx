@@ -42,11 +42,26 @@ function validateServeArgs(serveArgs: string[]): void {
 }
 
 async function main(): Promise<void> {
-  if (subcommand && ['usage', 'models', 'query', 'providers', 'snapshot', 'config'].includes(subcommand)) {
+  if (subcommand === 'config') {
+    const { runConfigCommand } = await import('./cli-config-command')
+    try {
+      const output = await runConfigCommand(args.slice(1))
+      process.stdout.write(output)
+      process.exitCode ??= 0
+    } catch (error) {
+      const message = describeError(error)
+      if (args.includes('--json')) process.stderr.write(JSON.stringify({ error: message }) + '\n')
+      else process.stderr.write(`tokmon config: ${message}\nRun tokmon config --help for usage.\n`)
+      process.exitCode = 1
+    }
+    return
+  }
+
+  if (subcommand && ['usage', 'models', 'query', 'providers', 'snapshot'].includes(subcommand)) {
     const { runQueryCommand } = await import('./cli-command')
     try {
       const output = await runQueryCommand(
-        subcommand as 'usage' | 'models' | 'query' | 'providers' | 'snapshot' | 'config',
+        subcommand as 'usage' | 'models' | 'query' | 'providers' | 'snapshot',
         args.slice(1),
       )
       process.stdout.write(output)
@@ -121,7 +136,7 @@ async function main(): Promise<void> {
   }
 
   const { loadConfig } = await import('./config')
-  const { resolveGlyphs, setGlyphs } = await import('./glyphs')
+  const { resolveGlyphs, setGlyphs } = await import('./ui/glyphs')
   const { attachOrSpawn } = await import('./client/daemon-handle')
 
   const config = await loadConfig()

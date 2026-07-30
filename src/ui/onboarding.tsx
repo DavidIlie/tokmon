@@ -1,6 +1,6 @@
 import { Box, Text } from 'ink'
 import { ClickableBox } from './shared'
-import { glyphs } from '../glyphs'
+import { glyphs } from './glyphs'
 import { useTuiTheme } from './theme'
 
 export interface OnboardItem {

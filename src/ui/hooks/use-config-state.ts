@@ -8,7 +8,7 @@ import {
 } from '../../config'
 import { describeConfigUpdateFailure, type PendingConfigUpdate } from '../../config-sync'
 import type { UseDaemon } from '../../client/use-daemon'
-import { applyStartup } from '../../app.logic'
+import { applyStartup } from '../app.logic'
 
 /**
  * Owns optimistic config state and the connected daemon's single serialized

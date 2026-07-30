@@ -5,6 +5,7 @@ import test from 'node:test'
 import { DEFAULTS } from '../config'
 import { createDaemonRpcClient } from '../client/daemon-rpc-client'
 import { BrowseFsFailure, ConfigReadFailure, RefreshFailure } from '../rpc/contract'
+import { listenOrSkip } from '../test-helpers'
 import type { DataEngine } from './data-engine'
 import type { WebSnapshot } from './contract'
 import { mountWsRpc } from './ws'
@@ -65,18 +66,7 @@ test('loopback dashboard websocket requires no browser token', async (t) => {
     state: { config: { ...DEFAULTS } },
   })
   try {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(0, '127.0.0.1', resolve)
-      })
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code === 'EPERM') {
-        t.skip('the sandbox disallows binding ephemeral loopback ports')
-        return
-      }
-      throw cause
-    }
+    if (!await listenOrSkip(t, server)) return
     const address = server.address()
     assert.ok(address && typeof address === 'object')
     assert.equal(await websocketUpgradeStatus(address.port), 101)
@@ -115,18 +105,7 @@ test('client normalizes additive config omissions from older protocol-v3 daemons
   let resolveSubscriberError!: (error: unknown) => void
   const subscriberError = new Promise<unknown>(resolve => { resolveSubscriberError = resolve })
   try {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(0, '127.0.0.1', resolve)
-      })
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code === 'EPERM') {
-        t.skip('the sandbox disallows binding ephemeral loopback ports')
-        return
-      }
-      throw cause
-    }
+    if (!await listenOrSkip(t, server)) return
     const address = server.address()
     assert.ok(address && typeof address === 'object')
     client = createDaemonRpcClient(`http://127.0.0.1:${address.port}`, {
@@ -187,18 +166,7 @@ test('negotiated config and filesystem failures stay typed and request-local', a
   })
   let client: ReturnType<typeof createDaemonRpcClient> | null = null
   try {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(0, '127.0.0.1', resolve)
-      })
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code === 'EPERM') {
-        t.skip('the sandbox disallows binding ephemeral loopback ports')
-        return
-      }
-      throw cause
-    }
+    if (!await listenOrSkip(t, server)) return
     const address = server.address()
     assert.ok(address && typeof address === 'object')
     const connStates: string[] = []
@@ -262,18 +230,7 @@ test('refresh RPC acknowledges only after the data engine pass completes', async
   const closeRpc = await mountWsRpc(server, { engine, state: { config: { ...DEFAULTS } } })
   let client: ReturnType<typeof createDaemonRpcClient> | null = null
   try {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(0, '127.0.0.1', resolve)
-      })
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code === 'EPERM') {
-        t.skip('the sandbox disallows binding ephemeral loopback ports')
-        return
-      }
-      throw cause
-    }
+    if (!await listenOrSkip(t, server)) return
     const address = server.address()
     assert.ok(address && typeof address === 'object')
     // A dashboard served from loopback must be able to speak to its daemon
@@ -360,18 +317,7 @@ test('a stale snapshot stream is restarted instead of remaining falsely live', a
   let unsubscribe: (() => void) | null = null
   let unsubscribeConfig: (() => void) | null = null
   try {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(0, '127.0.0.1', resolve)
-      })
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code === 'EPERM') {
-        t.skip('the sandbox disallows binding ephemeral loopback ports')
-        return
-      }
-      throw cause
-    }
+    if (!await listenOrSkip(t, server)) return
     const address = server.address()
     assert.ok(address && typeof address === 'object')
     client = createDaemonRpcClient(`http://127.0.0.1:${address.port}`, {

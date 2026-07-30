@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink'
-import { glyphs } from '../glyphs'
+import { glyphs } from './glyphs'
 import { useTuiTheme } from './theme'
 
 export function ResizingView({ cols, rows }: { cols: number; rows: number }) {

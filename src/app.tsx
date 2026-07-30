@@ -11,8 +11,8 @@ import {
   type Account, type ProviderId,
 } from './providers'
 import { resolveTimezone } from './tz'
-import { glyphs } from './glyphs'
-import * as fmt from './format'
+import { glyphs } from './ui/glyphs'
+import * as fmt from './ui/format'
 import type { WebServerController } from './web/server'
 import { Spinner, TabBar, PeakBadge, dispatchLinkClicks } from './ui/shared'
 import { DashboardView, computeDashLayout, TotalsRow } from './ui/dashboard'
@@ -37,7 +37,7 @@ import {
   acctKey, clampCaret, spliceInsert,
   sortLabel, sortRows, filterTokenRows,
   tableModelOptions, cycleTableModel, filterRowsByModel,
-} from './app.logic'
+} from './ui/app.logic'
 import { openUrl, IS_TTY } from './ui/terminal'
 import { handleKey, handleTerminalFocusInput } from './ui/keybindings'
 import { useTerminalSize } from './ui/hooks/use-terminal-size'

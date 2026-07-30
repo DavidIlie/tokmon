@@ -1,10 +1,10 @@
+import { PROVIDER_META } from '../../config-schema'
 import type { Provider } from '../types'
 import { copilotBilling, detectCopilot } from './billing'
 
 export const copilotProvider: Provider = {
   id: 'copilot',
-  name: 'Copilot',
-  color: 'white',
+  ...PROVIDER_META.copilot,
   hasUsage: false,
   hasBilling: true,
   detect: (homeDir) => detectCopilot(homeDir),

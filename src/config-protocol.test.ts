@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { Schema } from 'effect'
+import { listenOrSkip } from './test-helpers'
 import {
   cleanProviderSelection,
   DEFAULT_MENU_BAR_CONFIG,
@@ -803,19 +804,13 @@ test('RPC transports revisions and typed conflicts end to end', async (t) => {
   try {
     process.env.XDG_CONFIG_HOME = root
     process.env.TOKMON_WEB_MODE = 'prod'
-    try {
-      server = await startWebServer({
-        config: { ...DEFAULTS, disabledProviders: [...PROVIDER_IDS] },
-        port: 0,
-        wsToken: token,
-      })
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code === 'EPERM') {
-        t.skip('the sandbox disallows binding ephemeral loopback ports')
-        return
-      }
-      throw cause
-    }
+    const started = await listenOrSkip(t, () => startWebServer({
+      config: { ...DEFAULTS, disabledProviders: [...PROVIDER_IDS] },
+      port: 0,
+      wsToken: token,
+    }))
+    if (!started) return
+    server = started.value
     const connStates: string[] = []
     client = createDaemonRpcClient(server.url, {
       transport: 'node',

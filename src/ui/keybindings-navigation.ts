@@ -1,4 +1,4 @@
-import { TABS, VIEWS } from '../app.logic'
+import { TABS, VIEWS } from './app.logic'
 import { openUrl, REPO_URL } from './terminal'
 import type { InputKey, KeyContext } from './keybinding-context'
 

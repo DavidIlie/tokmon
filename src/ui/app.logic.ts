@@ -1,8 +1,8 @@
 import { glyphs } from './glyphs'
-import type { Account } from './providers'
-import type { Config } from './config'
-import type { AccountStats } from './stats'
-import type { TableRow } from './types'
+import type { Account } from '../providers'
+import type { Config } from '../config'
+import type { AccountStats } from '../stats'
+import type { TableRow } from '../types'
 
 export const TABS = ['Dashboard', 'Table'] as const
 export const VIEWS = ['Daily', 'Weekly', 'Monthly'] as const

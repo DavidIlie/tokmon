@@ -1,5 +1,5 @@
 import { PROVIDERS, type Account, type ProviderId } from '../providers'
-import type { Slot } from '../app.logic'
+import type { Slot } from './app.logic'
 import { redactEmail } from '../config'
 import { accountIdentityText, accountProviderOrdinals, projectAccountIdentity, type AccountIdentityView } from '../usage-semantics'
 import { truncateName } from './shared'

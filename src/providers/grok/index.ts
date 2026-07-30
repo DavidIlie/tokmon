@@ -1,11 +1,11 @@
+import { PROVIDER_META } from '../../config-schema'
 import type { Provider } from '../types'
 import { grokBilling } from './billing'
 import { detectGrok, grokDashboard, grokTable } from './usage'
 
 export const grokProvider: Provider = {
   id: 'grok',
-  name: 'Grok',
-  color: 'yellowBright',
+  ...PROVIDER_META.grok,
   hasUsage: true,
   hasBilling: true,
   detect: (homeDir) => detectGrok(homeDir),

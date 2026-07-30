@@ -1,22 +1,12 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import test from 'node:test'
+import { listenOrSkip } from '../test-helpers'
 import { createDaemonRpcClient } from './daemon-rpc-client'
 
 async function unusedLoopbackUrl(t: test.TestContext): Promise<string | null> {
   const server = createServer()
-  try {
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject)
-      server.listen(0, '127.0.0.1', resolve)
-    })
-  } catch (cause) {
-    if ((cause as NodeJS.ErrnoException).code === 'EPERM') {
-      t.skip('the sandbox disallows binding ephemeral loopback ports')
-      return null
-    }
-    throw cause
-  }
+  if (!await listenOrSkip(t, server)) return null
   const address = server.address()
   assert.ok(address && typeof address === 'object')
   await new Promise<void>(resolve => server.close(() => resolve()))

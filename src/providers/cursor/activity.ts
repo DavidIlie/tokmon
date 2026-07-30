@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import * as fmt from '../../format'
+import { formatTokens } from '../../shared/format'
 import { SPARK_DAYS, lastDayKeys } from '../usage-core'
 import { dayKey } from '../../tz'
 import { runSqlite } from './sqlite'
@@ -37,7 +37,7 @@ export async function cursorActivity(tz: string, homeDir?: string): Promise<{ se
     const series = lastDayKeys(now, tz, SPARK_DAYS).map(k => byDay.get(k) ?? 0)
 
     if (month === 0 && series.every(v => v === 0)) return null
-    return { series, summary: `${fmt.tokens(month)} lines` }
+    return { series, summary: `${formatTokens(month)} lines` }
   } catch {
     return null
   }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { CONFIG_HELP, runConfigCommand } from './cli-config-command'
 import { parseQueryArgs, queryHelp, runQueryCommand } from './cli-command'
 import { DEFAULTS, PROVIDER_IDS, type Config } from './config'
 import { TOKMON_PROTOCOL_VERSION, type ConfigState, type ConfigUpdateRequest } from './rpc/contract'
@@ -58,10 +59,10 @@ test('every query command has focused help without starting the daemon', async (
   assert.match(queryHelp('usage'), /tokmon usage --model opus --json/)
   assert.match(queryHelp('providers'), /local data\/config locations/)
   assert.match(queryHelp('snapshot'), /complete raw snapshot/)
-  assert.match(await runQueryCommand('config', ['--json', '--compact']), /^\{"path":".+config\.json"\}\n$/)
-  assert.match(queryHelp('config'), /summary-mode <smart\|tightest>/)
-  assert.match(queryHelp('config'), /menu-bar-elements <list>/)
-  assert.match(queryHelp('config'), /menu-bar-pins <ids\|none>\s+Deprecated/)
+  assert.match(await runConfigCommand(['--json', '--compact']), /^\{"path":".+config\.json"\}\n$/)
+  assert.match(CONFIG_HELP, /summary-mode <smart\|tightest>/)
+  assert.match(CONFIG_HELP, /menu-bar-elements <list>/)
+  assert.match(CONFIG_HELP, /menu-bar-pins <ids\|none>\s+Deprecated/)
 })
 
 test('config path remains daemon-free and backward compatible', async () => {
@@ -73,9 +74,9 @@ test('config path remains daemon-free and backward compatible', async () => {
       throw new Error('must not connect')
     },
   }
-  assert.equal(await runQueryCommand('config', [], dependencies), '/tmp/tokmon-config.json\n')
+  assert.equal(await runConfigCommand([], dependencies), '/tmp/tokmon-config.json\n')
   assert.equal(
-    await runQueryCommand('config', ['path', '--json', '--compact'], dependencies),
+    await runConfigCommand(['path', '--json', '--compact'], dependencies),
     '{"path":"/tmp/tokmon-config.json"}\n',
   )
   assert.equal(connected, false)
@@ -101,7 +102,7 @@ test('config get reports daemon-owned app preferences and closes its client', as
     },
     desktop: { ...DEFAULTS.desktop, expandedProviders: ['cursor'] },
   })
-  const compact = JSON.parse(await runQueryCommand('config', ['get', '--json', '--compact'], harness))
+  const compact = JSON.parse(await runConfigCommand(['get', '--json', '--compact'], harness))
   assert.deepEqual(compact, {
     revision: 7,
     privacy: 'off',
@@ -128,7 +129,7 @@ test('config get reports daemon-owned app preferences and closes its client', as
   assert.equal(harness.closed(), 1)
 
   const humanHarness = configHarness()
-  const human = await runQueryCommand('config', ['get'], humanHarness)
+  const human = await runConfigCommand(['get'], humanHarness)
   assert.match(human, /^privacy\s+on$/m)
   assert.doesNotMatch(human, /^menu-bar-pins\s+/m)
   assert.match(human, /^menu-bar-mode\s+auto$/m)
@@ -140,7 +141,7 @@ test('config get reports daemon-owned app preferences and closes its client', as
 test('config set supports every desktop preference through daemon CAS', async () => {
   const harness = configHarness()
   const run = (setting: string, value: string) =>
-    runQueryCommand('config', ['set', setting, value], harness)
+    runConfigCommand(['set', setting, value], harness)
 
   assert.equal(await run('privacy', 'off'), 'privacy off\n')
   assert.equal(await run('privacy-key', 'v'), 'privacy-key v\n')
@@ -160,8 +161,7 @@ test('config set supports every desktop preference through daemon CAS', async ()
   assert.equal(await run('enabled-providers', 'claude,codex'), 'enabled-providers claude,codex\n')
   assert.equal(await run('auto-detect', 'off'), 'auto-detect off\n')
   assert.equal(await run('auto-detect-providers', 'claude,codex'), 'auto-detect-providers claude,codex\n')
-  const result = JSON.parse(await runQueryCommand(
-    'config',
+  const result = JSON.parse(await runConfigCommand(
     ['set', 'launch-at-login', 'on', '--json', '--compact'],
     harness,
   ))
@@ -199,7 +199,7 @@ test('config set supports every desktop preference through daemon CAS', async ()
 test('setting literal menu-bar spacing switches auto layout to custom', async () => {
   const harness = configHarness()
   assert.equal(harness.current().tray.menuBar.mode, 'auto')
-  await runQueryCommand('config', ['set', 'menu-bar-provider-gap', '3.5'], harness)
+  await runConfigCommand(['set', 'menu-bar-provider-gap', '3.5'], harness)
   assert.equal(harness.current().tray.menuBar.mode, 'custom')
   assert.equal(harness.current().tray.menuBar.customSpacing.providerGapPt, 3.5)
 })
@@ -212,26 +212,26 @@ test('config set validates values before connecting', async () => {
       throw new Error('must not connect')
     },
   }
-  await assert.rejects(runQueryCommand('config', ['set', 'privacy', 'yes'], dependencies), /must be on or off/)
-  await assert.rejects(runQueryCommand('config', ['set', 'privacy-key', 'pp'], dependencies), /one printable/)
-  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-pins', 'claude,codex,cursor'], dependencies), /at most 2/)
-  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-pins', 'claude,wat'], dependencies), /unknown provider: wat/)
-  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-value', 'money'], dependencies), /usage or tokens-today/)
-  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-mode', 'manual'], dependencies), /auto or custom/)
-  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-elements', 'none'], dependencies), /at least one/)
-  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-elements', 'mark,logo'], dependencies), /unknown menu-bar element: logo/)
-  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-density', 'huge'], dependencies), /comfortable, compact, or tight/)
-  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-edge-padding', '6.5'], dependencies), /0 to 6/)
-  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-mark-value-gap', '2.25'], dependencies), /0.5pt increments/)
-  await assert.rejects(runQueryCommand('config', ['set', 'menu-bar-provider-gap', '16.5'], dependencies), /0 to 16/)
-  await assert.rejects(runQueryCommand('config', ['set', 'expanded-providers', 'claude,,codex'], dependencies), /comma-separated/)
-  await assert.rejects(runQueryCommand('config', ['set', 'summary-mode', 'average'], dependencies), /smart or tightest/)
-  await assert.rejects(runQueryCommand('config', ['set', 'active-window', '0'], dependencies), /1 to 1440/)
-  await assert.rejects(runQueryCommand('config', ['set', 'graph-range', '21'], dependencies), /7, 14, or 30/)
-  await assert.rejects(runQueryCommand('config', ['set', 'auto-detect', 'maybe'], dependencies), /must be on or off/)
-  await assert.rejects(runQueryCommand('config', ['set', 'enabled-providers', 'claude,wat'], dependencies), /unknown provider: wat/)
-  await assert.rejects(runQueryCommand('config', ['set', 'auto-detect-providers', 'claude,wat'], dependencies), /unknown provider: wat/)
-  await assert.rejects(runQueryCommand('config', ['set', 'unknown', 'on'], dependencies), /usage: tokmon config set/)
+  await assert.rejects(runConfigCommand(['set', 'privacy', 'yes'], dependencies), /must be on or off/)
+  await assert.rejects(runConfigCommand(['set', 'privacy-key', 'pp'], dependencies), /one printable/)
+  await assert.rejects(runConfigCommand(['set', 'menu-bar-pins', 'claude,codex,cursor'], dependencies), /at most 2/)
+  await assert.rejects(runConfigCommand(['set', 'menu-bar-pins', 'claude,wat'], dependencies), /unknown provider: wat/)
+  await assert.rejects(runConfigCommand(['set', 'menu-bar-value', 'money'], dependencies), /usage or tokens-today/)
+  await assert.rejects(runConfigCommand(['set', 'menu-bar-mode', 'manual'], dependencies), /auto or custom/)
+  await assert.rejects(runConfigCommand(['set', 'menu-bar-elements', 'none'], dependencies), /at least one/)
+  await assert.rejects(runConfigCommand(['set', 'menu-bar-elements', 'mark,logo'], dependencies), /unknown menu-bar element: logo/)
+  await assert.rejects(runConfigCommand(['set', 'menu-bar-density', 'huge'], dependencies), /comfortable, compact, or tight/)
+  await assert.rejects(runConfigCommand(['set', 'menu-bar-edge-padding', '6.5'], dependencies), /0 to 6/)
+  await assert.rejects(runConfigCommand(['set', 'menu-bar-mark-value-gap', '2.25'], dependencies), /0.5pt increments/)
+  await assert.rejects(runConfigCommand(['set', 'menu-bar-provider-gap', '16.5'], dependencies), /0 to 16/)
+  await assert.rejects(runConfigCommand(['set', 'expanded-providers', 'claude,,codex'], dependencies), /comma-separated/)
+  await assert.rejects(runConfigCommand(['set', 'summary-mode', 'average'], dependencies), /smart or tightest/)
+  await assert.rejects(runConfigCommand(['set', 'active-window', '0'], dependencies), /1 to 1440/)
+  await assert.rejects(runConfigCommand(['set', 'graph-range', '21'], dependencies), /7, 14, or 30/)
+  await assert.rejects(runConfigCommand(['set', 'auto-detect', 'maybe'], dependencies), /must be on or off/)
+  await assert.rejects(runConfigCommand(['set', 'enabled-providers', 'claude,wat'], dependencies), /unknown provider: wat/)
+  await assert.rejects(runConfigCommand(['set', 'auto-detect-providers', 'claude,wat'], dependencies), /unknown provider: wat/)
+  await assert.rejects(runConfigCommand(['set', 'unknown', 'on'], dependencies), /usage: tokmon config set/)
   assert.equal(connects, 0)
 })
 
@@ -247,7 +247,7 @@ test('deprecated menu-bar-text alias cannot hide the final visible element', asy
     },
   })
   await assert.rejects(
-    runQueryCommand('config', ['set', 'menu-bar-text', 'off'], harness),
+    runConfigCommand(['set', 'menu-bar-text', 'off'], harness),
     /would hide every menu-bar element/,
   )
   assert.equal(harness.closed(), 1)
@@ -264,7 +264,7 @@ test('config set retries one conflict from fresh daemon state without losing rem
   let gets = 0
   let sets = 0
   let closes = 0
-  const output = await runQueryCommand('config', ['set', 'privacy', 'off'], {
+  const output = await runConfigCommand(['set', 'privacy', 'off'], {
     connectConfig: async () => ({
       async getConfig() {
         gets++
@@ -292,7 +292,7 @@ test('config set retries one conflict from fresh daemon state without losing rem
 test('config set stops after one conflict retry and always closes', async () => {
   let sets = 0
   let closes = 0
-  await assert.rejects(runQueryCommand('config', ['set', 'privacy', 'off'], {
+  await assert.rejects(runConfigCommand(['set', 'privacy', 'off'], {
     connectConfig: async () => ({
       async getConfig() { return state(structuredClone(DEFAULTS)) },
       async setConfig() { sets++; throw { kind: 'conflict', state: state(DEFAULTS) } },

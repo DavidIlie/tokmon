@@ -1,7 +1,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import type { ProviderId } from '../providers'
 import type { Config, Account as StoredAccount, TrackedAccountRow } from '../config'
-import type { Slot } from '../app.logic'
+import type { Slot } from './app.logic'
 import type { AccountForm, SettingsTab } from './settings'
 
 export interface InputKey {

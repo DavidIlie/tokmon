@@ -1,11 +1,11 @@
+import { PROVIDER_META } from '../../config-schema'
 import type { Provider } from '../types'
 import { detectGemini, geminiBilling } from './billing'
 import { geminiDashboard, geminiTable } from './usage'
 
 export const geminiProvider: Provider = {
   id: 'gemini',
-  name: 'Gemini',
-  color: 'greenBright',
+  ...PROVIDER_META.gemini,
   hasUsage: true,
   hasBilling: true,
   detect: (homeDir) => detectGemini(homeDir),

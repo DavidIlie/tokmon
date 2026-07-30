@@ -4,7 +4,7 @@ import {
   formatShortDate,
   formatTime,
   formatTokens,
-} from './shared/format'
+} from '../shared/format'
 
 export const currency = formatCurrency
 export const tokens = formatTokens

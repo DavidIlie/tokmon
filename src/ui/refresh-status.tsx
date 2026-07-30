@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Text } from 'ink'
-import { glyphs } from '../glyphs'
+import { glyphs } from './glyphs'
 import type { RefreshStatus } from './hooks/use-refresh-all'
 import { Spinner } from './shared'
 import { useTuiTheme } from './theme'

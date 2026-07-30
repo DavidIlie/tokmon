@@ -1,5 +1,5 @@
 import type { Config, Metric, WebAccount, WebSnapshot } from '../../web/contract'
-import { MAX_PINNED_PROVIDERS, PROVIDER_ORDER } from '../../web/contract'
+import { MAX_PINNED_PROVIDERS, PROVIDER_META, PROVIDER_ORDER } from '../../web/contract'
 import { aggregateDashboardData } from '../../dashboard-data'
 import { formatCurrency, formatTokens, resetParts } from '../../shared/format'
 import type { DashboardData } from '../../types'
@@ -299,17 +299,11 @@ export function groupByProvider(snapshot: WebSnapshot): ProviderGroup[] {
       const plans = new Set(accounts.map(account => planLabel(account.plan)).filter(Boolean))
       return {
         providerId,
-        name: nameOf.get(providerId as never) ?? PROVIDER_NAMES[providerId] ?? providerId,
+        name: nameOf.get(providerId as never) ?? PROVIDER_META[providerId as keyof typeof PROVIDER_META]?.name ?? providerId,
         accounts,
         sharedPlan: plans.size === 1 ? [...plans][0]! : null,
       }
     })
-}
-
-/** Local display-name fallback used only when the snapshot omits a provider entry. */
-const PROVIDER_NAMES: Record<string, string> = {
-  claude: 'Claude', codex: 'Codex', cursor: 'Cursor', copilot: 'Copilot',
-  pi: 'Pi', opencode: 'opencode', antigravity: 'Antigravity', gemini: 'Gemini', grok: 'Grok',
 }
 
 // ── Activity (emphasis only — never reorders, never touches pins) ─────────────

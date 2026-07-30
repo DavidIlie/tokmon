@@ -218,7 +218,7 @@ export function contrastRatio(first: string, second: string): number {
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
 }
 
-function accessibleColor(color: string, backgrounds: readonly string[], minimum: number, toward: string): string {
+export function accessibleColor(color: string, backgrounds: readonly string[], minimum: number, toward: string): string {
   const intended = normalizeHexColor(color)!
   if (backgrounds.every(background => contrastRatio(intended, background) >= minimum)) return intended
 

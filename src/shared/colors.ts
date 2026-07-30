@@ -1,4 +1,5 @@
 import type { ProviderId } from '../providers/types'
+import { PROVIDER_META } from '../config-schema'
 
 export const FALLBACK_HEX = '#8d9090'
 
@@ -21,17 +22,9 @@ export const NAMED_HEX: Record<string, string> = {
   grey: FALLBACK_HEX,
 }
 
-export const PROVIDER_HEX: Record<ProviderId, string> = {
-  claude: NAMED_HEX.green,
-  codex: NAMED_HEX.cyan,
-  cursor: NAMED_HEX.magenta,
-  copilot: NAMED_HEX.white,
-  pi: NAMED_HEX.blue,
-  opencode: NAMED_HEX.yellow,
-  antigravity: NAMED_HEX.red,
-  gemini: NAMED_HEX.greenBright,
-  grok: NAMED_HEX.yellowBright,
-}
+export const PROVIDER_HEX = Object.fromEntries(
+  Object.entries(PROVIDER_META).map(([id, meta]) => [id, namedHex(meta.color)]),
+) as Record<ProviderId, string>
 
 export function namedHex(name: string | undefined | null): string {
   if (!name) return FALLBACK_HEX

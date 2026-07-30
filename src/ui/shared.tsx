@@ -4,7 +4,7 @@ import { Box, Text, type DOMElement } from 'ink'
 import { useOnMouseClick } from '@zenobius/ink-mouse'
 import type { Metric } from '../providers/types'
 import type { PeakStatus } from '../peak'
-import { glyphs } from '../glyphs'
+import { glyphs } from './glyphs'
 import { formatResetAt } from '../shared/format'
 import { useTuiTheme } from './theme'
 

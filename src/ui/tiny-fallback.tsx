@@ -1,6 +1,6 @@
 import { Box, Text } from 'ink'
-import { glyphs } from '../glyphs'
-import * as fmt from '../format'
+import { glyphs } from './glyphs'
+import * as fmt from './format'
 import { PROVIDERS, type Account, type ProviderId } from '../providers'
 import type { AccountStats } from '../stats'
 import { truncateName } from './shared'
