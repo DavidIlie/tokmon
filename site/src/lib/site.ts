@@ -1,5 +1,5 @@
 import rootPackage from '../../../package.json' with { type: 'json' }
-import { PROVIDER_META } from '../../../src/provider-meta.ts'
+import { PROVIDER_META } from '../../../src/config-schema.ts'
 import type { ProviderId } from '../../../src/providers/types.ts'
 
 export {
