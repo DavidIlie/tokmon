@@ -2,7 +2,6 @@ import { appendFileSync } from 'node:fs'
 import { memo, useEffect, useRef, useState } from 'react'
 import { Box, Text, type DOMElement } from 'ink'
 import { useOnMouseClick } from '@zenobius/ink-mouse'
-import type { Metric } from '../providers/types'
 import type { PeakStatus } from '../peak'
 import { glyphs } from './glyphs'
 import { formatResetAt } from '../shared/format'
@@ -135,10 +134,6 @@ export const PeakBadge = memo(function PeakBadge({ peak, resetDisplay = 'relativ
   )
 })
 
-function currencySymbol(cur?: string): string {
-  return cur === 'EUR' ? glyphs().eur : cur === 'GBP' ? glyphs().gbp : '$'
-}
-
 export function sparkline(values: number[]): string {
   if (values.length === 0) return ''
   const spark = glyphs().spark
@@ -159,20 +154,6 @@ export function Bar({ pct, color, width = 24 }: { pct: number; color?: string; w
       <Text dimColor>{glyphs().barEmpty.repeat(width - filled)}</Text>
     </Text>
   )
-}
-
-export function metricValueText(m: Metric): string {
-  if (m.format.kind === 'dollars') {
-    const sym = currencySymbol(m.format.currency)
-    const used = `${sym}${m.used.toFixed(2)}`
-    return m.limit != null ? `${used} / ${sym}${m.limit.toFixed(2)}` : `${used}`
-  }
-  if (m.format.kind === 'count') {
-    const suffix = m.format.suffix ? ` ${m.format.suffix}` : ''
-    const used = `${Math.round(m.used)}${suffix}`
-    return m.limit != null ? `${used} / ${Math.round(m.limit)}` : used
-  }
-  return `${Math.round(m.used)}%`
 }
 
 /** Inline single-line text with a rendered caret — the shared input primitive for

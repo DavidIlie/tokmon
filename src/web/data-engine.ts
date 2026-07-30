@@ -10,6 +10,7 @@ import {
 } from './data'
 import type { WebSnapshot, AccountFetchState, PeakStatus } from './contract'
 import type { Config, DetectedAccountRef } from '../config-schema'
+import { MIN_STALE_AFTER_MS } from '../usage-semantics'
 import { createRefreshQueue, settleRefreshTasks, type RefreshQueue } from './refresh-queue'
 import { decodeWebSnapshot } from './snapshot-schema'
 
@@ -19,13 +20,12 @@ const IDLE_PAUSE_MS = 60_000
 const SNAPSHOT_CACHE_THROTTLE_MS = 20_000
 const REVEAL_THROTTLE_MS = 500
 const FETCH_TIMEOUT_MS = 30_000
-export const DEFAULT_BILLING_STALE_MS = 5 * 60_000
 
 export function billingNeedsCatchUp(
   accounts: readonly ResolvedAccount[],
   updatedAt: ReadonlyMap<string, number>,
   now = Date.now(),
-  maxAgeMs = DEFAULT_BILLING_STALE_MS,
+  maxAgeMs = MIN_STALE_AFTER_MS,
 ): boolean {
   return accounts.some(({ account }) => now - (updatedAt.get(account.id) ?? 0) >= maxAgeMs)
 }

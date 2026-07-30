@@ -3,14 +3,14 @@ import { MAX_PINNED_PROVIDERS, PROVIDER_META, PROVIDER_ORDER } from '../../web/c
 import { aggregateDashboardData } from '../../dashboard-data'
 import { formatCurrency, formatTokens, resetParts } from '../../shared/format'
 import type { DashboardData } from '../../types'
-import { deriveQuotaView, resolveQuotaViews, type QuotaView } from '../../usage-semantics'
+import { deriveQuotaView, percentText, resolveQuotaViews, staleAfterMs, type QuotaView } from '../../usage-semantics'
 
 // ── Severity ─────────────────────────────────────────────────────────────────
 // The availability band + text tag are single-sourced in usage-semantics so the
-// ≤10/≤25 thresholds live in exactly one place across every surface. Re-exported
-// here for the desktop-local call sites (tray/tooltip colour) that already import
-// from this module.
-export { severity, severityTag, type Severity } from '../../usage-semantics'
+// ≤10/≤25 thresholds live in exactly one place across every surface, as is the
+// "<1%" percent rule. Re-exported here for the desktop-local call sites
+// (tray/tooltip colour and copy) that already import from this module.
+export { severity, severityTag, percentText, type Severity } from '../../usage-semantics'
 
 // ── Quotas ───────────────────────────────────────────────────────────────────
 export interface Quota {
@@ -121,10 +121,10 @@ export function usageDataStatus(accounts: readonly WebAccount[], intervalMs: num
   const usageAccounts = accounts.filter(account => account.hasUsage)
   const missing = usageAccounts.some(account => account.dashboard === null)
   const failed = usageAccounts.some(account => account.summaryState === 'error')
-  const staleAfterMs = Math.max(300_000, intervalMs * 2)
+  const staleAfter = staleAfterMs(intervalMs)
   const stale = usageAccounts.some(account => account.dashboard !== null
     && account.summaryUpdatedAt !== null
-    && now - account.summaryUpdatedAt > staleAfterMs)
+    && now - account.summaryUpdatedAt > staleAfter)
   if (missing) return failed ? 'Partial usage data · refresh failed' : 'Partial usage data'
   if (failed || stale) return 'Usage data may be outdated'
   return null
@@ -244,19 +244,7 @@ export function resetLabel(resetsAt: number | null, now: number): string | null 
 // ── Number formatting ────────────────────────────────────────────────────────
 /** Compact usage numeral: no "%" glyph (won't fit at "100"), "<1" below one percent. */
 export function usageNumberText(usage: number | null): string {
-  if (usage === null || !Number.isFinite(usage)) return '—'
-  if (usage > 0 && usage < 1) return '<1'
-  return String(Math.round(usage))
-}
-
-/** Availability formatter retained for internal representative diagnostics. */
-export function leftText(remaining: number): string {
-  return remaining > 0 && remaining < 1 ? '<1%' : `${Math.round(remaining)}%`
-}
-
-/** Generic bounded percentage copy for usage-oriented UI. */
-export function percentText(value: number): string {
-  return value > 0 && value < 1 ? '<1%' : `${Math.round(value)}%`
+  return percentText(usage, { unit: false })
 }
 
 /** Plan as plain text, price trivia removed; empty string means "no badge". */
@@ -327,11 +315,7 @@ export function billingObservedAt(account: WebAccount): number | null {
 }
 
 export function billingStaleAfterMs(snapshot: WebSnapshot): number {
-  const interval = snapshot.billingIntervalMs
-  const normalized = typeof interval === 'number' && Number.isFinite(interval) && interval > 0
-    ? interval
-    : 300_000
-  return Math.max(300_000, normalized * 2)
+  return staleAfterMs(snapshot.billingIntervalMs)
 }
 
 export function freshness(account: WebAccount, snapshot: WebSnapshot, now: number): Freshness {

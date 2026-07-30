@@ -396,6 +396,19 @@ test('the footer exposes a refresh target and a labelled Open Dashboard action',
   assert.match(html, /aria-label="Tokmon version 0\.28\.2, Background service 0\.28\.2 · protocol 4 · this app"/)
 })
 
+test('the footer ages its timestamp on the shared formatAgo cutoffs', () => {
+  const now = Date.now()
+  const footer = (generatedAt: number): string => renderToStaticMarkup(createElement(Footer, {
+    snapshot: { ...snapshot([account({})]), generatedAt }, refreshing: false, now,
+    appName: 'Tokmon', appVersion: '0.28.2', daemon: null,
+    onRefresh: () => {}, onSettings: () => {}, onDashboard: () => {},
+  }))
+  assert.match(footer(now - 1_000), /Updated just now/)
+  assert.match(footer(now - 5_000), /Updated 5s ago/)
+  assert.match(footer(now - 90_000), /Updated 2m ago/)
+  assert.match(footer(now - 2 * 24 * 3_600_000), /Updated 2d ago/)
+})
+
 test('the footer identifies a compatible CLI-owned background service', () => {
   const html = renderToStaticMarkup(createElement(Footer, {
     snapshot: snapshot([account({})]), refreshing: false, now: Date.now(),

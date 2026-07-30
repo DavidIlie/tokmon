@@ -1,4 +1,4 @@
-import { projectAccountIdentity, severity, usageFromHeadroom, type AppearanceConfig, type QuotaView, type Severity, type WebAccount } from '@shared'
+import { percentText, projectAccountIdentity, severity, usageFromHeadroom, type AppearanceConfig, type QuotaView, type Severity, type WebAccount } from '@shared'
 import type { Derived } from '../../lib/derive'
 import { fmtCost, fmtNum, fmtResetAt, fmtTokens } from '../../lib/format'
 import { providerHex, shortModel } from '../../lib/colors'
@@ -133,7 +133,7 @@ export function ProviderCard({ account, index, preset, providerName, privacyMode
         return (
         <div className="mt-3 flex items-baseline justify-between rounded border border-line-faint bg-bg-0/35 px-2.5 py-2">
           <span className="text-[10px] uppercase tracking-wide text-fg-faint">usage</span>
-          <span className={`tnum text-sm font-semibold ${level}`}>{Math.round(usage)}% used</span>
+          <span className={`tnum text-sm font-semibold ${level}`}>{percentText(usage)} used</span>
         </div>
         )
       })()}

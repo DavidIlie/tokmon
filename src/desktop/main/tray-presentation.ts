@@ -1,3 +1,5 @@
+import { percentText } from '../../usage-semantics'
+
 export interface TrayIconSpec {
   pointSize: number
   scaleFactors: readonly number[]
@@ -40,9 +42,7 @@ export function menuBarTitle(
   if (!showText) return ''
   if (alternate !== undefined) return alternate
   if (usedPct === null || !Number.isFinite(usedPct)) return ''
-  const bounded = Math.max(0, Math.min(100, usedPct))
-  const used = bounded > 0 && bounded < 1 ? '<1' : String(Math.round(bounded))
-  return `${used}%`
+  return percentText(Math.max(0, Math.min(100, usedPct)))
 }
 
 /** Disconnected state is conveyed by the icon's critical ring + tooltip words, not "!". */

@@ -9,7 +9,7 @@ import { Bar, sparkline, truncateName } from './shared'
 import { glyphs } from './glyphs'
 import { redactEmail } from '../config'
 import { planDisplay, normalizePlan, billingStaleLabel } from './provider-card.logic'
-import { resolveQuotaViews, severity, usageFromHeadroom, type QuotaView } from '../usage-semantics'
+import { percentText, resolveQuotaViews, severity, usageFromHeadroom, type QuotaView } from '../usage-semantics'
 import { resolveAccountTitle } from './app-layout.logic'
 import { aggregateDashboardData, cachedTokenPercentage } from '../dashboard-data'
 import { useTuiTheme } from './theme'
@@ -51,6 +51,7 @@ export type GridLayout = {
 export function estimateCardHeights(
   groups: { provider: ProviderId; accounts: Account[] }[],
   stats: Map<string, AccountStats>,
+  billingIntervalMs?: number,
 ): number[] {
   return groups.map(g => {
     const meta = PROVIDERS[g.provider]
@@ -62,7 +63,7 @@ export function estimateCardHeights(
       g.accounts.forEach((a, i) => {
         const s = stats.get(a.id)
         const staleRow = s?.billing && !s.billing.error && quotaViews(s).length > 0
-          && billingStaleLabel(s.billing.asOfMs ?? s.billingUpdatedAt, Date.now()) ? 1 : 0
+          && billingStaleLabel(s.billing.asOfMs ?? s.billingUpdatedAt, Date.now(), billingIntervalMs) ? 1 : 0
         const metricRows = (quotaViews(s).length || 1) + staleRow
         h += metricRows + (multi ? 1 : 0) + (multi && i > 0 ? 1 : 0) // name row + gap between accounts
       })
@@ -123,9 +124,10 @@ export function computeDashLayout(
   budget: number,
   focusId: string | null,
   layoutPref: 'grid' | 'single',
+  billingIntervalMs?: number,
 ): GridLayout {
   const content = Math.max(30, cols - 4)
-  const heights = estimateCardHeights(groups, stats)
+  const heights = estimateCardHeights(groups, stats, billingIntervalMs)
   const single = focusId !== null || layoutPref === 'single'
   if (layoutPref === 'single' && focusId === null && groups.length > 1) {
     // "Single" with All focus pages through providers one card at a time.
@@ -135,7 +137,7 @@ export function computeDashLayout(
   return chooseLayout(content, budget, groups.length, single, cols, heights)
 }
 
-export const DashboardView = memo(function DashboardView({ groups, stats, cols, budget, computed, page = 0, privacyMode = false, privacyLabels, resetDisplay = 'relative', tz }: {
+export const DashboardView = memo(function DashboardView({ groups, stats, cols, budget, computed, page = 0, privacyMode = false, privacyLabels, resetDisplay = 'relative', tz, billingIntervalMs }: {
   groups: { provider: ProviderId; accounts: Account[] }[]
   stats: Map<string, AccountStats>
   cols: number
@@ -149,6 +151,7 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
   privacyLabels?: ReadonlyMap<string, string>
   resetDisplay?: 'relative' | 'absolute'
   tz?: string
+  billingIntervalMs?: number
 }) {
   if (groups.length === 0) {
     return <Text dimColor>No providers enabled {glyphs().emDash} press s to pick providers.</Text>
@@ -170,7 +173,7 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
       <Box width={content} flexWrap="wrap" columnGap={GAP} rowGap={1} alignItems="flex-start">
         {visible.map(g => (
           <Box key={g.provider} flexShrink={0}>
-            <ProviderCard provider={g.provider} accounts={g.accounts} stats={stats} width={cardW} variant={variant} privacyMode={privacyMode} privacyLabels={privacyLabels} resetDisplay={resetDisplay} tz={tz} />
+            <ProviderCard provider={g.provider} accounts={g.accounts} stats={stats} width={cardW} variant={variant} privacyMode={privacyMode} privacyLabels={privacyLabels} resetDisplay={resetDisplay} tz={tz} billingIntervalMs={billingIntervalMs} />
           </Box>
         ))}
       </Box>
@@ -181,7 +184,7 @@ export const DashboardView = memo(function DashboardView({ groups, stats, cols, 
   )
 })
 
-function ProviderCard({ provider, accounts, stats, width, variant, privacyMode = false, privacyLabels, resetDisplay, tz }: {
+function ProviderCard({ provider, accounts, stats, width, variant, privacyMode = false, privacyLabels, resetDisplay, tz, billingIntervalMs }: {
   provider: ProviderId
   accounts: Account[]
   stats: Map<string, AccountStats>
@@ -191,6 +194,7 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
   privacyLabels?: ReadonlyMap<string, string>
   resetDisplay: 'relative' | 'absolute'
   tz?: string
+  billingIntervalMs?: number
 }) {
   const theme = useTuiTheme()
   const meta = PROVIDERS[provider]
@@ -215,7 +219,7 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
       </Box>
       {headroom?.value != null && (
         <Box>
-          <Text dimColor>Usage </Text><Text bold color={severityColor(headroom.value, theme.crit, theme.warn, meta.color)}>{Math.round(usageFromHeadroom(headroom.value)!)}%</Text>
+          <Text dimColor>Usage </Text><Text bold color={severityColor(headroom.value, theme.crit, theme.warn, meta.color)}>{percentText(usageFromHeadroom(headroom.value))}</Text>
         </Box>
       )}
 
@@ -236,7 +240,7 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
       {meta.hasBilling && showBars && (
         <>
           {meta.hasUsage && <Rule inner={inner} />}
-          <LimitsBlock items={items} inner={inner} showRowPlans={planView.mode === 'perRow'} privacyMode={privacyMode} privacyLabels={privacyLabels} resetDisplay={resetDisplay} tz={tz} providerName={meta.name} />
+          <LimitsBlock items={items} inner={inner} showRowPlans={planView.mode === 'perRow'} privacyMode={privacyMode} privacyLabels={privacyLabels} resetDisplay={resetDisplay} tz={tz} providerName={meta.name} billingIntervalMs={billingIntervalMs} />
         </>
       )}
       {meta.hasBilling && !showBars && !meta.hasUsage && (
@@ -309,7 +313,7 @@ function KpiLine({ agg }: { agg: DashboardData }) {
   )
 }
 
-function LimitsBlock({ items, inner, showRowPlans, privacyMode, privacyLabels, resetDisplay, tz, providerName }: {
+function LimitsBlock({ items, inner, showRowPlans, privacyMode, privacyLabels, resetDisplay, tz, providerName, billingIntervalMs }: {
   items: Item[]
   inner: number
   showRowPlans: boolean
@@ -318,6 +322,7 @@ function LimitsBlock({ items, inner, showRowPlans, privacyMode, privacyLabels, r
   resetDisplay: 'relative' | 'absolute'
   tz?: string
   providerName: string
+  billingIntervalMs?: number
 }) {
   const theme = useTuiTheme()
   const showName = items.length > 1
@@ -332,7 +337,7 @@ function LimitsBlock({ items, inner, showRowPlans, privacyMode, privacyLabels, r
         const billing = s?.billing
         const quotas = quotaViews(s)
         const staleLabel = billing && !billing.error && quotas.length > 0
-          ? billingStaleLabel(billing.asOfMs ?? s?.billingUpdatedAt, Date.now())
+          ? billingStaleLabel(billing.asOfMs ?? s?.billingUpdatedAt, Date.now(), billingIntervalMs)
           : null
         return (
           <Box key={account.id} flexDirection="column" marginTop={showName && idx > 0 ? 1 : 0}>

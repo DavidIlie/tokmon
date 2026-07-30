@@ -224,6 +224,9 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
   const intervalLabel = connected && snapshot?.intervalMs
     ? Math.round(snapshot.intervalMs / 1000)
     : cfg.interval
+  const billingIntervalMs = connected && snapshot?.billingIntervalMs
+    ? snapshot.billingIntervalMs
+    : cfg.billingInterval * 60_000
   const billingIntervalLabel = connected && snapshot?.billingIntervalMs
     ? Math.max(1, Math.round(snapshot.billingIntervalMs / 60_000))
     : cfg.billingInterval
@@ -267,8 +270,8 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
 
   const { gridBudget } = useMemo(() => computeChrome(slots, cols, rows), [slots, cols, rows])
   const dashLayout = useMemo(
-    () => computeDashLayout(groups, stats, cols, gridBudget, focusId, cfg.dashboardLayout),
-    [groups, stats, cols, gridBudget, focusId, cfg.dashboardLayout],
+    () => computeDashLayout(groups, stats, cols, gridBudget, focusId, cfg.dashboardLayout, billingIntervalMs),
+    [groups, stats, cols, gridBudget, focusId, cfg.dashboardLayout, billingIntervalMs],
   )
   const dashPageCount = dashLayout.pageCount
   const dashPaginated = dashPageCount > 1
@@ -615,7 +618,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
           </Box>
           {tab === 0 && (
             <>
-              <DashboardView groups={groups} stats={stats} cols={cols} budget={gridBudget} computed={dashLayout} page={dashPage} privacyMode={cfg.privacyMode} privacyLabels={privacyLabels} resetDisplay={cfg.resetDisplay} tz={tz} />
+              <DashboardView groups={groups} stats={stats} cols={cols} budget={gridBudget} computed={dashLayout} page={dashPage} privacyMode={cfg.privacyMode} privacyLabels={privacyLabels} resetDisplay={cfg.resetDisplay} tz={tz} billingIntervalMs={billingIntervalMs} />
               {slots.length > 1 && (
                 <Box marginTop={1}>
                   <Text dimColor>focus  </Text>

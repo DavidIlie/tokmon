@@ -7,7 +7,6 @@ import {
   compactDuration,
   freshness,
   groupByProvider,
-  leftText,
   metricQuota,
   percentText,
   planLabel,
@@ -138,9 +137,10 @@ test('compact usage numeral omits the percent glyph and collapses sub-1%', () =>
   assert.equal(usageNumberText(58), '58')
   assert.equal(usageNumberText(0.4), '<1')
   assert.equal(usageNumberText(null), '—')
-  assert.equal(leftText(58), '58%')
-  assert.equal(leftText(0.4), '<1%')
+  assert.equal(percentText(58), '58%')
+  assert.equal(percentText(0.4), '<1%')
   assert.equal(percentText(81), '81%')
+  assert.equal(percentText(null), '—')
 })
 
 test('plan labels drop price trivia and keep plain case', () => {

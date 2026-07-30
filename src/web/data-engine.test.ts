@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  DEFAULT_BILLING_STALE_MS,
   billingNeedsCatchUp,
   createDataEngine,
   engineConfigKey,
@@ -10,6 +9,7 @@ import {
 } from './data-engine'
 import { createRefreshQueue, settleRefreshTasks } from './refresh-queue'
 import { DEFAULTS } from '../config-schema'
+import { MIN_STALE_AFTER_MS } from '../usage-semantics'
 import { decodeWebSnapshot } from './snapshot-schema'
 
 function deferred() {
@@ -53,12 +53,12 @@ test('a new viewer catches up missing or stale quota data', () => {
   assert.equal(billingNeedsCatchUp(accounts, new Map(), 1_000_000), true)
   assert.equal(billingNeedsCatchUp(
     accounts,
-    new Map([['codex', 1_000_000 - DEFAULT_BILLING_STALE_MS + 1]]),
+    new Map([['codex', 1_000_000 - MIN_STALE_AFTER_MS + 1]]),
     1_000_000,
   ), false)
   assert.equal(billingNeedsCatchUp(
     accounts,
-    new Map([['codex', 1_000_000 - DEFAULT_BILLING_STALE_MS]]),
+    new Map([['codex', 1_000_000 - MIN_STALE_AFTER_MS]]),
     1_000_000,
   ), true)
   assert.equal(billingNeedsCatchUp(

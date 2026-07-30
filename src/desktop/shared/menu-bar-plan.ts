@@ -1,7 +1,7 @@
 import type { Config, MenuBarConfig, MenuBarDensity } from '../../config-schema'
 import type { WebAccount, WebSnapshot } from '../../web/contract'
 import { formatCompactTokens } from '../../shared/format'
-import { resolveQuotaViews, usageFromHeadroom } from '../../usage-semantics'
+import { percentText, resolveQuotaViews, usageFromHeadroom } from '../../usage-semantics'
 
 export interface MenuBarSegmentValue {
   providerId: string
@@ -219,8 +219,7 @@ export function menuBarValuesFromSnapshot(
 export function menuBarLabel(usage: number | null): string {
   const value = finiteUsage(usage)
   if (value === null) return '–'
-  if (value > 0 && value < 1) return '<1%'
-  return `${Math.round(value)}%`
+  return percentText(value)
 }
 
 /** Stable bucket is part of the render signature, not the exact display width. */

@@ -8,7 +8,8 @@ import type { AccountStats } from '../stats'
 import { glyphs } from './glyphs'
 import * as fmt from './format'
 import { redactEmail } from '../config'
-import { truncateName, metricValueText } from './shared'
+import { truncateName } from './shared'
+import { deriveQuotaView } from '../usage-semantics'
 import { useTuiTheme } from './theme'
 
 type Group = { provider: ProviderId; accounts: Account[] }
@@ -51,7 +52,7 @@ function headlineFor(group: Group, items: (AccountStats | undefined)[], privacyM
   if (!billing) return 'no data'
   if (billing.error) return privacyMode ? redactEmail(billing.error) : billing.error
   const m = billing.metrics[0]
-  if (m) return metricValueText(m)
+  if (m) return deriveQuotaView(m).valueText
   return billing.plan ?? 'no data'
 }
 

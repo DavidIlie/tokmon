@@ -97,7 +97,7 @@ function valueText(metric: Metric, usedPct: number | null, value?: QuotaValue): 
       ? `${used} · ${formatMoney(value.remaining, value.currency)} left`
       : `${used} · ${formatMoney(-value.remaining, value.currency)} over`
   }
-  if (usedPct !== null) return `${Math.round(usedPct)}% used`
+  if (usedPct !== null) return `${percentText(usedPct)} used`
   if (!Number.isFinite(metric.used)) return '—'
   if (metric.format.kind === 'dollars') {
     return formatMoney(metric.used, metric.format.currency?.trim().toUpperCase() || 'USD')
@@ -106,7 +106,7 @@ function valueText(metric: Metric, usedPct: number | null, value?: QuotaValue): 
     const suffix = metric.format.suffix?.trim()
     return `${Math.round(metric.used).toLocaleString('en-US')}${suffix ? ` ${suffix}` : ''}`
   }
-  return `${Math.round(metric.used)}% used`
+  return `${percentText(metric.used)} used`
 }
 
 const roleOrder = (role: MetricRole): number => role === 'session' ? 0 : role === 'weekly' ? 1 : role === 'model' ? 2 : role === 'other' ? 3 : 4
@@ -178,6 +178,35 @@ export function severityTag(level: Severity): string | null {
   if (level === 'warn') return 'High'
   if (level === 'crit') return 'Very high'
   return null
+}
+
+/**
+ * The one rounded-percent display rule. A non-zero value below one percent reads
+ * "<1" rather than rounding to a "0" that would look like no usage at all.
+ * `unit: false` drops the glyph for the menu-bar numeral, which has no room for
+ * it at "100".
+ */
+export function percentText(value: number | null, opts: { unit?: boolean } = {}): string {
+  if (value === null || !Number.isFinite(value)) return '—'
+  const unit = opts.unit === false ? '' : '%'
+  return value > 0 && value < 1 ? `<1${unit}` : `${Math.round(value)}${unit}`
+}
+
+// ── Freshness ────────────────────────────────────────────────────────────────
+/** Never call data stale sooner than one default poll cycle, however short the configured interval. */
+export const MIN_STALE_AFTER_MS = 5 * 60_000
+
+/**
+ * The one staleness threshold, shared by every surface: two missed polls, floored
+ * at MIN_STALE_AFTER_MS. Adapting to the configured interval means a fast poller
+ * flags frozen data quickly while a slow one is not permanently "stale". An
+ * absent or non-positive interval (legacy snapshots) falls back to the floor.
+ */
+export function staleAfterMs(intervalMs: number | null | undefined): number {
+  const interval = typeof intervalMs === 'number' && Number.isFinite(intervalMs) && intervalMs > 0
+    ? intervalMs
+    : MIN_STALE_AFTER_MS
+  return Math.max(MIN_STALE_AFTER_MS, interval * 2)
 }
 
 /** Registered account title first; privacy mode always becomes a stable provider ordinal. */
@@ -372,7 +401,7 @@ function cumulativeQuotaViews(accounts: readonly HeadroomAccountInput[]): QuotaV
       primary: rows.some(quota => quota.primary),
       active: rows.some(quota => quota.active),
       displayOrder: Math.min(...rows.map(quota => quota.displayOrder)),
-      valueText: `${Math.round(usedPct)}% used`,
+      valueText: `${percentText(usedPct)} used`,
     }
     }).sort((a, b) => roleOrder(a.role) - roleOrder(b.role) || a.displayOrder - b.displayOrder || a.key.localeCompare(b.key))
 }

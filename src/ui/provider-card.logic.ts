@@ -1,17 +1,22 @@
 // Pure plan-display logic for ProviderCard. No Ink/React imports so it is unit-testable.
 
 import { formatAgo } from '../shared/format'
+import { staleAfterMs } from '../usage-semantics'
 
-// The daemon pauses billing polls while no viewer is attached, so re-attaching can
-// briefly render an hours-old quota card before the forced refresh lands. Anything
-// older than this is flagged so frozen bars can't masquerade as current. Comfortably
-// above the default 5-minute poll so it never fires during normal operation.
-export const BILLING_STALE_AFTER_MS = 30 * 60_000
-
-/** Label like "as of 9h ago" when billing data is old enough to mislead, else null. */
-export function billingStaleLabel(billingUpdatedAt: number | null | undefined, now: number): string | null {
+/**
+ * Label like "as of 9h ago" when billing data is old enough to mislead, else null.
+ * The daemon pauses billing polls while no viewer is attached, so re-attaching can
+ * briefly render an hours-old quota card before the forced refresh lands; flagging
+ * it keeps frozen bars from masquerading as current. The threshold is the shared
+ * two-missed-polls rule, so it follows the configured billing interval.
+ */
+export function billingStaleLabel(
+  billingUpdatedAt: number | null | undefined,
+  now: number,
+  billingIntervalMs?: number,
+): string | null {
   if (billingUpdatedAt == null || billingUpdatedAt <= 0) return null
-  if (now - billingUpdatedAt < BILLING_STALE_AFTER_MS) return null
+  if (now - billingUpdatedAt < staleAfterMs(billingIntervalMs)) return null
   return `as of ${formatAgo(billingUpdatedAt, now)}`
 }
 

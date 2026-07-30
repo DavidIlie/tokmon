@@ -17,6 +17,7 @@ import {
   type WebAccount,
   type WebSnapshot,
 } from '../../web/contract'
+import { formatAgo } from '../../shared/format'
 import type { DesktopState, DesktopUpdateState } from '../shared/desktop-contract'
 import { snapshotUsageTotals, totalsCopy, usageDataStatus } from '../shared/presentation'
 import {
@@ -48,12 +49,7 @@ function themePreviewStyle(appearance: AppearanceConfig, preset: ThemePreset, sy
 
 function updatedLabel(snapshot: WebSnapshot | null, now: number): string {
   if (!snapshot) return 'Waiting…'
-  const seconds = Math.max(0, Math.round((now - snapshot.generatedAt) / 1000))
-  if (seconds < 15) return 'Updated just now'
-  if (seconds < 60) return `Updated ${seconds}s ago`
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `Updated ${minutes}m ago`
-  return `Updated ${Math.round(minutes / 60)}h ago`
+  return `Updated ${formatAgo(snapshot.generatedAt, now)}`
 }
 
 function SettingsIcon() {

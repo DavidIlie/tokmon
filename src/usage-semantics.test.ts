@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Metric } from './providers/types'
-import { accountIdentityText, accountProviderOrdinals, blendHeadroom, deriveAccountIdentity, deriveProviderHeadroom, deriveQuotaView, deriveQuotaViews, projectAccountIdentity, resolveQuotaViews, severity, severityTag, tightestQuotaView, usageFromHeadroom } from './usage-semantics'
+import { accountIdentityText, accountProviderOrdinals, blendHeadroom, deriveAccountIdentity, deriveProviderHeadroom, deriveQuotaView, deriveQuotaViews, MIN_STALE_AFTER_MS, percentText, projectAccountIdentity, resolveQuotaViews, severity, severityTag, staleAfterMs, tightestQuotaView, usageFromHeadroom } from './usage-semantics'
 
 const pct = (label: string, used: number, extra: Partial<Metric> = {}): Metric => ({
   label, used, limit: 100, format: { kind: 'percent' }, ...extra,
@@ -194,6 +194,34 @@ test('severity bands are single-sourced at the ≤10 / ≤25 boundaries', () => 
   assert.equal(severityTag('warn'), 'High')
   assert.equal(severityTag('ok'), null)
   assert.equal(severityTag('unknown'), null)
+})
+
+test('percent copy never rounds a live sliver of usage down to zero', () => {
+  assert.equal(percentText(0), '0%')
+  assert.equal(percentText(0.0001), '<1%')
+  assert.equal(percentText(0.4), '<1%')
+  assert.equal(percentText(1), '1%')
+  assert.equal(percentText(58.6), '59%')
+  assert.equal(percentText(100), '100%')
+  assert.equal(percentText(null), '—')
+  assert.equal(percentText(Number.NaN), '—')
+  // The menu-bar numeral drops the glyph but keeps the same rule.
+  assert.equal(percentText(0.4, { unit: false }), '<1')
+  assert.equal(percentText(58.6, { unit: false }), '59')
+  // Which is what every surface's quota row reads.
+  assert.equal(deriveQuotaView(pct('Session', 0.4)).valueText, '<1% used')
+})
+
+test('staleness is two missed polls, floored at one default cycle', () => {
+  assert.equal(MIN_STALE_AFTER_MS, 300_000)
+  assert.equal(staleAfterMs(60_000), 300_000)
+  assert.equal(staleAfterMs(300_000), 600_000)
+  assert.equal(staleAfterMs(1_800_000), 3_600_000)
+  // Legacy snapshots and misconfigured intervals fall back to the default cycle.
+  assert.equal(staleAfterMs(undefined), 600_000)
+  assert.equal(staleAfterMs(null), 600_000)
+  assert.equal(staleAfterMs(0), 600_000)
+  assert.equal(staleAfterMs(Number.NaN), 600_000)
 })
 
 test('shared account identity is title/subtitle-first, de-duped, provider-filtered', () => {

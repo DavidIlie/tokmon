@@ -19,7 +19,7 @@ export type {
 export type { AccountIdentityView, HeadroomFactor, HeadroomView, MetricRole, QuotaView } from '../usage-semantics'
 export { usageFromHeadroom } from '../usage-semantics'
 export type { Severity } from '../usage-semantics'
-export { severity, severityTag, accountIdentityText, accountProviderOrdinals, projectAccountIdentity } from '../usage-semantics'
+export { severity, severityTag, percentText, accountIdentityText, accountProviderOrdinals, projectAccountIdentity } from '../usage-semantics'
 export { MONTHS } from '../shared/format'
 export { dayKey, mondayDayIndex, systemTimezone, weekStartDayKey } from '../tz'
 
