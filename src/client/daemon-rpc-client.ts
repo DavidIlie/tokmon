@@ -304,7 +304,7 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
         ).pipe(Layer.provide(protocolLayer))
         runtime = ManagedRuntime.make(clientLayer)
         pendingRuntime = runtime
-        await runtime.runPromise(TokmonRpcClient.asEffect())
+        await runtime.runPromise(TokmonRpcClient.use(Effect.succeed))
         await waitForReady(ready, disconnected, requestTimeoutMs)
         if (closed) throw new Error('daemon RPC client is closed')
 
