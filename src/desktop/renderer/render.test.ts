@@ -4,19 +4,19 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { DEFAULTS, type Config, type DashboardData, type Metric, type UsageSummary, type WebAccount, type WebSnapshot } from '../../web/contract'
 import {
-  DesktopSettings,
-  MenuBarSettings,
-  ProvidersSettings,
-  Footer,
-  SettingsHub,
-  ThemeSettings,
-  TotalsBar,
-  UpdateReady,
   patchMenuBarPresentation,
   resetMenuBarPresentation,
   setMenuBarElementVisibility,
   setMenuBarValue,
-} from './desktop-chrome'
+} from '../../web/contract'
+import { Footer, TotalsBar, UpdateReady } from './desktop-chrome'
+import {
+  DesktopSettings,
+  MenuBarSettings,
+  ProvidersSettings,
+  SettingsHub,
+  ThemeSettings,
+} from './desktop-settings'
 import { ProviderCard } from './provider-card'
 import { groupByProvider } from './presentation'
 import { providerMark } from './provider-icons'

@@ -2,6 +2,7 @@ import type { Config, Metric, WebAccount, WebSnapshot } from '../../web/contract
 import { MAX_PINNED_PROVIDERS, PROVIDER_META, PROVIDER_ORDER } from '../../web/contract'
 import { aggregateDashboardData } from '../../dashboard-data'
 import { formatCurrency, formatTokens, resetParts } from '../../shared/format'
+import type { DesktopState } from './desktop-contract'
 import type { DashboardData } from '../../types'
 import { deriveQuotaView, percentText, resolveQuotaViews, staleAfterMs, type QuotaView } from '../../usage-semantics'
 
@@ -406,4 +407,12 @@ export function usageAriaValueText(
   const reset = resetLabel(resetsAt, now)
   const spoken = reset ? `, ${reset.toLowerCase()}` : ''
   return `${subject}, ${Math.round(used)} percent used${spoken}`
+}
+
+// ── Background service ───────────────────────────────────────────────────────
+/** One-line identity of the daemon this app talks to, shown in the footer and Desktop settings. */
+export function daemonLabel(daemon: DesktopState['daemon']): string | null {
+  if (!daemon) return null
+  const owner = daemon.role === 'owner' ? 'this app' : daemon.ownerKind === 'cli' ? 'CLI' : 'desktop app'
+  return `Background service ${daemon.version} · protocol ${daemon.protocolVersion} · ${owner}`
 }

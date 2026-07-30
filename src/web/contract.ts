@@ -25,6 +25,7 @@ export { dayKey, mondayDayIndex, systemTimezone, weekStartDayKey } from '../tz'
 
 export type {
   Config, Account, TrayConfig, MenuBarConfig, MenuBarMode, MenuBarDensity,
+  MenuBarElement, MenuBarSpacingField,
   AccountDetectionConfig, DetectedAccountRef, DesktopGraphRange,
   TrackedAccountRow, TrackedAccountSource,
 } from '../config-schema'
@@ -52,6 +53,12 @@ export {
   setProviderTrackingEnabled,
   setProviderDetectionEnabled,
   setDetectedAccountExcluded,
+  MENU_BAR_SPACING_MAX_PT,
+  setMenuBarElementVisibility,
+  patchMenuBarPresentation,
+  adjustMenuBarSpacing,
+  setMenuBarValue,
+  resetMenuBarPresentation,
   sanitizeTyped,
   containsEmail,
   redactEmail,

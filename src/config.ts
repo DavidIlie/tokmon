@@ -6,6 +6,7 @@ import { DEFAULTS, normalizeConfig, repairConfig, type Config, type Account } fr
 
 export type {
   Config, Account, TrayConfig, MenuBarConfig, MenuBarMode, MenuBarDensity,
+  MenuBarElement, MenuBarSpacingField,
   AccountDetectionConfig, DetectedAccountRef, DesktopGraphRange,
 } from './config-schema'
 export type { TrackedAccountRow, TrackedAccountSource } from './config-schema'
@@ -25,6 +26,12 @@ export {
   setProviderTrackingEnabled,
   setProviderDetectionEnabled,
   setDetectedAccountExcluded,
+  MENU_BAR_SPACING_MAX_PT,
+  setMenuBarElementVisibility,
+  patchMenuBarPresentation,
+  adjustMenuBarSpacing,
+  setMenuBarValue,
+  resetMenuBarPresentation,
   clampNum,
   normalizeConfig,
   repairConfig,

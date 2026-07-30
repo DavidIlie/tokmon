@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { WebSnapshot } from '@shared'
 import { fmtAgo, fmtResetAt } from '../lib/format'
-import type { ConnState } from '../lib/useSnapshot'
+import type { ConnState } from '../lib/use-snapshot'
 import { Moon, Refresh, Settings, Sun } from './icons'
 import { FOCUS_RING } from './ui/primitives'
 

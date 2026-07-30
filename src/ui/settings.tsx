@@ -1,9 +1,9 @@
 import { Fragment, memo, type ReactNode } from 'react'
 import { Box, Text } from 'ink'
 import { glyphs } from './glyphs'
-import { configLocation, DEFAULT_MENU_BAR_CONFIG, DESKTOP_GRAPH_RANGES, generateAccountId, COLOR_PALETTE, providerDetectionEnabled, redactEmail, removedRowCopy, sanitizeTyped, toggleProviderSelection, type Config, type Account, type MenuBarConfig, type TrackedAccountRow } from '../config'
+import { AccountFormView, type AccountForm } from './account-form'
+import { adjustMenuBarSpacing, configLocation, DESKTOP_GRAPH_RANGES, patchMenuBarPresentation, providerDetectionEnabled, redactEmail, removedRowCopy, resetMenuBarPresentation, sanitizeTyped, setMenuBarElementVisibility, setMenuBarValue, toggleProviderSelection, type Config, type TrackedAccountRow } from '../config'
 import { PROVIDER_ORDER, PROVIDERS } from '../providers'
-import type { ProviderId } from '../providers/types'
 import { systemTimezone } from '../tz'
 import { CaretText, truncateName } from './shared'
 import { useTuiTheme } from './theme'
@@ -62,43 +62,6 @@ function cycleNumber(values: readonly number[], current: number, direction: -1 |
 const step = (key: InputKey): -1 | 1 => (key.leftArrow ? -1 : 1)
 const isToggleKey = (key: InputKey): boolean => key.leftArrow || key.rightArrow || key.return
 const isAdjustKey = (input: string, key: InputKey): boolean => input === ' ' || key.leftArrow || key.rightArrow || key.return
-
-type MenuBarElement = keyof MenuBarConfig['elements']
-
-function toggleMenuBarPresentationElement(config: Config, element: MenuBarElement): Config {
-  const elements = config.tray.menuBar.elements
-  if (elements[element] && Object.values(elements).filter(Boolean).length === 1) return config
-  const nextElements = { ...elements, [element]: !elements[element] }
-  return {
-    ...config,
-    tray: {
-      ...config.tray,
-      showMenuBarText: nextElements.value,
-      menuBar: { ...config.tray.menuBar, elements: nextElements },
-    },
-  }
-}
-
-function adjustMenuBarSpacing(
-  config: Config,
-  field: keyof MenuBarConfig['customSpacing'],
-  direction: -1 | 1,
-  max: number,
-): Config {
-  const current = config.tray.menuBar.customSpacing[field]
-  const value = Math.min(max, Math.max(0, Math.round((current + direction * 0.5) * 2) / 2))
-  return {
-    ...config,
-    tray: {
-      ...config.tray,
-      menuBar: {
-        ...config.tray.menuBar,
-        mode: 'custom',
-        customSpacing: { ...config.tray.menuBar.customSpacing, [field]: value },
-      },
-    },
-  }
-}
 
 export const GENERAL_SETTINGS: SettingRow[] = [
   {
@@ -251,27 +214,27 @@ export const DESKTOP_FIXED_SETTINGS: SettingRow[] = [
   {
     key: 'menuBarMode', label: 'Menu bar layout',
     render: rc => caret(<Text bold color={rc.theme.accent}>{rc.config.tray.menuBar.mode}</Text>),
-    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, menuBar: { ...c.tray.menuBar, mode: c.tray.menuBar.mode === 'auto' ? 'custom' : 'auto' } } })) },
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => patchMenuBarPresentation(c, { mode: c.tray.menuBar.mode === 'auto' ? 'custom' : 'auto' })) },
   },
   {
     key: 'menuBarMark', label: 'Provider mark',
     render: rc => toggleText(rc.config.tray.menuBar.elements.providerMark, rc.theme, 'shown', 'hidden', rc.theme.unknown),
-    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => toggleMenuBarPresentationElement(c, 'providerMark')) },
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => setMenuBarElementVisibility(c, 'providerMark', !c.tray.menuBar.elements.providerMark)) },
   },
   {
     key: 'menuBarValue', label: 'Value',
     render: rc => toggleText(rc.config.tray.menuBar.elements.value, rc.theme, 'shown', 'hidden', rc.theme.unknown),
-    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => toggleMenuBarPresentationElement(c, 'value')) },
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => setMenuBarElementVisibility(c, 'value', !c.tray.menuBar.elements.value)) },
   },
   {
     key: 'menuBarProgress', label: 'Progress',
     render: rc => toggleText(rc.config.tray.menuBar.elements.progress, rc.theme, 'shown', 'hidden', rc.theme.unknown),
-    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => toggleMenuBarPresentationElement(c, 'progress')) },
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => setMenuBarElementVisibility(c, 'progress', !c.tray.menuBar.elements.progress)) },
   },
   {
     key: 'menuBarContent', label: 'Menu bar content',
     render: rc => caret(<Text bold color={rc.theme.accent}>{rc.config.tray.menuBarValue === 'todayTokens' ? 'tokens today' : 'usage'}</Text>),
-    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => ({ ...c, tray: { ...c.tray, menuBarValue: c.tray.menuBarValue === 'usage' ? 'todayTokens' : 'usage' } })) },
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => setMenuBarValue(c, c.tray.menuBarValue === 'usage' ? 'todayTokens' : 'usage')) },
   },
   {
     key: 'menuBarDensity', label: 'Density',
@@ -281,38 +244,31 @@ export const DESKTOP_FIXED_SETTINGS: SettingRow[] = [
       const choices = ['comfortable', 'compact', 'tight'] as const
       ctx.global.updateConfig(c => {
         const current = choices.indexOf(c.tray.menuBar.density)
-        return { ...c, tray: { ...c.tray, menuBar: { ...c.tray.menuBar, density: choices[(current + step(key) + choices.length) % choices.length]! } } }
+        return patchMenuBarPresentation(c, { density: choices[(current + step(key) + choices.length) % choices.length]! })
       })
     },
   },
   {
     key: 'menuBarEdgePadding', label: 'Edge padding',
     render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.tray.menuBar.customSpacing.edgePaddingPt.toFixed(1)}pt</Text>),
-    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => adjustMenuBarSpacing(c, 'edgePaddingPt', step(key), 6)) },
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => adjustMenuBarSpacing(c, 'edgePaddingPt', step(key))) },
   },
   {
     key: 'menuBarMarkValueGap', label: 'Mark/value gap',
     render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.tray.menuBar.customSpacing.markValueGapPt.toFixed(1)}pt</Text>),
-    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => adjustMenuBarSpacing(c, 'markValueGapPt', step(key), 8)) },
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => adjustMenuBarSpacing(c, 'markValueGapPt', step(key))) },
   },
   {
     key: 'menuBarProviderGap', label: 'Provider gap',
     render: rc => caret(<Text bold color={rc.theme.cost}>{rc.config.tray.menuBar.customSpacing.providerGapPt.toFixed(1)}pt</Text>),
-    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => adjustMenuBarSpacing(c, 'providerGapPt', step(key), 16)) },
+    onAdjust: (input, key, ctx) => { if (isAdjustKey(input, key)) ctx.global.updateConfig(c => adjustMenuBarSpacing(c, 'providerGapPt', step(key))) },
   },
   {
     key: 'menuBarReset', label: 'Reset presentation',
     render: rc => <Text bold color={rc.theme.unknown}>press enter</Text>,
     onAdjust: (input, key, ctx) => {
       if (input !== ' ' && !key.return) return
-      ctx.global.updateConfig(c => {
-        const menuBar: MenuBarConfig = {
-          ...DEFAULT_MENU_BAR_CONFIG,
-          elements: { ...DEFAULT_MENU_BAR_CONFIG.elements },
-          customSpacing: { ...DEFAULT_MENU_BAR_CONFIG.customSpacing },
-        }
-        return { ...c, tray: { ...c.tray, menuBar, showMenuBarText: menuBar.elements.value } }
-      })
+      ctx.global.updateConfig(resetMenuBarPresentation)
     },
   },
   {
@@ -362,31 +318,11 @@ const SETTINGS_TAB_LABELS: Record<SettingsTab, string> = {
   accounts: 'Accounts',
 }
 
-export type FormField = 'provider' | 'name' | 'homeDir' | 'color'
-
-export interface AccountForm {
-  mode: 'add' | 'edit'
-  field: FormField
-  providerId: ProviderId
-  name: string
-  homeDir: string
-  color: string
-  caret: number
-  editingId: string | null
-  /** Auto row this form is converting to a manual account, if any. */
-  convertedFromId: string | null
-  error: string | null
-}
-
 export interface AccountIdentity {
   email?: string | null
   displayName?: string | null
   plan?: string | null
 }
-
-export const FORM_FIELDS: FormField[] = ['provider', 'name', 'homeDir', 'color']
-
-export { COLOR_PALETTE } from '../config'
 
 export const SettingsView = memo(function SettingsView({
   config, cursor, activeTab, tzEdit, tzCaret, tzError, allowedHostsEdit, allowedHostsCaret, allowedHostsError,
@@ -618,158 +554,6 @@ function Row({ cursor, idx, label, children }: { cursor: number; idx: number; la
       <Text color={cursor === idx ? theme.accent : undefined}>{cursor === idx ? glyphs().caretR : ' '} </Text>
       <Box width={20}><Text>{label}</Text></Box>
       {children}
-    </Box>
-  )
-}
-
-function AccountFormView({ form, accounts }: { form: AccountForm; accounts: Account[] }) {
-  const theme = useTuiTheme()
-  const previewId = form.mode === 'add'
-    ? generateAccountId(form.name || 'account', accounts)
-    : form.editingId ?? ''
-  const accent = form.color
-  const stepIndex: Record<FormField, number> = { provider: 1, name: 2, homeDir: 3, color: 4 }
-  const step = stepIndex[form.field]
-
-  return (
-    <Box flexDirection="column" marginTop={1}>
-      <Box>
-        <Text color={accent} bold>{glyphs().vbar}</Text>
-        <Text bold>{' '}{form.mode === 'add' ? 'NEW ACCOUNT' : 'EDIT ACCOUNT'}</Text>
-        <Text dimColor>   step {step} of 4</Text>
-      </Box>
-      <Box marginTop={1}><Stepper active={form.field} accent={accent} /></Box>
-
-      <Box marginTop={1} flexDirection="column" borderStyle={glyphs().border} borderColor={accent} paddingX={2} paddingY={1}>
-        <ProviderField value={form.providerId} focused={form.field === 'provider'} />
-        <Box height={1} />
-        <FormField label="Name" hint="display name for this account" value={form.name}
-          focused={form.field === 'name'} caret={form.caret} accent={accent} placeholder="e.g. Work, Personal" />
-        <Box height={1} />
-        <FormField label="Home directory" hint={`path containing the tool's data dir  ${glyphs().middot}  ~ for default`} value={form.homeDir}
-          focused={form.field === 'homeDir'} caret={form.caret} accent={accent} placeholder="~/work" mono />
-        <Box height={1} />
-        <ColorField value={form.color} focused={form.field === 'color'} />
-        <Box height={1} />
-        <Box>
-          <Text dimColor>id  {glyphs().boxMark} </Text>
-          <Text bold color={accent}>{previewId || 'account'}</Text>
-          <Text dimColor> {glyphs().boxMark}   auto-generated from name</Text>
-        </Box>
-      </Box>
-
-      {form.error && <Box marginTop={1}><Text color={theme.crit}>{glyphs().warn} {form.error}</Text></Box>}
-
-      <Box marginTop={1}>
-        <Text dimColor>tab/{glyphs().arrowU}{glyphs().arrowD} </Text><Text>switch field</Text><Text dimColor>  {glyphs().middot}  </Text>
-        <Text dimColor>enter </Text><Text>{form.field === 'color' ? 'save' : 'next'}</Text><Text dimColor>  {glyphs().middot}  </Text>
-        {(form.field === 'color' || form.field === 'provider') ? (
-          <><Text dimColor>{glyphs().arrowL}{glyphs().arrowR} </Text><Text>{form.field === 'provider' ? 'pick provider' : 'pick color'}</Text><Text dimColor>  {glyphs().middot}  </Text></>
-        ) : (
-          <><Text dimColor>{glyphs().arrowL}{glyphs().arrowR} </Text><Text>move caret</Text><Text dimColor>  {glyphs().middot}  </Text></>
-        )}
-        <Text dimColor>ctrl+s </Text><Text>save</Text><Text dimColor>  {glyphs().middot}  </Text>
-        <Text dimColor>esc </Text><Text>cancel</Text>
-      </Box>
-    </Box>
-  )
-}
-
-function Stepper({ active, accent }: { active: FormField; accent: string }) {
-  const steps: { id: FormField; label: string }[] = [
-    { id: 'provider', label: 'Provider' },
-    { id: 'name', label: 'Name' },
-    { id: 'homeDir', label: 'Home' },
-    { id: 'color', label: 'Color' },
-  ]
-  const activeIdx = steps.findIndex(s => s.id === active)
-  return (
-    <Box>
-      {steps.map((s, i) => {
-        const done = i < activeIdx
-        const cur = i === activeIdx
-        const dot = done ? glyphs().dot : cur ? glyphs().dotSel : glyphs().radioOff
-        return (
-          <Box key={s.id}>
-            <Text color={cur || done ? accent : undefined} dimColor={!cur && !done}>{dot} </Text>
-            <Text bold={cur} color={cur ? accent : undefined} dimColor={!cur}>{s.label}</Text>
-            {i < steps.length - 1 && <Text dimColor>  {glyphs().rule}  </Text>}
-          </Box>
-        )
-      })}
-    </Box>
-  )
-}
-
-function ProviderField({ value, focused }: { value: ProviderId; focused: boolean }) {
-  return (
-    <Box flexDirection="column">
-      <Box>
-        <Text color={focused ? PROVIDERS[value].color : undefined} bold={focused} dimColor={!focused}>
-          {focused ? glyphs().caretR : ' '} Provider
-        </Text>
-      </Box>
-      <Box>
-        <Text>  {focused ? glyphs().vbar : ' '} </Text>
-        {PROVIDER_ORDER.map(pid => {
-          const selected = pid === value
-          const p = PROVIDERS[pid]
-          return (
-            <Box key={pid} marginRight={2}>
-              {selected
-                ? <Text bold color={p.color}>[{p.name}]</Text>
-                : <Text dimColor>{p.name}</Text>}
-            </Box>
-          )
-        })}
-      </Box>
-      <Box><Text dimColor>      which tool this account tracks</Text></Box>
-    </Box>
-  )
-}
-
-function FormField({ label, hint, value, focused, caret, accent, placeholder, mono }: {
-  label: string; hint: string; value: string; focused: boolean; caret?: number; accent: string; placeholder: string; mono?: boolean
-}) {
-  const isPlaceholder = value === ''
-  const display = isPlaceholder ? placeholder : value
-  return (
-    <Box flexDirection="column">
-      <Box>
-        <Text color={focused ? accent : undefined} bold={focused} dimColor={!focused}>
-          {focused ? glyphs().caretR : ' '} {label}
-        </Text>
-      </Box>
-      <Box>
-        <Text color={focused ? accent : undefined}>  {focused ? glyphs().vbar : ' '} </Text>
-        {focused
-          ? isPlaceholder
-            ? <><Text color={accent}>{glyphs().vbar}</Text><Text dimColor italic={mono}>{placeholder}</Text></>
-            : <CaretText value={value} caret={caret ?? value.length} color={accent} />
-          : <Text dimColor={isPlaceholder} italic={mono && isPlaceholder}>{display}</Text>}
-      </Box>
-      <Box><Text dimColor>      {hint}</Text></Box>
-    </Box>
-  )
-}
-
-function ColorField({ value, focused }: { value: string; focused: boolean }) {
-  return (
-    <Box flexDirection="column">
-      <Box>
-        <Text color={focused ? value : undefined} bold={focused} dimColor={!focused}>
-          {focused ? glyphs().caretR : ' '} Accent color
-        </Text>
-      </Box>
-      <Box>
-        <Text>  {focused ? glyphs().vbar : ' '} </Text>
-        {COLOR_PALETTE.map(c => (
-          <Box key={c} marginRight={1}>
-            {c === value ? <Text bold color={c}>[{glyphs().dot}]</Text> : <Text color={c} dimColor={!focused}> {glyphs().dot}</Text>}
-          </Box>
-        ))}
-      </Box>
-      <Box><Text dimColor>      shows on dashboard, account strip, borders</Text></Box>
     </Box>
   )
 }

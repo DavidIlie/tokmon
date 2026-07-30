@@ -2,7 +2,8 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import type { ProviderId } from '../providers'
 import type { Config, Account as StoredAccount, TrackedAccountRow } from '../config'
 import type { Slot } from './app.logic'
-import type { AccountForm, SettingsTab } from './settings'
+import type { AccountForm } from './account-form'
+import type { SettingsTab } from './settings'
 
 export interface InputKey {
   upArrow: boolean

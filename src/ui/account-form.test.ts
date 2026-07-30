@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { DEFAULTS, getTrackedAccountRows, normalizeConfig, repairConfig, type Config } from '../config'
 import { applyAccountForm } from './hooks/use-account-form'
-import type { AccountForm } from './settings'
+import type { AccountForm } from './account-form'
 
 const formFor = (row: { providerId: 'claude' | 'codex'; name: string; homeDir: string; color: string; id: string }): AccountForm => ({
   mode: 'add', field: 'name', providerId: row.providerId,

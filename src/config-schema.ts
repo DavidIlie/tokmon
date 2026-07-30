@@ -328,6 +328,84 @@ export function setDetectedAccountExcluded(
   }
 }
 
+export type MenuBarElement = keyof MenuBarConfig['elements']
+export type MenuBarSpacingField = keyof MenuBarConfig['customSpacing']
+
+/** Upper bound in points for each custom spacing value; steps are half points. */
+export const MENU_BAR_SPACING_MAX_PT: Record<MenuBarSpacingField, number> = {
+  edgePaddingPt: 6,
+  markValueGapPt: 8,
+  providerGapPt: 16,
+}
+
+/**
+ * Show or hide one menu-bar element. Hiding the last visible one is refused so
+ * the strip never renders empty, and `showMenuBarText` keeps mirroring
+ * `elements.value` for older desktop and CLI clients.
+ */
+export function setMenuBarElementVisibility(config: Config, element: MenuBarElement, visible: boolean): Config {
+  const elements = config.tray.menuBar.elements
+  if (!visible && elements[element] && Object.values(elements).filter(Boolean).length === 1) return config
+  const nextElements = { ...elements, [element]: visible }
+  return {
+    ...config,
+    tray: {
+      ...config.tray,
+      menuBar: { ...config.tray.menuBar, elements: nextElements },
+      showMenuBarText: nextElements.value,
+    },
+  }
+}
+
+export function patchMenuBarPresentation(
+  config: Config,
+  patch: Partial<Omit<MenuBarConfig, 'elements' | 'customSpacing'>> & {
+    elements?: Partial<MenuBarConfig['elements']>
+    customSpacing?: Partial<MenuBarConfig['customSpacing']>
+  },
+): Config {
+  return {
+    ...config,
+    tray: {
+      ...config.tray,
+      menuBar: {
+        ...config.tray.menuBar,
+        ...patch,
+        elements: { ...config.tray.menuBar.elements, ...patch.elements },
+        customSpacing: { ...config.tray.menuBar.customSpacing, ...patch.customSpacing },
+      },
+    },
+  }
+}
+
+/** Nudge one spacing value by a half point; spacing only applies to the custom layout. */
+export function adjustMenuBarSpacing(config: Config, field: MenuBarSpacingField, direction: -1 | 1): Config {
+  const current = config.tray.menuBar.customSpacing[field]
+  const stepped = Math.round((current + direction * 0.5) * 2) / 2
+  const value = Math.min(MENU_BAR_SPACING_MAX_PT[field], Math.max(0, stepped))
+  return patchMenuBarPresentation(config, { mode: 'custom', customSpacing: { [field]: value } })
+}
+
+export function setMenuBarValue(config: Config, menuBarValue: TrayConfig['menuBarValue']): Config {
+  return { ...config, tray: { ...config.tray, menuBarValue } }
+}
+
+/** Restore the shipped presentation while leaving pins and the value choice alone. */
+export function resetMenuBarPresentation(config: Config): Config {
+  return {
+    ...config,
+    tray: {
+      ...config.tray,
+      menuBar: {
+        ...DEFAULT_MENU_BAR_CONFIG,
+        elements: { ...DEFAULT_MENU_BAR_CONFIG.elements },
+        customSpacing: { ...DEFAULT_MENU_BAR_CONFIG.customSpacing },
+      },
+      showMenuBarText: DEFAULT_MENU_BAR_CONFIG.elements.value,
+    },
+  }
+}
+
 export function clampNum(v: unknown, fallback: number, min: number): number {
   return typeof v === 'number' && Number.isFinite(v) && v >= min ? v : fallback
 }

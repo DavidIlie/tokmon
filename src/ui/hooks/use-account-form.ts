@@ -1,10 +1,10 @@
 import { useState, useCallback, type Dispatch, type SetStateAction } from 'react'
 import {
-  generateAccountId, pickAccentColor,
+  COLOR_PALETTE, generateAccountId, pickAccentColor,
   type Config, type Account as StoredAccount, type TrackedAccountRow,
 } from '../../config'
 import { PROVIDERS, PROVIDER_ORDER, type ProviderId } from '../../providers'
-import { COLOR_PALETTE, FORM_FIELDS, type AccountForm } from '../settings'
+import { FORM_FIELDS, type AccountForm } from '../account-form'
 
 export type AccountFormDefaults =
   Pick<TrackedAccountRow, 'providerId' | 'name' | 'homeDir' | 'color'>

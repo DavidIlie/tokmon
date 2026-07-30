@@ -11,7 +11,8 @@ import {
   togglePin,
 } from './presentation'
 import { ProviderCard } from './provider-card'
-import { ColdState, DesktopSettings, EmptyState, Footer, MenuBarSettings, ProvidersSettings, SettingsHub, ThemeSettings, TotalsBar, UpdateReady } from './desktop-chrome'
+import { ColdState, EmptyState, Footer, TotalsBar, UpdateReady } from './desktop-chrome'
+import { DesktopSettings, MenuBarSettings, ProvidersSettings, SettingsHub, ThemeSettings } from './desktop-settings'
 import { TrayStripPainter } from './tray-strip-painter'
 import { OptimisticConfigUpdates } from './config-updates'
 import { applyDesktopTheme } from './theme'
