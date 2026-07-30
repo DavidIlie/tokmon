@@ -31,9 +31,10 @@ test('Claude long-context [1m] suffix prices the same as the base model', () => 
   assert.deepEqual(claudePriceFor('claude-fable-5[1m]'), { i: 10e-6, o: 50e-6, cc: 12.5e-6, cr: 1e-6 })
 })
 
-test('Claude pricing falls back to zero for unknown models', () => {
-  assert.deepEqual(claudePriceFor('gpt-4o'), { i: 0, o: 0, cc: 0, cr: 0 })
-  assert.deepEqual(claudePriceFor('claude-unknown-99'), { i: 0, o: 0, cc: 0, cr: 0 })
-  // An unrecognized base with a [1m] tag still resolves to zero, not a partial match.
-  assert.deepEqual(claudePriceFor('claude-unknown-99[1m]'), { i: 0, o: 0, cc: 0, cr: 0 })
+test('Claude pricing falls back to the flagship rate for unknown models', () => {
+  const flagship = { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 }
+  assert.deepEqual(claudePriceFor('gpt-4o'), flagship)
+  assert.deepEqual(claudePriceFor('claude-unknown-99'), flagship)
+  // An unrecognized base with a [1m] tag still resolves to the fallback, not a partial match.
+  assert.deepEqual(claudePriceFor('claude-unknown-99[1m]'), flagship)
 })

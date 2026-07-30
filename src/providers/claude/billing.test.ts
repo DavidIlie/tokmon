@@ -84,3 +84,7 @@ test('usageMetric returns null when utilization is absent', () => {
   assert.equal(usageMetric('Session', null), null)
   assert.equal(usageMetric('Session', undefined), null)
 })
+
+test('Claude percentage metrics remain unclamped above 100', () => {
+  assert.equal(usageMetric('Session', { utilization: 130 })?.used, 130)
+})

@@ -1,11 +1,12 @@
-import { stat as fsStat, access, open as openFile } from 'node:fs/promises'
-import { createReadStream } from 'node:fs'
-import { createInterface } from 'node:readline'
+import { access, open as openFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
 import { envDir } from '../../config'
-import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince, walkFiles } from '../usage-core'
+import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince, collectSessionFiles } from '../usage-core'
+import { readJsonLines } from '../_shared/jsonl'
+import { modelKeyMatches } from '../_shared/metric'
+import { makePriceResolver } from '../_shared/pricing'
 import { timestampMs } from '../_shared/time'
 
 const PRICING: Record<string, { in: number; cr: number; out: number }> = {
@@ -35,7 +36,7 @@ const PRICING: Record<string, { in: number; cr: number; out: number }> = {
 // $0 — a slightly-wrong estimate beats silently free usage when OpenAI ships a
 // model this table doesn't know yet (the gpt-5.5 launch was 4x under-priced this way).
 const FALLBACK_PRICE = PRICING['gpt-5.5']
-const PRICE_KEYS = Object.keys(PRICING).sort((a, b) => b.length - a.length)
+const resolvePrice = makePriceResolver(PRICING, { fallback: FALLBACK_PRICE, matches: modelKeyMatches })
 
 export function codexHomes(homeDir?: string): string[] {
   if (homeDir) return [...new Set([join(homeDir, '.codex'), homeDir])]
@@ -55,28 +56,8 @@ export async function detectCodex(homeDir?: string): Promise<boolean> {
   return false
 }
 
-function modelKeyMatches(model: string, key: string): boolean {
-  let idx = model.indexOf(key)
-  while (idx >= 0) {
-    const before = idx === 0 ? '' : model[idx - 1]
-    const rest = model.slice(idx + key.length)
-    // A trailing ".N" is a version continuation ("gpt-5" must not claim "gpt-5.6"),
-    // not a word boundary like "-codex" or end-of-string.
-    const versionContinues = rest[0] === '.' && /\d/.test(rest[1] ?? '')
-    if ((!before || !/[a-z0-9-]/.test(before)) && !versionContinues && (rest === '' || rest[0] === '-' || !/[a-z0-9]/.test(rest[0]))) {
-      return true
-    }
-    idx = model.indexOf(key, idx + key.length)
-  }
-  return false
-}
-
 export function codexPriceFor(model: string) {
-  const m = model.toLowerCase().trim()
-  for (const key of PRICE_KEYS) {
-    if (modelKeyMatches(m, key)) return PRICING[key]
-  }
-  return FALLBACK_PRICE
+  return resolvePrice(model)
 }
 
 function extractModel(obj: any): string | null {
@@ -196,91 +177,40 @@ async function parseFile(path: string): Promise<Entry[]> {
   let prevTotal: CodexDelta | null = null
   let prevSig: string | null = null
   let skipReplay = await hasForkedHistory(path)
-  const input = createReadStream(path)
-  input.on('error', () => {})
-  const rl = createInterface({ input, crlfDelay: Infinity })
-  try {
-    for await (const rawLine of rl) {
-      if (
-        !rawLine.includes('token_count')
-        && !rawLine.includes('task_started')
-        && !rawLine.includes('turn_context')
-        && !rawLine.includes('"usage"')
-        && !rawLine.includes('input_tokens')
-        && !rawLine.includes('prompt_tokens')
-      ) continue
-      try {
-        const line = rawLine.charCodeAt(0) === 0xFEFF ? rawLine.slice(1) : rawLine
-        const obj: any = JSON.parse(line)
-
-        const payloadType = obj?.payload?.type ?? obj?.type
-        if (skipReplay) {
-          if (isLiveTaskStart(obj)) skipReplay = false
-          continue
-        }
-        if (payloadType === 'turn_context') {
-          const m = extractModel(obj)
-          if (typeof m === 'string' && m.trim()) model = m
-          continue
-        }
-        if (payloadType !== 'token_count') {
-          const usage = findUsage(obj)
-          if (!usage) continue
-          const m = extractModel(obj)
-          if (typeof m === 'string' && m.trim()) model = m
-          const ts = findTimestamp(obj)
-          if (ts === null) continue
-          const inputTotal = safeNum(usage.input_tokens)
-          const cached = Math.min(safeNum(usage.cached_input_tokens), inputTotal)
-          const inputTokens = inputTotal - cached
-          const output = safeNum(usage.output_tokens)
-          if (inputTokens + output + cached === 0) continue
-          const p = codexPriceFor(model)
-          entries.push({
-            id: `${ts}|${model}|${inputTotal}|${cached}|${output}|${safeNum(usage.reasoning_output_tokens)}|${safeNum(usage.total_tokens)}`,
-            ts,
-            model,
-            cost: inputTokens * p.in + cached * p.cr + output * p.out,
-            input: inputTokens,
-            output,
-            cacheCreate: 0,
-            cacheRead: cached,
-            cacheSavings: cached * (p.in - p.cr),
-          })
-          continue
-        }
-
-        const info = obj?.payload?.info
-        const total = normalizeUsage(info?.total_token_usage)
-        const last = normalizeUsage(info?.last_token_usage)
-        const tsValue = obj.timestamp ?? obj?.payload?.timestamp
-
-        const sig = eventSig(last, total)
-        if (sig === prevSig) continue
-        prevSig = sig
-
-        let d: CodexDelta | undefined = last
-        if (!d && total) {
-          const reset = !!prevTotal && (total.input_tokens ?? 0) < (prevTotal.input_tokens ?? 0)
-          d = reset ? total : subtractClamped(total, prevTotal)
-        }
-        if (total) prevTotal = total
-        if (!d) continue
-
-        const ts = timestampMs(tsValue)
-        if (ts === null) continue
-
+  const relevantLine = (line: string) =>
+    line.includes('token_count')
+    || line.includes('task_started')
+    || line.includes('turn_context')
+    || line.includes('"usage"')
+    || line.includes('input_tokens')
+    || line.includes('prompt_tokens')
+  for await (const obj of readJsonLines(path, relevantLine)) {
+    try {
+      const payloadType = obj?.payload?.type ?? obj?.type
+      if (skipReplay) {
+        if (isLiveTaskStart(obj)) skipReplay = false
+        continue
+      }
+      if (payloadType === 'turn_context') {
         const m = extractModel(obj)
         if (typeof m === 'string' && m.trim()) model = m
-        const inputTotal = safeNum(d.input_tokens)
-        const cached = Math.min(safeNum(d.cached_input_tokens), inputTotal)
+        continue
+      }
+      if (payloadType !== 'token_count') {
+        const usage = findUsage(obj)
+        if (!usage) continue
+        const m = extractModel(obj)
+        if (typeof m === 'string' && m.trim()) model = m
+        const ts = findTimestamp(obj)
+        if (ts === null) continue
+        const inputTotal = safeNum(usage.input_tokens)
+        const cached = Math.min(safeNum(usage.cached_input_tokens), inputTotal)
         const inputTokens = inputTotal - cached
-        const output = safeNum(d.output_tokens)
+        const output = safeNum(usage.output_tokens)
         if (inputTokens + output + cached === 0) continue
-
         const p = codexPriceFor(model)
         entries.push({
-          id: `${ts}|${model}|${inputTotal}|${cached}|${output}|${safeNum(d.reasoning_output_tokens)}|${safeNum(d.total_tokens)}`,
+          id: `${ts}|${model}|${inputTotal}|${cached}|${output}|${safeNum(usage.reasoning_output_tokens)}|${safeNum(usage.total_tokens)}`,
           ts,
           model,
           cost: inputTokens * p.in + cached * p.cr + output * p.out,
@@ -290,39 +220,57 @@ async function parseFile(path: string): Promise<Entry[]> {
           cacheRead: cached,
           cacheSavings: cached * (p.in - p.cr),
         })
-      } catch {}
-    }
-  } catch {}
+        continue
+      }
+
+      const info = obj?.payload?.info
+      const total = normalizeUsage(info?.total_token_usage)
+      const last = normalizeUsage(info?.last_token_usage)
+      const tsValue = obj.timestamp ?? obj?.payload?.timestamp
+
+      const sig = eventSig(last, total)
+      if (sig === prevSig) continue
+      prevSig = sig
+
+      let d: CodexDelta | undefined = last
+      if (!d && total) {
+        const reset = !!prevTotal && (total.input_tokens ?? 0) < (prevTotal.input_tokens ?? 0)
+        d = reset ? total : subtractClamped(total, prevTotal)
+      }
+      if (total) prevTotal = total
+      if (!d) continue
+
+      const ts = timestampMs(tsValue)
+      if (ts === null) continue
+
+      const m = extractModel(obj)
+      if (typeof m === 'string' && m.trim()) model = m
+      const inputTotal = safeNum(d.input_tokens)
+      const cached = Math.min(safeNum(d.cached_input_tokens), inputTotal)
+      const inputTokens = inputTotal - cached
+      const output = safeNum(d.output_tokens)
+      if (inputTokens + output + cached === 0) continue
+
+      const p = codexPriceFor(model)
+      entries.push({
+        id: `${ts}|${model}|${inputTotal}|${cached}|${output}|${safeNum(d.reasoning_output_tokens)}|${safeNum(d.total_tokens)}`,
+        ts,
+        model,
+        cost: inputTokens * p.in + cached * p.cr + output * p.out,
+        input: inputTokens,
+        output,
+        cacheCreate: 0,
+        cacheRead: cached,
+        cacheSavings: cached * (p.in - p.cr),
+      })
+    } catch {}
+  }
   return entries
 }
 
 async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
-  const files: { path: string; mtimeMs: number; size: number }[] = []
-  const seen = new Set<string>()
-  const seenIno = new Set<string>()
-
-  for (const home of codexHomes(homeDir)) {
-    for (const dir of [join(home, 'sessions'), join(home, 'archived_sessions')]) {
-      const listing = await walkFiles(dir)
-      for (const f of listing) {
-        if (!f.endsWith('.jsonl')) continue
-        const path = join(dir, f)
-        if (seen.has(path)) continue
-        seen.add(path)
-        try {
-          const s = await fsStat(path)
-          if (s.mtimeMs < since) continue
-          if (s.ino && process.platform !== 'win32') {
-            const idn = `${s.dev}:${s.ino}`
-            if (seenIno.has(idn)) continue
-            seenIno.add(idn)
-          }
-          files.push({ path, mtimeMs: s.mtimeMs, size: s.size })
-        } catch {}
-      }
-    }
-  }
-
+  const roots = codexHomes(homeDir).flatMap(home => [join(home, 'sessions'), join(home, 'archived_sessions')])
+  const files = await collectSessionFiles(roots, path => path.endsWith('.jsonl'), since)
   return loadCachedEntries(files, parseFile, since)
 }
 

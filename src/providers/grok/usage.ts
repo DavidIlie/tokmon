@@ -1,10 +1,11 @@
 import { access, readdir, readFile, stat as fsStat } from 'node:fs/promises'
-import { createReadStream } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import type { DashboardData, TableData } from '../../types'
 import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince } from '../usage-core'
+import { readJsonLines } from '../_shared/jsonl'
+import { modelKeyMatches } from '../_shared/metric'
+import { makePriceResolver } from '../_shared/pricing'
 import { grokHomes } from './identity'
 
 // Per-token USD. Source: https://docs.x.ai/docs/models + per-model cached rates.
@@ -21,31 +22,13 @@ const PRICING: Record<string, { in: number; cr: number; out: number }> = {
   'grok-build': { in: 1e-6, cr: 0.2e-6, out: 2e-6 },
 }
 const FALLBACK_PRICE = PRICING['grok-4.5']
-const PRICE_KEYS = Object.keys(PRICING).sort((a, b) => b.length - a.length)
+const resolvePrice = makePriceResolver(PRICING, { fallback: FALLBACK_PRICE, matches: modelKeyMatches })
 const MAX_SESSION_GROUPS = 128
 const MAX_SESSIONS_PER_GROUP = 512
 const MAX_MODEL_FINGERPRINT_ENTRIES = MAX_SESSION_GROUPS * MAX_SESSIONS_PER_GROUP * 2
 
-function modelKeyMatches(model: string, key: string): boolean {
-  let idx = model.indexOf(key)
-  while (idx >= 0) {
-    const before = idx === 0 ? '' : model[idx - 1]
-    const rest = model.slice(idx + key.length)
-    const versionContinues = rest[0] === '.' && /\d/.test(rest[1] ?? '')
-    if ((!before || !/[a-z0-9-]/.test(before)) && !versionContinues && (rest === '' || rest[0] === '-' || !/[a-z0-9]/.test(rest[0]))) {
-      return true
-    }
-    idx = model.indexOf(key, idx + key.length)
-  }
-  return false
-}
-
 function priceFor(model: string) {
-  const m = model.toLowerCase().trim()
-  for (const key of PRICE_KEYS) {
-    if (modelKeyMatches(m, key)) return PRICING[key]
-  }
-  return FALLBACK_PRICE
+  return resolvePrice(model)
 }
 
 export async function detectGrok(homeDir?: string): Promise<boolean> {
@@ -140,49 +123,42 @@ export async function parseUnifiedLog(path: string, models: Map<string, string>)
   // inference_done carries no model field, so the active model is derived from these events;
   // before the first such event we fall back to summary.json, then the default tier.
   const activeModel = new Map<string, string>()
-  const input = createReadStream(path)
-  input.on('error', () => {})
-  const rl = createInterface({ input, crlfDelay: Infinity })
-  try {
-    for await (const line of rl) {
-      const isTurn = line.includes('shell.turn.inference_done')
-      if (!isTurn && !line.includes('model changed') && !line.includes('model switch')) continue
-      try {
-        const obj = JSON.parse(line.charCodeAt(0) === 0xFEFF ? line.slice(1) : line)
-        const sid = typeof obj.sid === 'string' ? obj.sid : 'unknown'
-        const switched = modelChangeFrom(obj)
-        if (switched) { activeModel.set(sid, switched); continue }
-        if (obj?.msg !== 'shell.turn.inference_done' || !obj.ctx) continue
-        const ts = Date.parse(String(obj.ts ?? ''))
-        if (!Number.isFinite(ts)) continue
-        const ctx = obj.ctx
-        const prompt = safeNum(ctx.prompt_tokens)
-        const cached = safeNum(ctx.cached_prompt_tokens)
-        const completion = safeNum(ctx.completion_tokens)
-        // cached ⊂ prompt; reasoning ⊂ completion — do not add them.
-        const inputTokens = Math.max(0, prompt - cached)
-        const cacheRead = cached
-        const output = completion
-        if (inputTokens + cacheRead + output <= 0) continue
-        const model = activeModel.get(sid) ?? models.get(sid) ?? DEFAULT_MODEL
-        const { cost, cacheSavings } = costOf(model, inputTokens, cacheRead, output)
-        const loop = safeNum(ctx.loop_index)
-        entries.push({
-          ts,
-          id: `${sid}#${obj.ts}#${loop}`,
-          model,
-          input: inputTokens,
-          output,
-          cacheCreate: 0,
-          cacheRead,
-          cost,
-          cacheSavings,
-        })
-      } catch { /* bad line */ }
-    }
-  } finally {
-    rl.close()
-    input.destroy()
+  const relevantLine = (line: string) =>
+    line.includes('shell.turn.inference_done')
+    || line.includes('model changed')
+    || line.includes('model switch')
+  for await (const obj of readJsonLines(path, relevantLine, { ignoreReadErrors: false })) {
+    try {
+      const sid = typeof obj.sid === 'string' ? obj.sid : 'unknown'
+      const switched = modelChangeFrom(obj)
+      if (switched) { activeModel.set(sid, switched); continue }
+      if (obj?.msg !== 'shell.turn.inference_done' || !obj.ctx) continue
+      const ts = Date.parse(String(obj.ts ?? ''))
+      if (!Number.isFinite(ts)) continue
+      const ctx = obj.ctx
+      const prompt = safeNum(ctx.prompt_tokens)
+      const cached = safeNum(ctx.cached_prompt_tokens)
+      const completion = safeNum(ctx.completion_tokens)
+      // cached ⊂ prompt; reasoning ⊂ completion — do not add them.
+      const inputTokens = Math.max(0, prompt - cached)
+      const cacheRead = cached
+      const output = completion
+      if (inputTokens + cacheRead + output <= 0) continue
+      const model = activeModel.get(sid) ?? models.get(sid) ?? DEFAULT_MODEL
+      const { cost, cacheSavings } = costOf(model, inputTokens, cacheRead, output)
+      const loop = safeNum(ctx.loop_index)
+      entries.push({
+        ts,
+        id: `${sid}#${obj.ts}#${loop}`,
+        model,
+        input: inputTokens,
+        output,
+        cacheCreate: 0,
+        cacheRead,
+        cost,
+        cacheSavings,
+      })
+    } catch { /* bad line */ }
   }
   return entries
 }

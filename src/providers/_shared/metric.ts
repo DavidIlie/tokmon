@@ -1,4 +1,5 @@
 import type { Metric } from '../types'
+import { clampPct } from '../../usage-semantics'
 
 export const finite = (value: unknown, fallback = 0): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -28,15 +29,37 @@ export function numberValue(value: unknown): number | undefined {
   return undefined
 }
 
-export function percentMetric(label: string, used: number, resetsAt: string | null, primary?: boolean): Metric {
+export function percentMetric(
+  label: string,
+  used: number,
+  resetsAt: string | null,
+  primary?: boolean,
+  options?: { clamp?: boolean },
+): Metric {
   return {
     label,
-    used: finite(used),
+    used: options?.clamp ? clampPct(finite(used)) : finite(used),
     limit: 100,
     format: { kind: 'percent' },
     resetsAt,
     ...(primary === undefined ? {} : { primary }),
   }
+}
+
+export function modelKeyMatches(model: string, key: string): boolean {
+  let idx = model.indexOf(key)
+  while (idx >= 0) {
+    const before = idx === 0 ? '' : model[idx - 1]
+    const rest = model.slice(idx + key.length)
+    // A trailing ".N" is a version continuation ("gpt-5" must not claim "gpt-5.6"),
+    // not a word boundary like "-codex" or end-of-string.
+    const versionContinues = rest[0] === '.' && /\d/.test(rest[1] ?? '')
+    if ((!before || !/[a-z0-9-]/.test(before)) && !versionContinues && (rest === '' || rest[0] === '-' || !/[a-z0-9]/.test(rest[0]))) {
+      return true
+    }
+    idx = model.indexOf(key, idx + key.length)
+  }
+  return false
 }
 
 export const dollars = (cents: number): number => finite(cents) / 100

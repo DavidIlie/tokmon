@@ -6,7 +6,7 @@ import { expandHome } from '../../config'
 import type { Account, BillingResult, Metric } from '../types'
 import { identityFields } from '../_shared/identity'
 import { finite, numberValue, percentMetric } from '../_shared/metric'
-import { msToIso } from '../_shared/time'
+import { epochMilliseconds, msToIso } from '../_shared/time'
 import { readMacKeychainFileRaw, readMacKeychainRaw } from '../_shared/keychain'
 import { readClaudeIdentity } from './identity'
 import { claudeConfigDirs } from './usage'
@@ -231,7 +231,7 @@ export function resetFrom(value: unknown): string | null {
   }
   const n = numberValue(value)
   if (n === undefined) return null
-  return msToIso(Math.abs(n) < 10_000_000_000 ? n * 1000 : n)
+  return msToIso(epochMilliseconds(n))
 }
 
 export function usageMetric(label: string, window: UsageWindow | null | undefined, primary?: boolean): Metric | null {

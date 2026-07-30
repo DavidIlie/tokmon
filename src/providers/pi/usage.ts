@@ -1,10 +1,9 @@
-import { stat as fsStat, access } from 'node:fs/promises'
-import { createReadStream } from 'node:fs'
-import { createInterface } from 'node:readline'
+import { access } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
-import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, finitePositive, dashboardSince, tableSince, walkFiles } from '../usage-core'
+import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, finitePositive, dashboardSince, tableSince, collectSessionFiles } from '../usage-core'
+import { readJsonLines } from '../_shared/jsonl'
 import { timestampMs } from '../_shared/time'
 
 export function piSessionsDir(homeDir?: string): string {
@@ -53,46 +52,16 @@ export function recordToEntry(obj: any): Entry | null {
 
 async function parseFile(path: string): Promise<Entry[]> {
   const entries: Entry[] = []
-  const stream = createReadStream(path)
-  stream.on('error', () => {})
-  const rl = createInterface({ input: stream, crlfDelay: Infinity })
-  try {
-    for await (const rawLine of rl) {
-      if (!rawLine.includes('"usage"')) continue
-      try {
-        const line = rawLine.charCodeAt(0) === 0xFEFF ? rawLine.slice(1) : rawLine
-        const entry = recordToEntry(JSON.parse(line))
-        if (entry) entries.push(entry)
-      } catch {}
-    }
-  } catch {
-    return entries
-  } finally {
-    rl.close()
-    stream.destroy()
+  for await (const obj of readJsonLines(path, line => line.includes('"usage"'))) {
+    const entry = recordToEntry(obj)
+    if (entry) entries.push(entry)
   }
   return entries
 }
 
 async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   const dir = piSessionsDir(homeDir)
-  const files: { path: string; mtimeMs: number; size: number }[] = []
-  const seenIno = new Set<string>()
-  const listing = await walkFiles(dir)
-  for (const f of listing) {
-    if (!f.endsWith('.jsonl')) continue
-    const path = join(dir, f)
-    try {
-      const s = await fsStat(path)
-      if (s.mtimeMs < since) continue
-      if (s.ino && process.platform !== 'win32') {
-        const idn = `${s.dev}:${s.ino}`
-        if (seenIno.has(idn)) continue
-        seenIno.add(idn)
-      }
-      files.push({ path, mtimeMs: s.mtimeMs, size: s.size })
-    } catch {}
-  }
+  const files = await collectSessionFiles([dir], path => path.endsWith('.jsonl'), since)
   return loadCachedEntries(files, parseFile, since)
 }
 

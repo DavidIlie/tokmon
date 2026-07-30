@@ -5,7 +5,7 @@ import { envDir } from '../../config'
 import { readJson } from '../../http'
 import type { Account, BillingResult, Metric } from '../types'
 import { readMacKeychainRaw, unwrapGoKeyringBase64 } from '../_shared/keychain'
-import { numberValue } from '../_shared/metric'
+import { numberValue, percentMetric } from '../_shared/metric'
 const USAGE_URL = 'https://api.github.com/copilot_internal/user'
 const GH_KEYCHAIN_SERVICE = 'gh:github.com'
 
@@ -216,7 +216,7 @@ function boolValue(value: unknown): boolean | undefined {
   return undefined
 }
 
-function percentMetric(label: string, snapshot: QuotaSnapshot | undefined, reset: string | null, primary?: boolean): Metric | null {
+function snapshotPercentMetric(label: string, snapshot: QuotaSnapshot | undefined, reset: string | null, primary?: boolean): Metric | null {
   if (!snapshot) return null
   const entitlement = numberValue(snapshot.entitlement)
   const remaining = numberValue(snapshot.remaining)
@@ -228,14 +228,7 @@ function percentMetric(label: string, snapshot: QuotaSnapshot | undefined, reset
       ? 100 - (remaining / entitlement) * 100
       : undefined
   if (used === undefined) return null
-  return {
-    label,
-    used: Math.min(100, Math.max(0, used)),
-    limit: 100,
-    format: { kind: 'percent' },
-    resetsAt: reset,
-    ...(primary === undefined ? {} : { primary }),
-  }
+  return percentMetric(label, used, reset, primary, { clamp: true })
 }
 
 function countMetric(label: string, remaining: unknown, total: unknown, reset: string | null): Metric | null {
@@ -299,14 +292,14 @@ export async function copilotBilling(account: Account): Promise<BillingResult> {
   const quotaReset = resetDate(data.quota_reset_date)
   const snapshots = data.quota_snapshots
 
-  const premium = percentMetric('Credits', snapshots?.premium_interactions, quotaReset, true)
+  const premium = snapshotPercentMetric('Credits', snapshots?.premium_interactions, quotaReset, true)
   if (premium) metrics.push(premium)
   const overage = overageMetric(snapshots?.premium_interactions)
   if (overage) metrics.push(overage)
 
-  const chat = percentMetric('Chat', snapshots?.chat, quotaReset)
+  const chat = snapshotPercentMetric('Chat', snapshots?.chat, quotaReset)
   if (chat) metrics.push(chat)
-  const completionsSnapshot = percentMetric('Completions', snapshots?.completions, quotaReset)
+  const completionsSnapshot = snapshotPercentMetric('Completions', snapshots?.completions, quotaReset)
   if (completionsSnapshot) metrics.push(completionsSnapshot)
 
   if (metrics.length === 0 && data.limited_user_quotas && data.monthly_quotas) {

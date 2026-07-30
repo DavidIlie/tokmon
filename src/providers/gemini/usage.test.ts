@@ -1,5 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { detectGemini } from './billing'
 import { geminiPriceFor } from './usage'
 
 test('Gemini pricing matches current standard rates', () => {
@@ -31,4 +35,14 @@ test('unknown Gemini models fall back to the flagship pro price, not zero', () =
   assert.deepEqual(geminiPriceFor('gemini-9-ultra'), fallback)
   // The flagship long-context tier applies to unknown models over 200k too.
   assert.deepEqual(geminiPriceFor('gemini-3.1-flash', 200_001), { in: 4e-6, out: 18e-6, cr: 0.4e-6 })
+})
+
+test('Gemini detection accepts parseable JSON chat sessions', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'tokmon-gemini-detect-'))
+  t.after(() => rm(home, { recursive: true, force: true }))
+  const chats = join(home, '.gemini', 'tmp', 'project', 'chats')
+  await mkdir(chats, { recursive: true })
+  await writeFile(join(chats, 'session-only.json'), '{}')
+
+  assert.equal(await detectGemini(home), true)
 })

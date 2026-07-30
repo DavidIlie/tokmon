@@ -7,7 +7,7 @@ import type { Account, BillingResult, Metric } from '../types'
 import { identityFields } from '../_shared/identity'
 import { identityFromIdToken } from '../_shared/jwt'
 import { numberValue, percentMetric } from '../_shared/metric'
-import { msToIso } from '../_shared/time'
+import { epochMilliseconds, msToIso } from '../_shared/time'
 import { readMacKeychainRaw } from '../_shared/keychain'
 import { codexHomes } from './usage'
 
@@ -97,7 +97,7 @@ function planLabel(planType: unknown): string | null {
 function resetDateMs(window: any): number | null {
   if (!window) return null
   const absolute = numberValue(window.reset_at ?? window.resets_at)
-  if (absolute !== undefined) return absolute > 10_000_000_000 ? absolute : absolute * 1000
+  if (absolute !== undefined) return epochMilliseconds(absolute)
   const after = numberValue(window.reset_after_seconds)
   if (after !== undefined) return Date.now() + after * 1000
   for (const key of ['reset_at', 'resets_at']) {

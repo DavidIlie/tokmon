@@ -1,10 +1,11 @@
-import { access, readFile, readdir } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { Account, BillingResult } from '../types'
 import { decodeBase64UrlJson } from '../_shared/jwt'
+import { hasFileMatching } from '../usage-core'
 import { cloudCodeBucketsToMetrics, fetchCloudCodeQuota } from '../cloud-code'
-import { geminiTmpDir } from './usage'
+import { geminiTmpDir, isGeminiSessionFile } from './usage'
 
 export function geminiCredsPath(homeDir?: string): string {
   return join(homeDir ?? homedir(), '.gemini', 'oauth_creds.json')
@@ -67,25 +68,7 @@ export async function detectGemini(homeDir?: string): Promise<boolean> {
 }
 
 async function hasGeminiChatSessions(homeDir?: string): Promise<boolean> {
-  const root = geminiTmpDir(homeDir)
-  const stack = [root]
-  let visitedDirs = 0
-  const maxDirs = 512
-  while (stack.length > 0 && visitedDirs < maxDirs) {
-    const dir = stack.pop()!
-    let entries
-    try { entries = await readdir(dir, { withFileTypes: true }) } catch { continue }
-    visitedDirs++
-    for (const entry of entries) {
-      const child = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        stack.push(child)
-      } else if (entry.isFile() && /(^|[\\/])chats[\\/]session-.*\.jsonl$/.test(child)) {
-        return true
-      }
-    }
-  }
-  return false
+  return hasFileMatching(geminiTmpDir(homeDir), isGeminiSessionFile, { maxDirs: 512 })
 }
 
 interface GeminiCreds {

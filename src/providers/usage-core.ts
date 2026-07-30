@@ -1,6 +1,6 @@
 import type { Dirent } from 'node:fs'
 import { readFileSync, readdirSync } from 'node:fs'
-import { readdir } from 'node:fs/promises'
+import { readdir, stat as fsStat } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
@@ -195,10 +195,13 @@ export async function walkFiles(root: string): Promise<string[]> {
  */
 export async function hasFileMatching(
   root: string,
-  predicate: (name: string) => boolean,
+  predicate: (path: string) => boolean,
+  options?: { maxDirs?: number },
 ): Promise<boolean> {
   const stack = [root]
-  while (stack.length > 0) {
+  let visitedDirs = 0
+  const maxDirs = options?.maxDirs ?? Number.POSITIVE_INFINITY
+  while (stack.length > 0 && visitedDirs < maxDirs) {
     const dir = stack.pop()!
     let entries: Dirent<string>[]
     try {
@@ -206,12 +209,43 @@ export async function hasFileMatching(
     } catch {
       continue
     }
+    visitedDirs++
     for (const entry of entries) {
-      if (entry.isFile()) { if (predicate(entry.name)) return true }
-      else if (entry.isDirectory()) stack.push(join(dir, entry.name))
+      const path = join(dir, entry.name)
+      if (entry.isFile()) { if (predicate(path)) return true }
+      else if (entry.isDirectory()) stack.push(path)
     }
   }
   return false
+}
+
+export async function collectSessionFiles(
+  roots: readonly string[],
+  predicate: (path: string) => boolean,
+  since: number,
+): Promise<{ path: string; mtimeMs: number; size: number }[]> {
+  const files: { path: string; mtimeMs: number; size: number }[] = []
+  const seen = new Set<string>()
+  const seenIno = new Set<string>()
+  for (const root of roots) {
+    for (const relativePath of await walkFiles(root)) {
+      if (!predicate(relativePath)) continue
+      const path = join(root, relativePath)
+      if (seen.has(path)) continue
+      seen.add(path)
+      try {
+        const stat = await fsStat(path)
+        if (stat.mtimeMs < since) continue
+        if (stat.ino && process.platform !== 'win32') {
+          const inode = `${stat.dev}:${stat.ino}`
+          if (seenIno.has(inode)) continue
+          seenIno.add(inode)
+        }
+        files.push({ path, mtimeMs: stat.mtimeMs, size: stat.size })
+      } catch {}
+    }
+  }
+  return files
 }
 
 async function mapLimit<T>(items: T[], limit: number, fn: (t: T) => Promise<void>): Promise<void> {

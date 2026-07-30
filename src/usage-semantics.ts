@@ -59,7 +59,7 @@ export interface HeadroomAccountInput {
   quotas: readonly QuotaView[]
 }
 
-const clampPct = (value: number): number => Math.max(0, Math.min(100, value))
+export const clampPct = (value: number): number => Math.max(0, Math.min(100, value))
 
 function inferRole(metric: Metric): MetricRole {
   if (metric.role) return metric.role

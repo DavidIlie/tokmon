@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
 import { type Entry, summarize, tabulate, finitePositive, dashboardSince, tableSince } from '../usage-core'
+import { EPOCH_SECONDS_BOUNDARY } from '../_shared/time'
 import { runSqlite } from '../cursor/sqlite'
 
 export function opencodeDbPaths(homeDir?: string): string[] {
@@ -56,12 +57,12 @@ async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   const db = await findDb(homeDir)
   if (!db) return []
   const sql =
-    "SELECT CASE WHEN time_created < 10000000000 THEN time_created * 1000 ELSE time_created END AS ts, json_extract(data,'$.modelID') AS model, " +
+    `SELECT CASE WHEN time_created < ${EPOCH_SECONDS_BOUNDARY} THEN time_created * 1000 ELSE time_created END AS ts, json_extract(data,'$.modelID') AS model, ` +
     "json_extract(data,'$.cost') AS cost, json_extract(data,'$.tokens.input') AS input, " +
     "json_extract(data,'$.tokens.output') AS output, " +
     "json_extract(data,'$.tokens.cache.read') AS cacheRead, json_extract(data,'$.tokens.cache.write') AS cacheWrite " +
     "FROM message WHERE json_valid(data) AND json_extract(data,'$.role')='assistant' " +
-    "AND json_type(data,'$.tokens')='object' AND (CASE WHEN time_created < 10000000000 THEN time_created * 1000 ELSE time_created END) >= ?;"
+    `AND json_type(data,'$.tokens')='object' AND (CASE WHEN time_created < ${EPOCH_SECONDS_BOUNDARY} THEN time_created * 1000 ELSE time_created END) >= ?;`
   const res = await runSqlite(db, sql, [Math.floor(since)])
   if (res.status !== 'ok') return []
   const entries: Entry[] = []

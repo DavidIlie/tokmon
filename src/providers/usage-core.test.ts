@@ -277,7 +277,7 @@ test('session detection stops at the first match instead of walking the tree', a
     assert.equal(found, true)
     // Everything inspected lives in the root directory, so exactly one readdir
     // ran: the 97-file subtree below was never opened.
-    assert.deepEqual(inspected, ['session.jsonl'])
+    assert.deepEqual(inspected, [join(root, 'session.jsonl')])
     // Control: the tree really is large, and the old walk collected all of it.
     assert.equal((await walkFiles(root)).length, 98)
   } finally {
