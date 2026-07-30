@@ -11,6 +11,7 @@ import {
 import type { WebSnapshot, AccountFetchState, PeakStatus } from './contract'
 import type { Config, DetectedAccountRef } from '../config-schema'
 import { createRefreshQueue, settleRefreshTasks, type RefreshQueue } from './refresh-queue'
+import { decodeWebSnapshot } from './snapshot-schema'
 
 const TABLE_INTERVAL_MS = 300_000
 const PEAK_INTERVAL_MS = 300_000
@@ -173,21 +174,11 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
 
   const hydrateFromCache = () => {
     try {
-      const cached = JSON.parse(readFileSync(snapshotCacheFile(), 'utf-8')) as WebSnapshot
-      if (!cached || !Array.isArray(cached.accounts)) return
+      const cached = decodeWebSnapshot(JSON.parse(readFileSync(snapshotCacheFile(), 'utf-8')))
+      if (!cached) return
       for (const a of cached.accounts) {
         if (a.dashboard || a.table) {
-          const dashboard = a.dashboard
-            ? {
-                ...a.dashboard,
-                lastActivityAt: typeof a.dashboard.lastActivityAt === 'number'
-                  && Number.isSafeInteger(a.dashboard.lastActivityAt)
-                  && a.dashboard.lastActivityAt >= 0
-                  ? a.dashboard.lastActivityAt
-                  : null,
-              }
-            : null
-          usage.set(a.id, { dashboard, table: a.table })
+          usage.set(a.id, { dashboard: a.dashboard, table: a.table })
           if (a.dashboard) {
             summaryState.set(a.id, 'ready')
             if (typeof a.summaryUpdatedAt === 'number') summaryUpdatedAt.set(a.id, a.summaryUpdatedAt)

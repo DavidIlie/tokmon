@@ -8,15 +8,16 @@ import type { WebSnapshot } from '../web/contract'
 import {
   ConfigStateSchema,
   ConfigUpdateConflictFailure,
+  TYPED_READ_FAILURES_CAPABILITY,
   TOKMON_WS_METHODS,
   TOKMON_WS_PATH,
   TokmonRpcGroup,
-  WebSnapshotSchema,
   type ConfigState,
   type ConfigUpdateRequest,
   type FsListing,
   type RefreshScope,
 } from '../rpc/contract'
+import { materializeWebSnapshot } from '../web/snapshot-schema'
 
 export type RpcConnState = 'connecting' | 'live' | 'reconnecting' | 'error' | 'closed'
 
@@ -59,8 +60,6 @@ type NodeSocketModule = typeof import('@effect/platform-node/NodeSocket')
 type TokmonRpcs = RpcGroup.Rpcs<typeof TokmonRpcGroup>
 type TokmonClient = RpcClient.RpcClient<TokmonRpcs, RpcClientError>
 type WireConfigState = typeof ConfigStateSchema.Type
-type WireSnapshot = typeof WebSnapshotSchema.Type
-type WireTable = NonNullable<WireSnapshot['accounts'][number]['table']>
 
 class TokmonRpcClient extends Context.Service<TokmonRpcClient, TokmonClient>()(
   'tokmon/client/DaemonRpcClient/TokmonRpcClient',
@@ -150,70 +149,6 @@ function normalizeConfigState(state: WireConfigState): ConfigState {
       capabilities: [...state.protocol.capabilities],
     },
     config: normalizeConfig(state.config),
-  }
-}
-
-function normalizeSnapshot(snapshot: WireSnapshot): WebSnapshot {
-  const copyHeadroom = (headroom: WireSnapshot['providers'][number]['headroom']) => headroom
-    ? {
-        ...headroom,
-        activeAccountIds: [...headroom.activeAccountIds],
-        factors: headroom.factors.map(factor => ({ ...factor })),
-      }
-    : undefined
-  const copyRows = (rows: WireTable['daily']) => rows.map(row => ({
-      ...row,
-      models: [...row.models],
-      breakdown: row.breakdown.map(detail => ({ ...detail })),
-    }))
-
-  return {
-    ...snapshot,
-    providers: snapshot.providers.map(provider => ({
-      ...provider,
-      headroom: copyHeadroom(provider.headroom),
-    })),
-    accounts: snapshot.accounts.map(account => ({
-      ...account,
-      identity: account.identity ? { ...account.identity } : undefined,
-      quotas: account.quotas?.map(quota => ({ ...quota })),
-      headroom: copyHeadroom(account.headroom),
-      dashboard: account.dashboard
-        ? {
-            ...account.dashboard,
-            today: { ...account.dashboard.today },
-            week: { ...account.dashboard.week },
-            month: { ...account.dashboard.month },
-            series: [...account.dashboard.series],
-          }
-        : null,
-      table: account.table
-        ? {
-            daily: copyRows(account.table.daily),
-            weekly: copyRows(account.table.weekly),
-            monthly: copyRows(account.table.monthly),
-          }
-        : null,
-      billing: account.billing
-        ? {
-            ...account.billing,
-            metrics: account.billing.metrics.map(metric => ({
-              ...metric,
-              format: { ...metric.format },
-            })),
-            activity: account.billing.activity
-              ? { ...account.billing.activity, series: [...account.billing.activity.series] }
-              : account.billing.activity,
-            modelSpend: account.billing.modelSpend == null
-              ? account.billing.modelSpend
-              : account.billing.modelSpend.map(spend => ({ ...spend })),
-          }
-        : null,
-      summaryUpdatedAt: account.summaryUpdatedAt ?? null,
-      billingUpdatedAt: account.billingUpdatedAt ?? null,
-      tableUpdatedAt: account.tableUpdatedAt ?? null,
-    })),
-    peak: snapshot.peak ? { ...snapshot.peak } : null,
   }
 }
 
@@ -514,7 +449,9 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
 
   return {
     getConfig: () =>
-      run(TOKMON_WS_METHODS.getConfig, client => client[TOKMON_WS_METHODS.getConfig]({}))
+      run(TOKMON_WS_METHODS.getConfig, client => client[TOKMON_WS_METHODS.getConfig]({
+        capabilities: [TYPED_READ_FAILURES_CAPABILITY],
+      }))
         .then(normalizeConfigState),
 
     setConfig: (update) =>
@@ -525,11 +462,14 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       run(TOKMON_WS_METHODS.refresh, client => client[TOKMON_WS_METHODS.refresh]({ scope })),
 
     browseFs: (path) =>
-      run(TOKMON_WS_METHODS.browseFs, client => client[TOKMON_WS_METHODS.browseFs]({ path })),
+      run(TOKMON_WS_METHODS.browseFs, client => client[TOKMON_WS_METHODS.browseFs]({
+        path,
+        capabilities: [TYPED_READ_FAILURES_CAPABILITY],
+      })),
 
     subscribeSnapshot: (onSnapshot) =>
       subscribe(
-        client => client[TOKMON_WS_METHODS.snapshot]({}).pipe(Stream.map(normalizeSnapshot)),
+        client => client[TOKMON_WS_METHODS.snapshot]({}).pipe(Stream.map(materializeWebSnapshot)),
         onSnapshot,
         snapshot => Math.max(options.snapshotStaleFloorMs ?? 90_000, snapshot.intervalMs * 3),
       ),

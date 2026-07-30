@@ -1,5 +1,6 @@
 import { closeSync, fchmodSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
+import { Effect, Option, Schema, SchemaTransformation } from 'effect'
 import { cacheDir } from '../config'
 import {
   daemonChannelFromWire,
@@ -53,22 +54,109 @@ function isLoopbackUrl(value: string): boolean {
   }
 }
 
-function validLock(value: unknown): value is Omit<DaemonLock, 'channel'> & { channel?: DaemonChannel } {
-  const lock = value as Partial<DaemonLock> | null
-  return !!lock
-    && typeof lock.pid === 'number' && Number.isInteger(lock.pid) && lock.pid > 0
-    && typeof lock.port === 'number' && Number.isInteger(lock.port) && lock.port >= 0 && lock.port <= 65535
-    && typeof lock.url === 'string' && (lock.state === 'starting' || isLoopbackUrl(lock.url))
-    && typeof lock.wsToken === 'string' && lock.wsToken.length >= 32
-    && typeof lock.version === 'string'
-    && typeof lock.protocolVersion === 'number' && Number.isSafeInteger(lock.protocolVersion) && lock.protocolVersion >= 1
-    && Array.isArray(lock.capabilities) && lock.capabilities.every(capability => typeof capability === 'string')
-    && (lock.ownerKind === 'cli' || lock.ownerKind === 'desktop')
-    && daemonChannelFromWire(lock.channel) !== null
-    && typeof lock.startedAt === 'number'
-    && typeof lock.ownerId === 'string' && lock.ownerId.length >= 32
-    && (lock.state === 'starting' || lock.state === 'ready')
-}
+const PositiveIntegerSchema = Schema.Number.check(Schema.makeFilter<number>(
+  value => Number.isInteger(value) && value > 0 ? undefined : 'expected a positive integer',
+))
+const PortSchema = Schema.Number.check(Schema.makeFilter<number>(
+  value => Number.isInteger(value) && value >= 0 && value <= 65_535
+    ? undefined
+    : 'expected a valid port',
+))
+const ProtocolVersionSchema = Schema.Number.check(Schema.makeFilter<number>(
+  value => Number.isSafeInteger(value) && value >= 1
+    ? undefined
+    : 'expected a positive safe integer',
+))
+const IntegerSchema = Schema.Number.check(Schema.makeFilter<number>(
+  value => Number.isInteger(value) ? undefined : 'expected an integer',
+))
+const OwnerProofSchema = Schema.String.check(Schema.isMinLength(32))
+const DaemonChannelSchema = Schema.Literals(['release', 'dev'] as const)
+const LoopbackUrlSchema = Schema.String.check(Schema.makeFilter<string>(
+  value => isLoopbackUrl(value) ? undefined : 'expected a loopback HTTP URL',
+))
+
+export const DaemonLockSchema = Schema.Struct({
+  pid: PositiveIntegerSchema,
+  port: PortSchema,
+  url: Schema.String,
+  wsToken: OwnerProofSchema,
+  version: Schema.String,
+  protocolVersion: ProtocolVersionSchema,
+  capabilities: Schema.Array(Schema.String),
+  ownerKind: Schema.Literals(['cli', 'desktop'] as const),
+  // Older release daemons predate channels and occupy the release namespace.
+  channel: Schema.optionalKey(DaemonChannelSchema),
+  startedAt: Schema.Number,
+  ownerId: OwnerProofSchema,
+  state: Schema.Literals(['starting', 'ready'] as const),
+}).check(Schema.makeFilter(
+  lock => lock.state === 'starting' || isLoopbackUrl(lock.url)
+    ? undefined
+    : { path: ['url'], issue: 'expected a loopback HTTP URL for a ready lock' },
+))
+
+const ForeignDaemonLockWireSchema = Schema.Struct({
+  pid: PositiveIntegerSchema,
+  port: Schema.optionalKey(Schema.Unknown),
+  url: LoopbackUrlSchema,
+  wsToken: OwnerProofSchema,
+  version: Schema.optionalKey(Schema.Unknown),
+  protocolVersion: Schema.optionalKey(ProtocolVersionSchema),
+  capabilities: Schema.optionalKey(Schema.Unknown),
+  ownerKind: Schema.optionalKey(Schema.Literals(['cli', 'desktop'] as const)),
+  channel: Schema.optionalKey(DaemonChannelSchema),
+  startedAt: Schema.optionalKey(Schema.Unknown),
+  ownerId: Schema.optionalKey(Schema.Unknown),
+  state: Schema.Literal('ready'),
+})
+
+const ForeignDaemonLockSchema = ForeignDaemonLockWireSchema.pipe(Schema.decodeTo(
+  Schema.Struct({
+    pid: PositiveIntegerSchema,
+    port: Schema.optionalKey(IntegerSchema),
+    url: LoopbackUrlSchema,
+    wsToken: OwnerProofSchema,
+    version: Schema.optionalKey(Schema.String),
+    protocolVersion: Schema.optionalKey(ProtocolVersionSchema),
+    capabilities: Schema.optionalKey(Schema.mutable(Schema.Array(Schema.String))),
+    ownerKind: Schema.optionalKey(Schema.Literals(['cli', 'desktop'] as const)),
+    channel: Schema.optionalKey(DaemonChannelSchema),
+    startedAt: Schema.optionalKey(Schema.Number),
+    ownerId: Schema.optionalKey(Schema.String),
+    state: Schema.Literal('ready'),
+  }),
+  SchemaTransformation.transformOrFail({
+    decode: (value) => {
+      const port = typeof value.port === 'number' && Number.isInteger(value.port)
+        ? value.port
+        : undefined
+      return Effect.succeed({
+        pid: value.pid,
+        ...(port === undefined ? {} : { port }),
+        url: value.url,
+        wsToken: value.wsToken,
+        ...(typeof value.version === 'string' ? { version: value.version } : {}),
+        ...(value.protocolVersion === undefined ? {} : { protocolVersion: value.protocolVersion }),
+        ...(Array.isArray(value.capabilities) && value.capabilities.every(item => typeof item === 'string')
+          ? { capabilities: value.capabilities }
+          : {}),
+        ...(value.ownerKind === undefined ? {} : { ownerKind: value.ownerKind }),
+        ...(value.channel === undefined ? {} : { channel: value.channel }),
+        ...(typeof value.startedAt === 'number' ? { startedAt: value.startedAt } : {}),
+        ...(typeof value.ownerId === 'string' ? { ownerId: value.ownerId } : {}),
+        state: value.state,
+      })
+    },
+    encode: Effect.succeed,
+  }),
+))
+
+const decodeDaemonLock = Schema.decodeUnknownOption(DaemonLockSchema)
+const decodeForeignDaemonLock = Schema.decodeUnknownOption(ForeignDaemonLockSchema)
+const decodeAbandonedLockPid = Schema.decodeUnknownOption(Schema.Struct({
+  pid: Schema.optionalKey(PositiveIntegerSchema),
+}))
 
 /** Read only owner-private, regular lock files. Legacy/insecure locks are never trusted. */
 export function readLock(opts: LockfileOptions = {}): DaemonLock | null {
@@ -76,10 +164,14 @@ export function readLock(opts: LockfileOptions = {}): DaemonLock | null {
     const path = lockfilePath(opts)
     const stat = statSync(path)
     if (!stat.isFile() || (stat.mode & 0o077) !== 0) return null
-    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as unknown
-    if (!validLock(parsed)) return null
+    const parsed = Option.getOrNull(
+      decodeDaemonLock(JSON.parse(readFileSync(path, 'utf-8'))),
+    )
+    if (!parsed) return null
     const channel = daemonChannelFromWire(parsed.channel)
-    return channel === resolveDaemonChannel(opts.channel) ? { ...parsed, channel } : null
+    return channel === resolveDaemonChannel(opts.channel)
+      ? { ...parsed, capabilities: [...parsed.capabilities], channel }
+      : null
   } catch {
     return null
   }
@@ -109,32 +201,19 @@ export function readForeignLock(opts: LockfileOptions = {}): ForeignDaemonLock |
     const path = lockfilePath(opts)
     const stat = statSync(path)
     if (!stat.isFile() || (stat.mode & 0o077) !== 0) return null
-    const value = JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>
+    const value = Option.getOrNull(
+      decodeForeignDaemonLock(JSON.parse(readFileSync(path, 'utf-8'))),
+    )
+    if (!value) return null
     const channel = daemonChannelFromWire(value.channel)
-    if (
-      !Number.isInteger(value.pid) || (value.pid as number) <= 0 ||
-      typeof value.url !== 'string' || !isLoopbackUrl(value.url) ||
-      typeof value.wsToken !== 'string' || value.wsToken.length < 32 ||
-      value.state !== 'ready' || channel !== resolveDaemonChannel(opts.channel)
-    ) return null
-    if (value.ownerKind !== undefined && value.ownerKind !== 'cli' && value.ownerKind !== 'desktop') return null
-    if (value.protocolVersion !== undefined && (!Number.isSafeInteger(value.protocolVersion) || (value.protocolVersion as number) < 1)) return null
-    return {
-      pid: value.pid as number,
-      ...(Number.isInteger(value.port) ? { port: value.port as number } : {}),
-      url: value.url,
-      wsToken: value.wsToken,
-      ...(typeof value.version === 'string' ? { version: value.version } : {}),
-      ...(typeof value.protocolVersion === 'number' ? { protocolVersion: value.protocolVersion } : {}),
-      ...(Array.isArray(value.capabilities) && value.capabilities.every(item => typeof item === 'string')
-        ? { capabilities: value.capabilities as string[] }
-        : {}),
-      ...(value.ownerKind === 'cli' || value.ownerKind === 'desktop' ? { ownerKind: value.ownerKind } : {}),
-      channel,
-      ...(typeof value.startedAt === 'number' ? { startedAt: value.startedAt } : {}),
-      ...(typeof value.ownerId === 'string' ? { ownerId: value.ownerId } : {}),
-      state: 'ready',
-    }
+    const { capabilities, ...foreign } = value
+    return channel === resolveDaemonChannel(opts.channel)
+      ? {
+          ...foreign,
+          ...(capabilities ? { capabilities: [...capabilities] } : {}),
+          channel,
+        }
+      : null
   } catch {
     return null
   }
@@ -254,8 +333,10 @@ export function reclaimAbandonedLock(opts: LockfileOptions = {}, graceMs = 10_00
 
     let pid: number | null = null
     try {
-      const parsed = JSON.parse(readFileSync(path, 'utf-8')) as { pid?: unknown }
-      if (Number.isInteger(parsed.pid) && (parsed.pid as number) > 0) pid = parsed.pid as number
+      const parsed = Option.getOrNull(
+        decodeAbandonedLockPid(JSON.parse(readFileSync(path, 'utf-8'))),
+      )
+      if (parsed?.pid !== undefined) pid = parsed.pid
     } catch {}
 
     if (pid !== null && isAlive(pid)) return false

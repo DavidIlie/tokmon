@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { extname } from 'node:path'
+import { Option, Schema } from 'effect'
 import { TOKMON_PROTOCOL_VERSION } from '../rpc/contract'
 import {
   isAlive,
@@ -82,20 +83,26 @@ interface Handshake {
   channel: DaemonChannel
 }
 
+const HandshakeSchema = Schema.Struct({
+  ready: Schema.Literal(1),
+  url: Schema.String,
+  port: Schema.Number,
+  wsToken: Schema.String,
+  version: Schema.String,
+  protocolVersion: Schema.Number,
+  capabilities: Schema.Array(Schema.String),
+  ownerKind: Schema.Literals(['cli', 'desktop'] as const),
+  // Older release daemons omitted the channel; that still means release.
+  channel: Schema.optionalKey(Schema.Literals(['release', 'dev'] as const)),
+})
+const decodeHandshake = Schema.decodeUnknownOption(HandshakeSchema)
+
 function parseHandshake(line: string): Handshake | null {
   try {
-    const value = JSON.parse(line) as Partial<Handshake>
-    return value?.ready === 1
-      && typeof value.url === 'string'
-      && typeof value.wsToken === 'string'
-      && typeof value.version === 'string'
-      && typeof value.protocolVersion === 'number'
-      && Array.isArray(value.capabilities)
-      && value.capabilities.every(capability => typeof capability === 'string')
-      && (value.ownerKind === 'cli' || value.ownerKind === 'desktop')
-      && daemonChannelFromWire(value.channel) !== null
-      ? { ...value, channel: daemonChannelFromWire(value.channel) } as Handshake
-      : null
+    const value = Option.getOrNull(decodeHandshake(JSON.parse(line)))
+    if (!value) return null
+    const channel = daemonChannelFromWire(value.channel)
+    return channel ? { ...value, capabilities: [...value.capabilities], channel } : null
   } catch { return null }
 }
 

@@ -4,7 +4,7 @@ import { connect } from 'node:net'
 import test from 'node:test'
 import { DEFAULTS } from '../config'
 import { createDaemonRpcClient } from '../client/daemon-rpc-client'
-import { RefreshFailure } from '../rpc/contract'
+import { BrowseFsFailure, ConfigReadFailure, RefreshFailure } from '../rpc/contract'
 import type { DataEngine } from './data-engine'
 import type { WebSnapshot } from './contract'
 import { mountWsRpc } from './ws'
@@ -152,6 +152,86 @@ test('client normalizes additive config omissions from older protocol-v3 daemons
     assert.equal((await client.getConfig()).config.revision, DEFAULTS.revision)
   } finally {
     ;(unsubscribe as (() => void) | null)?.()
+    await client?.close()
+    await closeRpc()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
+})
+
+test('negotiated config and filesystem failures stay typed and request-local', async (t) => {
+  let configFailure = false
+  let browseFailure = false
+  const engine: DataEngine = {
+    snapshot: () => null,
+    start: () => {},
+    subscribe: () => () => {},
+    subscribeConfig: () => () => {},
+    touch: () => {},
+    refresh: async () => {},
+    setConfig: () => {},
+    broadcastConfig: () => {},
+    stop: () => {},
+  }
+  const server = createServer()
+  const closeRpc = await mountWsRpc(server, {
+    engine,
+    state: { config: { ...DEFAULTS } },
+    readConfig: async () => {
+      if (configFailure) throw new Error('config disk unavailable')
+      return { ...DEFAULTS }
+    },
+    browseHome: async path => {
+      if (browseFailure) throw new Error('home directory unavailable')
+      return { path, parent: null, entries: [] }
+    },
+  })
+  let client: ReturnType<typeof createDaemonRpcClient> | null = null
+  try {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(0, '127.0.0.1', resolve)
+      })
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === 'EPERM') {
+        t.skip('the sandbox disallows binding ephemeral loopback ports')
+        return
+      }
+      throw cause
+    }
+    const address = server.address()
+    assert.ok(address && typeof address === 'object')
+    const connStates: string[] = []
+    client = createDaemonRpcClient(`http://127.0.0.1:${address.port}`, {
+      transport: 'node',
+      onConn: state => { connStates.push(state) },
+    })
+
+    await client.getConfig()
+    connStates.length = 0
+
+    configFailure = true
+    await assert.rejects(client.getConfig(), (error: unknown) => {
+      assert.ok(error instanceof ConfigReadFailure)
+      assert.equal(error.kind, 'config-read')
+      assert.match(error.message, /config disk unavailable/)
+      return true
+    })
+    assert.deepEqual(connStates, [])
+    configFailure = false
+    await client.getConfig()
+
+    browseFailure = true
+    await assert.rejects(client.browseFs('~'), (error: unknown) => {
+      assert.ok(error instanceof BrowseFsFailure)
+      assert.equal(error.kind, 'browse-fs')
+      assert.match(error.message, /home directory unavailable/)
+      return true
+    })
+    assert.deepEqual(connStates, [])
+    browseFailure = false
+    assert.deepEqual(await client.browseFs('~'), { path: '~', parent: null, entries: [] })
+  } finally {
     await client?.close()
     await closeRpc()
     await new Promise<void>(resolve => server.close(() => resolve()))

@@ -10,6 +10,7 @@ import {
 } from './data-engine'
 import { createRefreshQueue, settleRefreshTasks } from './refresh-queue'
 import { DEFAULTS } from '../config-schema'
+import { decodeWebSnapshot } from './snapshot-schema'
 
 function deferred() {
   let resolve!: () => void
@@ -23,6 +24,29 @@ function deferred() {
 
 const turn = () => new Promise<void>(resolve => setImmediate(resolve))
 const settleEngine = async () => { for (let i = 0; i < 8; i++) await turn() }
+
+test('cached snapshots decode wholly or fall back to a cold start', () => {
+  const snapshot = {
+    version: 'test',
+    generatedAt: Date.now(),
+    tz: 'UTC',
+    intervalMs: 1_000,
+    providers: [],
+    accounts: [],
+    seeded: true,
+    peak: null,
+    futureField: true,
+  }
+  assert.ok(decodeWebSnapshot(snapshot))
+  assert.equal(decodeWebSnapshot({
+    ...snapshot,
+    accounts: [{ id: 'old-cache-without-required-account-fields' }],
+  }), null)
+  assert.equal(decodeWebSnapshot({
+    ...snapshot,
+    generatedAt: 'recently',
+  }), null)
+})
 
 test('a new viewer catches up missing or stale quota data', () => {
   const accounts = [{ account: { id: 'codex' } }] as never

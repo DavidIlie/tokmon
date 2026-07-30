@@ -20,6 +20,7 @@ import {
   acquireLock,
   lockfilePath,
   probeHealth,
+  readForeignLock,
   readLock,
   reclaimAbandonedLock,
   reclaimDeadLock,
@@ -65,6 +66,42 @@ test('daemon lock is exclusive, owner-only, and mode 0600', async () => {
     assert.equal(writeLock({ ...first, state: 'ready' }, { cachePath }), true)
     assert.equal(readLock({ cachePath })?.state, 'ready')
     assert.equal(unlinkLock(first.ownerId, { cachePath }), true)
+  } finally {
+    await rm(cachePath, { recursive: true, force: true })
+  }
+})
+
+test('lock schemas tolerate additive and legacy fields but reject invalid strict locks', async () => {
+  const cachePath = await mkdtemp(join(tmpdir(), 'tokmon-daemon-schema-test-'))
+  const path = lockfilePath({ cachePath })
+  try {
+    const current = {
+      ...lock(),
+      state: 'ready' as const,
+      futureField: { additive: true },
+    }
+    await writeFile(path, JSON.stringify(current), { mode: 0o600 })
+    assert.equal(readLock({ cachePath })?.ownerId, current.ownerId)
+
+    const { channel: _channel, ...legacy } = current
+    await writeFile(path, JSON.stringify({
+      ...legacy,
+      capabilities: ['known', 1],
+      version: 42,
+    }), { mode: 0o600 })
+    assert.equal(readLock({ cachePath }), null)
+    assert.deepEqual(readForeignLock({ cachePath }), {
+      pid: current.pid,
+      port: current.port,
+      url: current.url,
+      wsToken: current.wsToken,
+      protocolVersion: current.protocolVersion,
+      ownerKind: current.ownerKind,
+      channel: 'release',
+      startedAt: current.startedAt,
+      ownerId: current.ownerId,
+      state: 'ready',
+    })
   } finally {
     await rm(cachePath, { recursive: true, force: true })
   }

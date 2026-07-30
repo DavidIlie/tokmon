@@ -7,9 +7,12 @@ import { RpcSerialization, RpcServer } from 'effect/unstable/rpc'
 import type { Config } from '../config'
 import { loadConfig } from '../config'
 import {
+  BrowseFsFailure,
   ConfigPersistenceFailure as ConfigPersistenceRpcFailure,
+  ConfigReadFailure,
   ConfigUpdateConflictFailure,
   RefreshFailure,
+  TYPED_READ_FAILURES_CAPABILITY,
   TOKMON_WS_METHODS,
   TOKMON_WS_PATH,
   TokmonRpcGroup,
@@ -28,6 +31,10 @@ import { isAllowedLocalRequest } from './request-guard'
 interface MountWsRpcDeps {
   readonly engine: DataEngine
   readonly state: { config: Config }
+  /** Test seam for the config read boundary. */
+  readonly readConfig?: () => Promise<Config>
+  /** Test seam for the filesystem read boundary. */
+  readonly browseHome?: typeof listHomeDirectory
 }
 
 function isWsPath(req: IncomingMessage): boolean {
@@ -118,20 +125,65 @@ function refreshEffect(
   }))
 }
 
+function failureMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback
+}
+
+function supportsTypedReadFailures(capabilities: readonly string[] | undefined): boolean {
+  return capabilities?.includes(TYPED_READ_FAILURES_CAPABILITY) ?? false
+}
+
+function readEffect<A, E>(
+  tryPromise: () => PromiseLike<A>,
+  failure: (error: unknown) => E,
+  typedFailures: boolean,
+): Effect.Effect<A, E> {
+  const effect = Effect.tryPromise({
+    try: tryPromise,
+    catch: failure,
+  })
+  // A pre-capability client has Schema.Never as this method's error decoder.
+  // Preserve its historical defect response instead of making it treat a
+  // request-local read error as a protocol/schema failure.
+  return typedFailures
+    ? effect
+    : effect.pipe(Effect.matchEffect({
+        onFailure: Effect.die,
+        onSuccess: Effect.succeed,
+      }))
+}
+
 export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<() => Promise<void>> {
   const scope = await Effect.runPromise(Scope.make())
   const wss = new NodeWS.WebSocketServer({ noServer: true })
 
   const handlersLayer = TokmonRpcGroup.toLayer(
     TokmonRpcGroup.of({
-      [TOKMON_WS_METHODS.getConfig]: () =>
-        Effect.promise(() => Promise.resolve(deps.state.config ?? loadConfig()).then(toConfigState)),
+      [TOKMON_WS_METHODS.getConfig]: ({ capabilities }) =>
+        readEffect(
+          () => (deps.readConfig
+            ? deps.readConfig()
+            : Promise.resolve(deps.state.config ?? loadConfig())
+          ).then(toConfigState),
+          error => new ConfigReadFailure({
+            kind: 'config-read',
+            message: failureMessage(error, 'config could not be read'),
+          }),
+          supportsTypedReadFailures(capabilities),
+        ),
       [TOKMON_WS_METHODS.setConfig]: (config) =>
         configUpdateEffect(deps.engine, deps.state, config as never),
       [TOKMON_WS_METHODS.refresh]: ({ scope }) =>
         refreshEffect(deps.engine, deps.state, scope),
-      [TOKMON_WS_METHODS.browseFs]: ({ path }) =>
-        Effect.promise(() => listHomeDirectory(path)),
+      [TOKMON_WS_METHODS.browseFs]: ({ path, capabilities }) =>
+        readEffect(
+          () => (deps.browseHome ?? listHomeDirectory)(path),
+          error => new BrowseFsFailure({
+            kind: 'browse-fs',
+            message: failureMessage(error, 'filesystem could not be browsed'),
+          }),
+          supportsTypedReadFailures(capabilities),
+        ),
       [TOKMON_WS_METHODS.snapshot]: () => snapshotStream(deps.engine),
       [TOKMON_WS_METHODS.config]: () => configStream(deps.engine).pipe(Stream.map(toConfigState)),
     }),

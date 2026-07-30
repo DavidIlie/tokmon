@@ -9,7 +9,8 @@ export const TOKMON_WS_PATH = '/ws'
 
 /** Bump only for an incompatible wire change. Capabilities gate additive features. */
 export const TOKMON_PROTOCOL_VERSION = 4
-export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1', 'account-provenance-v1', 'installed-harnesses-v1', 'discovery-refresh-v1', 'menu-bar-today-tokens', 'menu-bar-builder-v1'] as const
+export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1', 'account-provenance-v1', 'installed-harnesses-v1', 'discovery-refresh-v1', 'menu-bar-today-tokens', 'menu-bar-builder-v1', 'typed-read-failures-v1'] as const
+export const TYPED_READ_FAILURES_CAPABILITY = 'typed-read-failures-v1'
 
 export const TOKMON_WS_METHODS = {
   getConfig: 'tokmon.getConfig',
@@ -246,6 +247,42 @@ export class RefreshFailure extends Schema.TaggedErrorClass<RefreshFailure>()(
   },
 ) {}
 
+const LegacyConfigReadFailureSchema = Schema.Struct({
+  kind: Schema.Literal('config-read'),
+  message: Schema.String,
+})
+
+export class ConfigReadFailure extends Schema.TaggedErrorClass<ConfigReadFailure>()(
+  'ConfigReadFailure',
+  {
+    kind: Schema.Literal('config-read'),
+    message: Schema.String,
+  },
+) {}
+
+export const ConfigReadFailureSchema = Schema.Union([
+  ConfigReadFailure,
+  LegacyConfigReadFailureSchema,
+])
+
+const LegacyBrowseFsFailureSchema = Schema.Struct({
+  kind: Schema.Literal('browse-fs'),
+  message: Schema.String,
+})
+
+export class BrowseFsFailure extends Schema.TaggedErrorClass<BrowseFsFailure>()(
+  'BrowseFsFailure',
+  {
+    kind: Schema.Literal('browse-fs'),
+    message: Schema.String,
+  },
+) {}
+
+export const BrowseFsFailureSchema = Schema.Union([
+  BrowseFsFailure,
+  LegacyBrowseFsFailureSchema,
+])
+
 export const FsEntrySchema = Schema.Struct({
   name: Schema.String,
   path: Schema.String,
@@ -447,10 +484,17 @@ export const WebSnapshotSchema = Schema.Struct({
 })
 
 const EmptyPayloadSchema = Schema.Struct({})
+const ReadFailurePayloadFields = {
+  // The payload opt-in keeps failures request-local for clients whose older
+  // contract can only decode defects. New clients send this additive key;
+  // old daemons ignore it and old clients retain the previous wire shape.
+  capabilities: Schema.optionalKey(Schema.Array(Schema.String)),
+}
 
 export const GetConfigRpc = Rpc.make(TOKMON_WS_METHODS.getConfig, {
-  payload: EmptyPayloadSchema,
+  payload: Schema.Struct(ReadFailurePayloadFields),
   success: ConfigStateSchema,
+  error: ConfigReadFailureSchema,
 })
 
 export const SetConfigRpc = Rpc.make(TOKMON_WS_METHODS.setConfig, {
@@ -466,8 +510,9 @@ export const RefreshRpc = Rpc.make(TOKMON_WS_METHODS.refresh, {
 })
 
 export const BrowseFsRpc = Rpc.make(TOKMON_WS_METHODS.browseFs, {
-  payload: Schema.Struct({ path: Schema.String }),
+  payload: Schema.Struct({ path: Schema.String, ...ReadFailurePayloadFields }),
   success: FsListingSchema,
+  error: BrowseFsFailureSchema,
 })
 
 export const SnapshotRpc = Rpc.make(TOKMON_WS_METHODS.snapshot, {
