@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
+import { Duration, Effect, Fiber } from 'effect'
 import type { DashboardData, TableData } from '../types'
 import type { BillingResult, ProviderId } from '../providers/types'
 import { cacheDir, snapshotCacheFile } from '../config'
@@ -109,8 +110,15 @@ export async function forEachProviderSequentially<T extends { account: { provide
   }))
 }
 
+function reportBackgroundFailure(error: unknown): void {
+  // Per-account refresh failures already land in the fetch-state maps that feed
+  // the snapshot; only a genuinely unexpected defect would otherwise vanish here.
+  if (error instanceof AggregateError) return
+  console.error('[tokmon] background refresh failed', error)
+}
+
 function runInBackground(task: Promise<void>): void {
-  void task.catch(() => {})
+  void task.catch(reportBackgroundFailure)
 }
 
 export function throwIfRefreshFailures(scope: string, failures: readonly unknown[]): void {
@@ -144,10 +152,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   const configSubscribers = new Set<(config: Config) => void>()
   let lastActivity = Date.now()
   let stopped = false
-  let summaryTimer: ReturnType<typeof setInterval> | undefined
-  let tableTimer: ReturnType<typeof setInterval> | undefined
-  let billingTimer: ReturnType<typeof setInterval> | undefined
-  let peakTimer: ReturnType<typeof setInterval> | undefined
+  let loopFibers: Fiber.Fiber<unknown, unknown>[] = []
 
   let lastPersist = 0
   let lastReveal = 0
@@ -342,24 +347,30 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     () => !hasClaude || idle(),
   )
 
-  const clearTimers = () => {
-    clearInterval(summaryTimer); summaryTimer = undefined
-    clearInterval(tableTimer); tableTimer = undefined
-    clearInterval(billingTimer); billingTimer = undefined
-    clearInterval(peakTimer); peakTimer = undefined
+  // Loop period is interval + tick duration rather than setInterval's fixed
+  // rate; the refresh queues coalesce passes, so back-to-back ticks were
+  // already collapsing — this just stops scheduling them at all.
+  const loopFiber = (everyMs: number, tick: () => Promise<void>) =>
+    Effect.runFork(
+      Effect.sleep(Duration.millis(everyMs)).pipe(
+        Effect.andThen(Effect.tryPromise({ try: tick, catch: (error) => error })),
+        Effect.catch((error) => Effect.sync(() => reportBackgroundFailure(error))),
+        Effect.forever,
+      ),
+    )
+
+  const stopLoops = () => {
+    for (const fiber of loopFibers) Effect.runFork(Fiber.interrupt(fiber))
+    loopFibers = []
   }
 
-  const startTimers = () => {
-    summaryTimer = setInterval(() => { runInBackground(refreshSummary.run()) }, summaryIntervalMs)
-    tableTimer = setInterval(() => { runInBackground(refreshTable.run()) }, TABLE_INTERVAL_MS)
-    billingTimer = setInterval(() => { runInBackground(refreshBilling.run()) }, billingIntervalMs)
-    summaryTimer.unref?.()
-    tableTimer.unref?.()
-    billingTimer.unref?.()
-    if (hasClaude) {
-      peakTimer = setInterval(() => { runInBackground(refreshPeak.run()) }, PEAK_INTERVAL_MS)
-      peakTimer.unref?.()
-    }
+  const startLoops = () => {
+    loopFibers = [
+      loopFiber(summaryIntervalMs, () => refreshSummary.run()),
+      loopFiber(TABLE_INTERVAL_MS, () => refreshTable.run()),
+      loopFiber(billingIntervalMs, () => refreshBilling.run()),
+    ]
+    if (hasClaude) loopFibers.push(loopFiber(PEAK_INTERVAL_MS, () => refreshPeak.run()))
   }
 
   hydrateFromCache()
@@ -372,7 +383,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       runInBackground(refreshTable.run(true))
       runInBackground(refreshBilling.run(true))
       if (hasClaude) runInBackground(refreshPeak.run(true))
-      startTimers()
+      startLoops()
     },
 
     touch() { lastActivity = Date.now() },
@@ -395,7 +406,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
 
     setConfig(next, options) {
       if (stopped) return
-      clearTimers()
+      stopLoops()
       configEpoch++
       tz = next.tz
       summaryIntervalMs = next.summaryIntervalMs
@@ -436,7 +447,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
         runInBackground(refreshBillingIfStale())
         if (hasClaude) runInBackground(refreshPeak.run(true))
       }
-      startTimers()
+      startLoops()
     },
 
     broadcastConfig(config) {
@@ -470,7 +481,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
 
     stop() {
       stopped = true
-      clearTimers()
+      stopLoops()
       refreshSummary.stop()
       refreshTable.stop()
       refreshBilling.stop()

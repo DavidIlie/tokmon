@@ -1,4 +1,4 @@
-import { Cause, Context, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Schedule, Schema, Stream } from 'effect'
+import { Cause, Context, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Schedule, Schema, Stream } from 'effect'
 import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
 import { RpcClientError } from 'effect/unstable/rpc/RpcClientError'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
@@ -69,13 +69,8 @@ type TokmonRuntime = ManagedRuntime.ManagedRuntime<TokmonRpcClient, never>
 
 interface Session {
   readonly runtime: TokmonRuntime
-  readonly disconnected: Promise<DaemonRpcConnectionError>
+  readonly disconnected: Deferred.Deferred<DaemonRpcConnectionError>
   invalidated: boolean
-}
-
-interface Signal<A> {
-  readonly promise: Promise<A>
-  readonly resolve: (value: A) => void
 }
 
 interface Subscription<A> {
@@ -85,25 +80,26 @@ interface Subscription<A> {
   active: boolean
   fiber: Fiber.Fiber<unknown, unknown> | null
   owner: Session | null
-  watchdogTimer: ReturnType<typeof setInterval> | null
+  watchdogFiber: Fiber.Fiber<unknown, unknown> | null
   lastValueAt: number
   staleAfterMs: number
 }
 
 const dynamicImport = new Function('specifier', 'return import(specifier)') as <T>(specifier: string) => Promise<T>
 
-function makeSignal<A>(): Signal<A> {
-  let settled = false
-  let resolvePromise!: (value: A) => void
-  const promise = new Promise<A>((resolve) => { resolvePromise = resolve })
-  return {
-    promise,
-    resolve: (value) => {
-      if (settled) return
-      settled = true
-      resolvePromise(value)
-    },
-  }
+/** Run an effect, rejecting with the raw failure so `instanceof` checks on
+ * DaemonRpcConnectionError / RpcClientError keep working at the Promise seam. */
+function runOrThrow<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
+  return Effect.runPromiseExit(effect).then((exit) => {
+    if (Exit.isSuccess(exit)) return exit.value
+    throw Cause.squash(exit.cause)
+  })
+}
+
+function interruptFiber(fiber: Fiber.Fiber<unknown, unknown> | null): Promise<void> {
+  return fiber
+    ? Effect.runPromise(Fiber.interrupt(fiber)).then(() => undefined, () => undefined)
+    : Promise.resolve()
 }
 
 function toWsUrl(baseUrl: string): string {
@@ -167,24 +163,20 @@ function isSessionFailure(error: unknown): boolean {
   return error instanceof RpcClientError || Schema.isSchemaError(error)
 }
 
-async function waitForReady(
-  ready: Signal<void>,
-  disconnected: Signal<DaemonRpcConnectionError>,
+function waitForReady(
+  ready: Deferred.Deferred<void>,
+  disconnected: Deferred.Deferred<DaemonRpcConnectionError>,
   timeoutMs: number,
 ): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | null = null
-  try {
-    await Promise.race([
-      ready.promise,
-      disconnected.promise.then(error => Promise.reject(error)),
-      new Promise<void>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new DaemonRpcConnectionError(`daemon RPC connection timed out after ${timeoutMs}ms`)), timeoutMs)
-        timer.unref?.()
+  return runOrThrow(
+    Deferred.await(ready).pipe(
+      Effect.raceFirst(Effect.flatMap(Deferred.await(disconnected), Effect.fail)),
+      Effect.timeoutOrElse({
+        duration: Duration.millis(timeoutMs),
+        orElse: () => Effect.fail(new DaemonRpcConnectionError(`daemon RPC connection timed out after ${timeoutMs}ms`)),
       }),
-    ])
-  } finally {
-    if (timer) clearTimeout(timer)
-  }
+    ),
+  )
 }
 
 export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientOptions = {}): DaemonRpcClient {
@@ -196,7 +188,7 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
   let sessionPromise: Promise<Session> | null = null
   let pendingRuntime: TokmonRuntime | null = null
   let supervisorPromise: Promise<void> | null = null
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let reconnectFiber: Fiber.Fiber<unknown, unknown> | null = null
   let reconnectAttemptsUsed = 0
   let hasConnected = false
   let closed = false
@@ -217,41 +209,40 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
     }
   }
 
-  const clearReconnectTimer = () => {
-    if (!reconnectTimer) return
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
+  const cancelReconnect = (): Promise<void> => {
+    const fiber = reconnectFiber
+    reconnectFiber = null
+    return interruptFiber(fiber)
   }
 
   const stopSubscriptionFiber = (subscription: Subscription<unknown>): Promise<void> => {
     const fiber = subscription.fiber
     subscription.fiber = null
     subscription.owner = null
-    return fiber
-      ? Effect.runPromise(Fiber.interrupt(fiber)).catch(() => {})
-      : Promise.resolve()
+    return interruptFiber(fiber)
   }
 
   const disposeSubscription = (subscription: Subscription<unknown>): Promise<void> => {
     subscription.active = false
     subscriptions.delete(subscription)
-    if (subscription.watchdogTimer) {
-      clearInterval(subscription.watchdogTimer)
-      subscription.watchdogTimer = null
-    }
-    return stopSubscriptionFiber(subscription)
+    const watchdog = subscription.watchdogFiber
+    subscription.watchdogFiber = null
+    return Promise.all([interruptFiber(watchdog), stopSubscriptionFiber(subscription)]).then(() => undefined)
   }
 
   const scheduleReconnect = () => {
-    if (closed || subscriptions.size === 0 || reconnectTimer || session || sessionPromise) return
+    if (closed || subscriptions.size === 0 || reconnectFiber || session || sessionPromise) return
     if (typeof options.reconnectAttempts === 'number' && reconnectAttemptsUsed >= options.reconnectAttempts) return
     const delayMs = Math.min(2_500, reconnectBaseDelayMs * 1.5 ** reconnectAttemptsUsed)
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null
-      reconnectAttemptsUsed++
-      connectSubscriptions()
-    }, delayMs)
-    reconnectTimer.unref?.()
+    reconnectFiber = Effect.runFork(
+      Effect.sleep(Duration.millis(delayMs)).pipe(
+        Effect.andThen(Effect.sync(() => {
+          reconnectFiber = null
+          reconnectAttemptsUsed++
+          connectSubscriptions()
+        })),
+      ),
+    )
   }
 
   const invalidateSession = (
@@ -262,23 +253,26 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
     if (active.invalidated) return
     active.invalidated = true
     if (session === active) session = null
+    // Settle the deferred so the disconnect-observer fiber always terminates,
+    // even when the session dies from a request failure rather than the socket.
+    Deferred.doneUnsafe(active.disconnected, Effect.succeed(new DaemonRpcConnectionError()))
     void active.runtime.dispose().catch(() => {})
     if (!closed) setConn(state, error)
     scheduleReconnect()
   }
 
   const makeProtocolLayer = async (
-    ready: Signal<void>,
-    disconnected: Signal<DaemonRpcConnectionError>,
+    ready: Deferred.Deferred<void>,
+    disconnected: Deferred.Deferred<DaemonRpcConnectionError>,
   ) => {
     const socketLayer = await socketLayerFor(url, options.transport, requestTimeoutMs)
     const connectionHooksLayer = Layer.succeed(
       RpcClient.ConnectionHooks,
       RpcClient.ConnectionHooks.of({
-        onConnect: Effect.sync(() => { ready.resolve() }),
-        onDisconnect: Effect.sync(() => {
-          disconnected.resolve(new DaemonRpcConnectionError())
-        }),
+        onConnect: Effect.asVoid(Deferred.succeed(ready, undefined)),
+        onDisconnect: Effect.asVoid(
+          Effect.suspend(() => Deferred.succeed(disconnected, new DaemonRpcConnectionError())),
+        ),
       }),
     )
     return Layer.effect(
@@ -301,8 +295,8 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
     const pending = (async () => {
       let runtime: TokmonRuntime | null = null
       try {
-        const ready = makeSignal<void>()
-        const disconnected = makeSignal<DaemonRpcConnectionError>()
+        const ready = Deferred.makeUnsafe<void>()
+        const disconnected = Deferred.makeUnsafe<DaemonRpcConnectionError>()
         const protocolLayer = await makeProtocolLayer(ready, disconnected)
         const clientLayer = Layer.effect(
           TokmonRpcClient,
@@ -316,7 +310,7 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
 
         const active: Session = {
           runtime,
-          disconnected: disconnected.promise,
+          disconnected,
           invalidated: false,
         }
         session = active
@@ -324,9 +318,11 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
         hasConnected = true
         reconnectAttemptsUsed = 0
         setConn('live')
-        void active.disconnected.then(error => {
-          invalidateSession(active, 'reconnecting', error)
-        })
+        Effect.runFork(
+          Effect.map(Deferred.await(active.disconnected), (error) => {
+            invalidateSession(active, 'reconnecting', error)
+          }),
+        )
         startAllSubscriptions(active)
         return active
       } catch (error) {
@@ -421,7 +417,7 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       active: true,
       fiber: null,
       owner: null,
-      watchdogTimer: null,
+      watchdogFiber: null,
       lastValueAt: 0,
       staleAfterMs: Number.POSITIVE_INFINITY,
     }
@@ -429,13 +425,15 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
 
     if (staleAfterFor) {
       const checkEveryMs = Math.min(5_000, Math.max(10, (options.snapshotStaleFloorMs ?? 90_000) / 2))
-      subscription.watchdogTimer = setInterval(() => {
+      const checkStaleness = Effect.sync(() => {
         if (!subscription.fiber || !subscription.owner || subscription.lastValueAt === 0) return
         if (Date.now() - subscription.lastValueAt <= subscription.staleAfterMs) return
         subscription.lastValueAt = Date.now()
         invalidateSession(subscription.owner, 'reconnecting')
-      }, checkEveryMs)
-      subscription.watchdogTimer.unref?.()
+      })
+      subscription.watchdogFiber = Effect.runFork(
+        checkStaleness.pipe(Effect.repeat(Schedule.spaced(Duration.millis(checkEveryMs)))),
+      )
     }
 
     if (session) startSubscription(subscription, session)
@@ -443,7 +441,7 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
 
     return () => {
       void disposeSubscription(subscription as Subscription<unknown>)
-      if (subscriptions.size === 0) clearReconnectTimer()
+      if (subscriptions.size === 0) void cancelReconnect()
     }
   }
 
@@ -484,14 +482,17 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       if (closed) return
       closed = true
       setConn('closed')
-      clearReconnectTimer()
       const cleanup = [...subscriptions].map(disposeSubscription)
       subscriptions.clear()
       const activeSession = session
       session = null
+      await cancelReconnect()
       await pendingRuntime?.dispose().catch(() => {})
       await Promise.all(cleanup)
       await activeSession?.runtime.dispose().catch(() => {})
+      if (activeSession) {
+        Deferred.doneUnsafe(activeSession.disconnected, Effect.succeed(new DaemonRpcConnectionError()))
+      }
       await sessionPromise?.catch(() => {})
       pendingRuntime = null
       sessionPromise = null
