@@ -407,5 +407,3 @@ export function deriveProviderHeadroom(accounts: readonly HeadroomAccountInput[]
   const basis = active.length > 0 ? 'active' : 'idle-runway'
   return { ...selected.view, basis, representativeAccountId: selected.account.id, activeAccountIds: activeIds, explanation: `${selected.view.explanation}; ${basis === 'active' ? 'active account' : 'best available account'}` }
 }
-
-export const headroomLabel = (view: HeadroomView | null | undefined): string => view?.value == null ? '—' : `H${Math.round(view.value)}`

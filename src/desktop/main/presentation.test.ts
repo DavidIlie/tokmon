@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { WebAccount } from '../../web/contract'
-import { formatRemaining, quotaIsStale, tightestQuota } from './presentation'
+import { quotaIsStale, tightestQuota } from './presentation'
 import { deriveQuotaViews } from '../../usage-semantics'
 
 function account(metrics: NonNullable<WebAccount['billing']>['metrics']): WebAccount {
@@ -31,11 +31,6 @@ test('unbounded metrics are ignored and equal quotas use the soonest reset', () 
     { label: 'Session', used: 40, limit: 100, format: { kind: 'percent' }, resetsAt: '2026-07-14T00:00:00Z' },
   ]))
   assert.equal(result?.label, 'Session')
-})
-
-test('remaining formatter preserves unavailable state', () => {
-  assert.equal(formatRemaining(null), '—')
-  assert.equal(formatRemaining(61.6), '62%')
 })
 
 test('desktop main trusts daemon-normalized quotas over conflicting raw billing', () => {

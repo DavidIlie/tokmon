@@ -1,9 +1,8 @@
 import { glyphs } from './glyphs'
-import { PROVIDERS, type Account } from './providers'
-import { coalesceTables } from './providers/usage-core'
+import type { Account } from './providers'
 import type { Config } from './config'
 import type { AccountStats } from './stats'
-import type { TableData, TableRow } from './types'
+import type { TableRow } from './types'
 
 export const TABS = ['Dashboard', 'Table'] as const
 export const VIEWS = ['Daily', 'Weekly', 'Monthly'] as const
@@ -42,16 +41,6 @@ export function upsert(prev: Map<string, AccountStats>, account: Account, patch:
   const cur = next.get(account.id) ?? { account, dashboard: null, billing: null }
   next.set(account.id, { ...cur, account, ...patch })
   return next
-}
-
-export async function fetchScopeTable(scope: Account[], tz: string): Promise<TableData> {
-  const tables = await Promise.all(scope.map(async (acc) => {
-    const provider = PROVIDERS[acc.providerId]
-    if (!provider.fetchTable) return null
-    try { return await provider.fetchTable(acc, tz) } catch { return null }
-  }))
-  const valid = tables.filter((t): t is TableData => t !== null)
-  return coalesceTables(valid)
 }
 
 export function sortLabel(entry: { label: string; dir: 'up' | 'down' | null }): string {

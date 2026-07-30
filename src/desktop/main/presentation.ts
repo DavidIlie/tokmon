@@ -57,7 +57,3 @@ export function quotaIsStale(account: WebAccount, snapshot: WebSnapshot, now = D
   if (observedAt === null) return account.billingState !== 'pending'
   return now - observedAt > billingStaleAfterMs(snapshot)
 }
-
-export function formatRemaining(value: number | null): string {
-  return value === null || !Number.isFinite(value) ? '—' : `${Math.round(value)}%`
-}

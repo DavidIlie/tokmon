@@ -51,6 +51,3 @@ export function detectInstalledProviders(): Promise<ProviderId[]> {
 export function detectAccountProviders(): Promise<ProviderId[]> {
   return detectWhere(id => PROVIDERS[id].detect())
 }
-
-/** Backwards-compatible name used by onboarding and installation discovery. */
-export const detectProviders = detectInstalledProviders

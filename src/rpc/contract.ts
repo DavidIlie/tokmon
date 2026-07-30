@@ -10,7 +10,6 @@ export const TOKMON_WS_PATH = '/ws'
 /** Bump only for an incompatible wire change. Capabilities gate additive features. */
 export const TOKMON_PROTOCOL_VERSION = 4
 export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1', 'account-provenance-v1', 'installed-harnesses-v1', 'discovery-refresh-v1', 'menu-bar-today-tokens', 'menu-bar-builder-v1'] as const
-export type TokmonCapability = typeof TOKMON_CAPABILITIES[number]
 
 export const TOKMON_WS_METHODS = {
   getConfig: 'tokmon.getConfig',
@@ -233,7 +232,6 @@ export const ConfigUpdateConflictSchema = Schema.Union([
   ConfigUpdateConflictFailure,
   LegacyConfigUpdateConflictSchema,
 ])
-export type ConfigUpdateConflict = typeof ConfigUpdateConflictSchema.Type
 
 export const ConfigPersistenceFailureSchema = Schema.Union([
   ConfigPersistenceFailure,

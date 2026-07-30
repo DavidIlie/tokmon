@@ -48,16 +48,6 @@
   --color-accent-tint: #18251a;
   --color-accent-on: #0a0a0a;
   --color-focus-ring: #79be7e;
-
-  /* provider brand (distinct hues for stacked charts) */
-  --color-p-claude: #00d787;
-  --color-p-codex: #00d7ff;
-  --color-p-cursor: #5f87ff;
-  --color-p-copilot: #5fd7a7;
-  --color-p-pi: #e6b450;
-  --color-p-opencode: #d75f87;
-  --color-p-antigravity: #d75f5f;
-  --color-p-gemini: #af87ff;
 }
 
 /* Light theme — overrides the dark @theme defaults when <html class="light">.
@@ -133,17 +123,6 @@ html[data-theme-preset="phosphor"] body {
     linear-gradient(color-mix(in oklab, var(--color-accent) 4%, transparent) 1px, transparent 1px),
     linear-gradient(90deg, color-mix(in oklab, var(--color-accent) 4%, transparent) 1px, transparent 1px);
   background-size: 24px 24px;
-}
-
-[data-theme-preset="phosphor"] {
-  --color-p-claude: color-mix(in oklab, var(--color-accent) 100%, var(--color-fg-dim));
-  --color-p-codex: color-mix(in oklab, var(--color-accent) 86%, var(--color-fg-dim));
-  --color-p-cursor: color-mix(in oklab, var(--color-accent) 72%, var(--color-fg-dim));
-  --color-p-copilot: color-mix(in oklab, var(--color-accent) 58%, var(--color-fg-dim));
-  --color-p-pi: color-mix(in oklab, var(--color-accent) 48%, var(--color-fg-dim));
-  --color-p-opencode: color-mix(in oklab, var(--color-accent) 78%, var(--color-fg-dim));
-  --color-p-antigravity: color-mix(in oklab, var(--color-accent) 64%, var(--color-fg-dim));
-  --color-p-gemini: color-mix(in oklab, var(--color-accent) 92%, var(--color-fg-dim));
 }
 
 @layer base {

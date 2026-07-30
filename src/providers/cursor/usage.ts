@@ -4,7 +4,6 @@ import { type Entry, summarize, tabulate, safeNum, dashboardSince, tableSince } 
 import { dayKey } from '../../tz'
 import { cursorUsageTable } from './composer'
 import type { DashboardData, TableData, TableRow } from '../../types'
-import { monthKey, weekKey } from '../../tz'
 import { timestampMs } from '../_shared/time'
 
 const EVENTS_URL = 'https://api2.cursor.sh/aiserver.v1.DashboardService/GetFilteredUsageEvents'
@@ -217,59 +216,4 @@ export async function cursorDashboard(tz: string, homeDir?: string): Promise<Das
 
 export async function cursorTableFull(tz: string, homeDir?: string): Promise<TableData> {
   return tabulate(await cursorEntries(tableSince(tz), tz, homeDir), tz)
-}
-
-/** @deprecated Prefer cursorTableFull — kept for callers that want the raw API table only. */
-export async function cursorApiUsage(tz: string, homeDir?: string): Promise<TableData | null> {
-  const { entries } = await fetchApiEntries(homeDir)
-  if (entries.length === 0) return null
-  const table = tabulate(entries, tz)
-  return table.daily.length ? table : null
-}
-
-const EMPTY: TableData = { daily: [], weekly: [], monthly: [] }
-
-const overlayDaily = (lo: TableRow[], hi: TableRow[]): TableRow[] => {
-  const m = new Map(lo.map(r => [r.label, r]))
-  for (const r of hi) m.set(r.label, r)
-  return [...m.values()].sort((a, b) => a.label.localeCompare(b.label))
-}
-
-function reBucket(daily: TableRow[], tz: string, keyOf: (ts: number, tz: string) => string): TableRow[] {
-  const out = new Map<string, TableRow>()
-  for (const day of daily) {
-    const ts = localDayTimestamp(day.label, tz)
-    if (ts === null) continue
-    const label = keyOf(ts, tz)
-    let row = out.get(label)
-    if (!row) {
-      row = { label, models: [], input: 0, output: 0, cacheCreate: 0, cacheRead: 0, cacheSavings: 0, total: 0, cost: 0, count: 0, breakdown: [] }
-      out.set(label, row)
-    }
-    row.input += day.input; row.output += day.output; row.cacheCreate += day.cacheCreate; row.cacheRead += day.cacheRead
-    row.cacheSavings += day.cacheSavings; row.total += day.total; row.cost += day.cost; row.count += day.count
-    for (const b of day.breakdown) {
-      let md = row.breakdown.find(x => x.name === b.name)
-      if (!md) {
-        md = { name: b.name, input: 0, output: 0, cacheCreate: 0, cacheRead: 0, cacheSavings: 0, cost: 0, count: 0 }
-        row.breakdown.push(md)
-      }
-      md.input += b.input; md.output += b.output; md.cacheCreate += b.cacheCreate; md.cacheRead += b.cacheRead
-      md.cacheSavings += b.cacheSavings; md.cost += b.cost; md.count += b.count
-    }
-  }
-  return [...out.values()].map(r => {
-    r.breakdown.sort((a, b) => b.cost - a.cost)
-    r.models = r.breakdown.map(b => b.name)
-    return r
-  }).sort((a, b) => a.label.localeCompare(b.label))
-}
-
-/** Legacy overlay table used before Entry pipeline — still useful as fallback. */
-export async function cursorLegacyTable(tz: string, homeDir?: string): Promise<TableData> {
-  const [api, local] = await Promise.all([cursorApiUsage(tz, homeDir), cursorUsageTable(tz, homeDir)])
-  if (!api && !local) return EMPTY
-  const daily = overlayDaily(local?.daily ?? [], api?.daily ?? [])
-  if (daily.length === 0) return EMPTY
-  return { daily, weekly: reBucket(daily, tz, weekKey), monthly: reBucket(daily, tz, monthKey) }
 }

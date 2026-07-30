@@ -100,11 +100,6 @@ export function startOfWeek(ts: number, tz: string): number {
   return instantFromTz(p.y, p.m, p.d - offset, 0, 0, 0, tz)
 }
 
-export function monthsAgoStart(ts: number, months: number, tz: string): number {
-  const p = tzParts(ts, tz)
-  return instantFromTz(p.y, p.m - months, 1, 0, 0, 0, tz)
-}
-
 export function weekKey(ts: number, tz: string): string {
   return dayKey(startOfWeek(ts, tz), tz)
 }
