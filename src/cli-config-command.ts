@@ -1,7 +1,11 @@
 import { withTimeout } from './async'
 import { attachOrSpawn } from './client/daemon-handle'
 import { createDaemonRpcClient, type DaemonRpcClient } from './client/daemon-rpc-client'
-import { configLocation, DESKTOP_GRAPH_RANGES, setProviderTrackingEnabled, type Config } from './config'
+import {
+  configLocation, DESKTOP_GRAPH_RANGES, MENU_BAR_SPACING_MAX_PT,
+  patchMenuBarPresentation, setMenuBarValue, setProviderDetectionEnabled, setProviderTrackingEnabled,
+  type Config, type MenuBarSpacingField,
+} from './config'
 import { parseQueryArgs, type ParsedQueryArgs } from './cli-command-args'
 import { PROVIDER_IDS, type ProviderId } from './providers/types'
 import type { ConfigState, ConfigUpdateRequest } from './rpc/contract'
@@ -27,9 +31,9 @@ Settings:
   menu-bar-mode <auto|custom>
   menu-bar-elements <list>       mark,value,progress; at least one
   menu-bar-density <comfortable|compact|tight>
-  menu-bar-edge-padding <points> 0..6 in 0.5pt increments
-  menu-bar-mark-value-gap <points> 0..8 in 0.5pt increments
-  menu-bar-provider-gap <points> 0..16 in 0.5pt increments
+  menu-bar-edge-padding <points> 0..${MENU_BAR_SPACING_MAX_PT.edgePaddingPt} in 0.5pt increments
+  menu-bar-mark-value-gap <points> 0..${MENU_BAR_SPACING_MAX_PT.markValueGapPt} in 0.5pt increments
+  menu-bar-provider-gap <points> 0..${MENU_BAR_SPACING_MAX_PT.providerGapPt} in 0.5pt increments
   menu-bar-value <usage|tokens-today>
   summary-mode <smart|tightest>
   expanded-providers <ids|none>  Comma-separated provider ids
@@ -258,63 +262,38 @@ function settingMutation(setting: ConfigSetting, value: string): { mutate(config
   if (setting === 'menu-bar-value') {
     if (value !== 'usage' && value !== 'tokens-today') throw new Error('menu-bar-value must be usage or tokens-today')
     const menuBarValue = value === 'tokens-today' ? 'todayTokens' : 'usage'
-    return { mutate: config => ({ ...config, tray: { ...config.tray, menuBarValue } }), display: value }
+    return { mutate: config => setMenuBarValue(config, menuBarValue), display: value }
   }
   if (setting === 'menu-bar-mode') {
     if (value !== 'auto' && value !== 'custom') throw new Error('menu-bar-mode must be auto or custom')
-    return {
-      mutate: config => ({ ...config, tray: { ...config.tray, menuBar: { ...config.tray.menuBar, mode: value } } }),
-      display: value,
-    }
+    return { mutate: config => patchMenuBarPresentation(config, { mode: value }), display: value }
   }
   if (setting === 'menu-bar-elements') {
     const selected = menuBarElements(value)
+    // Written as one atomic patch: applying the three toggles in sequence would let
+    // the shared last-element guard refuse an intermediate step and silently succeed.
     const elements = {
       providerMark: selected.includes('mark'),
       value: selected.includes('value'),
       progress: selected.includes('progress'),
     }
-    return {
-      mutate: config => ({
-        ...config,
-        tray: {
-          ...config.tray,
-          showMenuBarText: elements.value,
-          menuBar: { ...config.tray.menuBar, elements },
-        },
-      }),
-      display: selected,
-    }
+    return { mutate: config => patchMenuBarPresentation(config, { elements }), display: selected }
   }
   if (setting === 'menu-bar-density') {
     if (value !== 'comfortable' && value !== 'compact' && value !== 'tight') {
       throw new Error('menu-bar-density must be comfortable, compact, or tight')
     }
-    return {
-      mutate: config => ({ ...config, tray: { ...config.tray, menuBar: { ...config.tray.menuBar, density: value } } }),
-      display: value,
-    }
+    return { mutate: config => patchMenuBarPresentation(config, { density: value }), display: value }
   }
   if (setting === 'menu-bar-edge-padding' || setting === 'menu-bar-mark-value-gap' || setting === 'menu-bar-provider-gap') {
-    const max = setting === 'menu-bar-edge-padding' ? 6 : setting === 'menu-bar-mark-value-gap' ? 8 : 16
-    const points = halfPoint(value, setting, max)
-    const field = setting === 'menu-bar-edge-padding'
+    const field: MenuBarSpacingField = setting === 'menu-bar-edge-padding'
       ? 'edgePaddingPt'
       : setting === 'menu-bar-mark-value-gap'
         ? 'markValueGapPt'
         : 'providerGapPt'
+    const points = halfPoint(value, setting, MENU_BAR_SPACING_MAX_PT[field])
     return {
-      mutate: config => ({
-        ...config,
-        tray: {
-          ...config.tray,
-          menuBar: {
-            ...config.tray.menuBar,
-            mode: 'custom',
-            customSpacing: { ...config.tray.menuBar.customSpacing, [field]: points },
-          },
-        },
-      }),
+      mutate: config => patchMenuBarPresentation(config, { mode: 'custom', customSpacing: { [field]: points } }),
       display: points,
     }
   }
@@ -365,10 +344,10 @@ function settingMutation(setting: ConfigSetting, value: string): { mutate(config
     return {
       mutate: config => ({
         ...config,
-        accountDetection: {
-          ...config.accountDetection,
-          disabledProviders: PROVIDER_IDS.filter(provider => !enabled.includes(provider)),
-        },
+        accountDetection: PROVIDER_IDS.reduce(
+          (next, provider) => setProviderDetectionEnabled(next, provider, enabled.includes(provider)),
+          config.accountDetection,
+        ),
       }),
       display: enabled,
     }

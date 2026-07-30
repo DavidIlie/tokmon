@@ -791,6 +791,12 @@ test('resetting menu bar presentation preserves pins and the selected value', ()
   assert.deepEqual(reset.tray.pinnedProviders, ['claude', 'codex'])
   assert.equal(reset.tray.menuBarValue, 'todayTokens')
   assert.equal(reset.tray.showMenuBarText, true)
+
+  // Nested blocks must be fresh copies, never aliases of the shared defaults.
+  const again = resetMenuBarPresentation(custom)
+  assert.notEqual(reset.tray.menuBar.elements, again.tray.menuBar.elements)
+  assert.notEqual(reset.tray.menuBar.customSpacing, again.tray.menuBar.customSpacing)
+  assert.notEqual(reset.tray.menuBar.elements, DEFAULTS.tray.menuBar.elements)
 })
 
 test('compact theme page exposes the shared catalog while keeping Phosphor dark-only', () => {

@@ -1,14 +1,12 @@
-import { DESKTOP_GRAPH_RANGES, type Config, type MenuBarConfig, type WebSnapshot } from '@shared'
+import {
+  adjustMenuBarSpacing, cleanProviderSelection, DESKTOP_GRAPH_RANGES, MENU_BAR_SPACING_MAX_PT,
+  patchMenuBarPresentation, resetMenuBarPresentation, setMenuBarElementVisibility, setMenuBarValue,
+  toggleProviderSelection,
+  type Config, type MenuBarElement, type MenuBarSpacingField, type WebSnapshot,
+} from '@shared'
 import { Segmented } from '../ui/controls'
 import { FOCUS_RING } from '../ui/primitives'
 import { FieldRow, NumberStepper, Section } from './primitives'
-import {
-  cleanProviderSelection,
-  defaultMenuBarPresentation,
-  type MenuBarElement,
-  toggleMenuBarElement,
-  toggleProviderSelection,
-} from './app-section.logic'
 
 interface AppSectionProps {
   draft: Config
@@ -29,31 +27,13 @@ export function AppSection({ draft, patch, snapshot }: AppSectionProps) {
     },
   }))
 
-  const setMenuBarElement = (element: MenuBarElement) => patch(config => {
-    const elements = toggleMenuBarElement(config.tray.menuBar.elements, element)
-    return {
-      ...config,
-      tray: {
-        ...config.tray,
-        showMenuBarText: elements.value,
-        menuBar: { ...config.tray.menuBar, elements },
-      },
-    }
-  })
+  const setMenuBarElement = (element: MenuBarElement) => patch(config => (
+    setMenuBarElementVisibility(config, element, !config.tray.menuBar.elements[element])
+  ))
 
-  const setSpacing = (
-    key: keyof MenuBarConfig['customSpacing'],
-    value: number,
-  ) => patch(config => ({
-    ...config,
-    tray: {
-      ...config.tray,
-      menuBar: {
-        ...config.tray.menuBar,
-        customSpacing: { ...config.tray.menuBar.customSpacing, [key]: value },
-      },
-    },
-  }))
+  const adjustSpacing = (field: MenuBarSpacingField, direction: -1 | 1) => patch(config => (
+    adjustMenuBarSpacing(config, field, direction)
+  ))
 
   return (
     <>
@@ -107,13 +87,7 @@ export function AppSection({ draft, patch, snapshot }: AppSectionProps) {
       <Section title="macOS menu bar" right={
         <button
           type="button"
-          onClick={() => patch(config => {
-            const menuBar = defaultMenuBarPresentation()
-            return {
-              ...config,
-              tray: { ...config.tray, menuBar, showMenuBarText: menuBar.elements.value },
-            }
-          })}
+          onClick={() => patch(resetMenuBarPresentation)}
           className={`rounded border border-line px-2 py-1 text-[10px] text-fg-faint transition hover:border-line-2 hover:text-fg ${FOCUS_RING}`}
         >Reset presentation</button>
       }>
@@ -125,10 +99,7 @@ export function AppSection({ draft, patch, snapshot }: AppSectionProps) {
             size="xs" ariaLabel="menu bar layout mode"
             options={[{ value: 'auto', label: 'auto' }, { value: 'custom', label: 'custom' }]}
             value={draft.tray.menuBar.mode}
-            onChange={mode => patch(config => ({
-              ...config,
-              tray: { ...config.tray, menuBar: { ...config.tray.menuBar, mode } },
-            }))}
+            onChange={mode => patch(config => patchMenuBarPresentation(config, { mode }))}
           />
         </FieldRow>
         <FieldRow label="Elements" hint="choose at least one">
@@ -157,7 +128,7 @@ export function AppSection({ draft, patch, snapshot }: AppSectionProps) {
             size="xs" ariaLabel="menu bar value"
             options={[{ value: 'usage', label: 'usage' }, { value: 'todayTokens', label: 'tokens today' }]}
             value={draft.tray.menuBarValue}
-            onChange={menuBarValue => patch(config => ({ ...config, tray: { ...config.tray, menuBarValue } }))}
+            onChange={menuBarValue => patch(config => setMenuBarValue(config, menuBarValue))}
           />
         </FieldRow>
         <FieldRow label="Density" hint="sets the baseline space between providers">
@@ -169,22 +140,19 @@ export function AppSection({ draft, patch, snapshot }: AppSectionProps) {
               { value: 'tight', label: 'tight' },
             ]}
             value={draft.tray.menuBar.density}
-            onChange={density => patch(config => ({
-              ...config,
-              tray: { ...config.tray, menuBar: { ...config.tray.menuBar, density } },
-            }))}
+            onChange={density => patch(config => patchMenuBarPresentation(config, { density }))}
           />
         </FieldRow>
         {draft.tray.menuBar.mode === 'custom' ? (
           <div className="mt-1 border-t border-line pt-1">
             <FieldRow label="Edge padding" hint="inside Tokmon's rendered menu-bar item">
-              <SpacingStepper label="Edge padding" value={draft.tray.menuBar.customSpacing.edgePaddingPt} max={6} onChange={value => setSpacing('edgePaddingPt', value)} />
+              <SpacingStepper label="Edge padding" field="edgePaddingPt" value={draft.tray.menuBar.customSpacing.edgePaddingPt} onAdjust={adjustSpacing} />
             </FieldRow>
             <FieldRow label="Mark to value" hint="space between provider mark and value">
-              <SpacingStepper label="Mark to value gap" value={draft.tray.menuBar.customSpacing.markValueGapPt} max={8} onChange={value => setSpacing('markValueGapPt', value)} />
+              <SpacingStepper label="Mark to value gap" field="markValueGapPt" value={draft.tray.menuBar.customSpacing.markValueGapPt} onAdjust={adjustSpacing} />
             </FieldRow>
             <FieldRow label="Provider gap" hint="space between pinned providers">
-              <SpacingStepper label="Provider gap" value={draft.tray.menuBar.customSpacing.providerGapPt} max={16} onChange={value => setSpacing('providerGapPt', value)} />
+              <SpacingStepper label="Provider gap" field="providerGapPt" value={draft.tray.menuBar.customSpacing.providerGapPt} onAdjust={adjustSpacing} />
             </FieldRow>
           </div>
         ) : null}
@@ -212,26 +180,25 @@ export function AppSection({ draft, patch, snapshot }: AppSectionProps) {
   )
 }
 
-function SpacingStepper({ label, value, max, onChange }: {
+function SpacingStepper({ label, field, value, onAdjust }: {
   label: string
+  field: MenuBarSpacingField
   value: number
-  max: number
-  onChange: (value: number) => void
+  onAdjust: (field: MenuBarSpacingField, direction: -1 | 1) => void
 }) {
-  const change = (next: number) => onChange(Math.min(max, Math.max(0, Math.round(next * 2) / 2)))
   return (
     <div className="flex items-center overflow-hidden rounded border border-line">
       <button
         type="button" aria-label={`Decrease ${label}`} disabled={value <= 0}
-        onClick={() => change(value - 0.5)}
+        onClick={() => onAdjust(field, -1)}
         className={`px-2 py-0.5 text-xs text-fg-dim transition hover:bg-bg-3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-35 ${FOCUS_RING}`}
       >−</button>
       <output aria-label={`${label} in points`} className="tnum min-w-12 border-x border-line bg-bg-2 px-1.5 py-0.5 text-center text-[10px] text-fg">
         {value.toFixed(1)}pt
       </output>
       <button
-        type="button" aria-label={`Increase ${label}`} disabled={value >= max}
-        onClick={() => change(value + 0.5)}
+        type="button" aria-label={`Increase ${label}`} disabled={value >= MENU_BAR_SPACING_MAX_PT[field]}
+        onClick={() => onAdjust(field, 1)}
         className={`px-2 py-0.5 text-xs text-fg-dim transition hover:bg-bg-3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-35 ${FOCUS_RING}`}
       >+</button>
     </div>

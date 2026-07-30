@@ -484,19 +484,19 @@ export function repairMenuBarConfig(
         spacing.edgePaddingPt,
         DEFAULT_MENU_BAR_CONFIG.customSpacing.edgePaddingPt,
         0,
-        6,
+        MENU_BAR_SPACING_MAX_PT.edgePaddingPt,
       ),
       markValueGapPt: halfPointInRange(
         spacing.markValueGapPt,
         DEFAULT_MENU_BAR_CONFIG.customSpacing.markValueGapPt,
         0,
-        8,
+        MENU_BAR_SPACING_MAX_PT.markValueGapPt,
       ),
       providerGapPt: halfPointInRange(
         spacing.providerGapPt,
         DEFAULT_MENU_BAR_CONFIG.customSpacing.providerGapPt,
         0,
-        16,
+        MENU_BAR_SPACING_MAX_PT.providerGapPt,
       ),
     },
   }
