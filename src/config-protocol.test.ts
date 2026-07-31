@@ -638,6 +638,43 @@ test('full-refresh rediscovery reconfigures without starting a second refresh', 
   assert.equal(calls[0]?.options?.startRefresh, false)
 })
 
+test('re-enabling a disabled manual account survives normalize and the sticky-disable merge', async () => {
+  const previous = process.env.XDG_CONFIG_HOME
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-account-enable-'))
+  const disabled = { id: 'work', providerId: 'claude' as const, name: 'Work', homeDir: '~/w', enabled: false }
+  const state = { config: { ...DEFAULTS, accounts: [disabled] } }
+  const engine = { setConfig: () => undefined, broadcastConfig: () => undefined } as never
+
+  try {
+    process.env.XDG_CONFIG_HOME = root
+    // The TUI normalizes its outgoing document; the daemon re-applies a sticky disable to
+    // any account that arrives without the key, so an erased `true` silently reverted.
+    const enabling = normalizeConfig({
+      ...state.config,
+      accounts: [{ ...disabled, enabled: true }],
+      revision: state.config.revision,
+    })
+    assert.equal(enabling.accounts[0]?.enabled, true)
+
+    const applied = await applyConfigUpdate(engine, state, { expectedRevision: 0, config: enabling })
+    assert.equal(applied.config.accounts[0]?.enabled, true)
+
+    // Sticky-disable must still fire for a client that predates the field: previous
+    // is disabled and the incoming account omits the key entirely.
+    const { enabled: _absent, ...withoutKey } = disabled
+    const legacyState = { config: { ...DEFAULTS, accounts: [disabled] } }
+    const sticky = await applyConfigUpdate(engine, legacyState, {
+      expectedRevision: 0,
+      config: { ...legacyState.config, accounts: [withoutKey] } as unknown as Config,
+    })
+    assert.equal(sticky.config.accounts[0]?.enabled, false)
+  } finally {
+    if (previous === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previous
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('legacy and builder-aware CAS updates reconcile menu-bar value visibility', async () => {
   const previous = process.env.XDG_CONFIG_HOME
   const root = await mkdtemp(join(tmpdir(), 'tokmon-menu-bar-cas-'))

@@ -562,7 +562,10 @@ export function repairConfig(input: unknown): ConfigRepair {
       name,
       homeDir: typeof raw.homeDir === 'string' && raw.homeDir.trim() ? raw.homeDir : '~',
       ...(typeof raw.color === 'string' && raw.color.trim() ? { color: raw.color } : {}),
-      ...(raw.enabled === false ? { enabled: false } : {}),
+      // An explicit `true` has to survive: the daemon re-applies a sticky disable to any
+      // account that arrives without the key (web/config-control.ts), so dropping it here
+      // turned "enable this account" into a no-op for callers that normalize before writing.
+      ...(typeof raw.enabled === 'boolean' ? { enabled: raw.enabled } : {}),
     })
   })
 

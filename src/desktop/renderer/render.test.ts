@@ -9,8 +9,10 @@ import {
   setMenuBarElementVisibility,
   setMenuBarValue,
 } from '../../web/contract'
+import { repairAppearance, resolveTheme } from '../../theme'
 import { Footer, TotalsBar, UpdateReady } from './desktop-chrome'
 import {
+  applyThemePreset,
   DesktopSettings,
   MenuBarSettings,
   ProvidersSettings,
@@ -820,6 +822,27 @@ test('compact theme page exposes the shared catalog while keeping Phosphor dark-
   assert.match(html, />Dracula</)
   assert.match(html, />Tokyo Night</)
   assert.match(html, /Customize Phosphor in Dashboard/)
+})
+
+test('the Custom theme tile commits the palette it previews, whatever preset you came from', () => {
+  const fromDracula = {
+    ...config,
+    appearance: { version: 1, mode: 'dark', preset: 'dracula', terminal: 'ansi' },
+  } as Config
+
+  // The tile paints resolveTheme({...appearance, preset:'custom'}), which falls back to
+  // custom?.base ?? 'tokmon'. Selecting it must persist an appearance that resolves the
+  // same way — seeding a base from the outgoing preset advertised the wrong palette.
+  const previewed = resolveTheme({ ...fromDracula.appearance, preset: 'custom' }, 'dark').tokens.panel
+  const selected = applyThemePreset(fromDracula, 'custom')
+  const committed = resolveTheme(repairAppearance(selected.appearance).appearance, 'dark').tokens.panel
+  assert.equal(committed, previewed)
+  assert.equal(selected.appearance.custom, undefined)
+
+  // Dark-only presets still force the mode; ordinary ones leave it alone.
+  assert.equal(applyThemePreset(fromDracula, 'phosphor').appearance.mode, 'dark')
+  const fromAuto = { ...config, appearance: { ...fromDracula.appearance, mode: 'auto' } } as Config
+  assert.equal(applyThemePreset(fromAuto, 'monokai').appearance.mode, 'auto')
 })
 
 test('daemon headroom replaces the old local representative in the card headline', () => {

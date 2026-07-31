@@ -126,6 +126,23 @@ const MODES: ReadonlyArray<{ value: AppearanceConfig['mode']; label: string }> =
   { value: 'dark', label: 'Dark' },
 ]
 
+/**
+ * Select a theme preset. Deliberately seeds no `custom` block: repairAppearance
+ * materializes one with base 'tokmon', which is what this sheet's preview resolves
+ * through and what the dashboard editor writes. Seeding a base from the outgoing
+ * preset made the Custom tile paint one palette and then commit another.
+ */
+export function applyThemePreset(config: Config, preset: ThemePreset): Config {
+  return {
+    ...config,
+    appearance: {
+      ...config.appearance,
+      preset,
+      ...(isDarkOnlyThemePreset(preset) ? { mode: 'dark' as const } : {}),
+    },
+  }
+}
+
 export function ThemeSettings({ config, systemMode, onPatch, onBack, onDashboard }: {
   config: Config
   systemMode: 'light' | 'dark'
@@ -136,17 +153,7 @@ export function ThemeSettings({ config, systemMode, onPatch, onBack, onDashboard
   const appearance = config.appearance
   const darkOnly = isDarkOnlyThemePreset(appearance.preset)
   const shownMode = darkOnly ? 'dark' : appearance.mode
-  // No custom seed here: repairAppearance materializes it with base 'tokmon', which is
-  // what this sheet's own preview resolves through and what the dashboard editor writes.
-  // Seeding from the outgoing preset made the Custom tile paint one palette and commit another.
-  const selectPreset = (preset: ThemePreset) => onPatch(next => ({
-    ...next,
-    appearance: {
-      ...next.appearance,
-      preset,
-      ...(isDarkOnlyThemePreset(preset) ? { mode: 'dark' as const } : {}),
-    },
-  }))
+  const selectPreset = (preset: ThemePreset) => onPatch(next => applyThemePreset(next, preset))
   const movePresetFocus = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     const last = THEME_PRESET_OPTIONS.length - 1
     const nextIndex = event.key === 'Home' ? 0
