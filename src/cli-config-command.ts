@@ -3,7 +3,8 @@ import { attachOrSpawn } from './client/daemon-handle'
 import { createDaemonRpcClient, type DaemonRpcClient } from './client/daemon-rpc-client'
 import {
   configLocation, DESKTOP_GRAPH_RANGES, MENU_BAR_SPACING_MAX_PT,
-  patchMenuBarPresentation, setMenuBarValue, setProviderDetectionEnabled, setProviderTrackingEnabled,
+  patchMenuBarPresentation, setMenuBarElementVisibility, setMenuBarValue,
+  setProviderDetectionEnabled, setProviderTrackingEnabled,
   type Config, type MenuBarSpacingField,
 } from './config'
 import { parseQueryArgs, type ParsedQueryArgs } from './cli-command-args'
@@ -244,18 +245,14 @@ function settingMutation(setting: ConfigSetting, value: string): { mutate(config
   if (setting === 'menu-bar-text') {
     const enabled = onOff(value, setting)
     return {
-      mutate: config => ({
-        ...config,
-        tray: (() => {
-          const elements = { ...config.tray.menuBar.elements, value: enabled }
-          if (!Object.values(elements).some(Boolean)) throw new Error('menu-bar-text off would hide every menu-bar element')
-          return {
-            ...config.tray,
-            showMenuBarText: enabled,
-            menuBar: { ...config.tray.menuBar, elements },
-          }
-        })(),
-      }),
+      // The shared helper refuses silently; the CLI reports the refusal instead. The check
+      // reads the resulting element set rather than comparing identity, because a config
+      // whose elements are already all hidden never trips the helper's guard at all.
+      mutate: config => {
+        const elements = { ...config.tray.menuBar.elements, value: enabled }
+        if (!Object.values(elements).some(Boolean)) throw new Error('menu-bar-text off would hide every menu-bar element')
+        return setMenuBarElementVisibility(config, 'value', enabled)
+      },
       display: value,
     }
   }

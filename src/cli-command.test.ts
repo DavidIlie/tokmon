@@ -251,6 +251,23 @@ test('deprecated menu-bar-text alias cannot hide the final visible element', asy
     /would hide every menu-bar element/,
   )
   assert.equal(harness.closed(), 1)
+
+  // An already-hidden set never trips the shared helper's guard, so the CLI's own
+  // check has to read the resulting elements rather than compare object identity.
+  const allHidden = configHarness({
+    ...structuredClone(DEFAULTS),
+    tray: {
+      ...structuredClone(DEFAULTS.tray),
+      menuBar: {
+        ...structuredClone(DEFAULTS.tray.menuBar),
+        elements: { providerMark: false, value: false, progress: false },
+      },
+    },
+  })
+  await assert.rejects(
+    runConfigCommand(['set', 'menu-bar-text', 'off'], allHidden),
+    /would hide every menu-bar element/,
+  )
 })
 
 test('config set retries one conflict from fresh daemon state without losing remote fields', async () => {
