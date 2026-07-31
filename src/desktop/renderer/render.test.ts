@@ -528,7 +528,7 @@ test('desktop settings keeps app behavior while menu bar composition lives elsew
       role: 'attached', ownerKind: 'cli', version: '0.28.7', protocolVersion: 4, channel: 'release',
     },
     onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
-    onCheckUpdates: () => {}, onQuit: () => {},
+    onCheckUpdates: () => {},
   }))
   assert.match(html, /Privacy mode/)
   assert.match(html, /Provider summary/)
@@ -544,7 +544,7 @@ test('desktop settings keeps app behavior while menu bar composition lives elsew
   assert.match(html, /Tokmon 0\.28\.5/)
   assert.match(html, /Background service 0\.28\.7 · protocol 4 · CLI/)
   assert.match(html, /Check for Updates/)
-  assert.match(html, /Quit Tokmon/)
+  assert.doesNotMatch(html, /Quit Tokmon/)
   assert.match(html, /Manage all settings/)
 })
 
@@ -556,7 +556,7 @@ test('desktop settings is truthful when the package manager owns Linux updates',
     loginItem: { status: 'unsupported', enabled: false, error: null },
     appVersion: '0.28.7', daemon: null,
     onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
-    onCheckUpdates: () => {}, onQuit: () => {},
+    onCheckUpdates: () => {},
   }))
   assert.match(html, /managed by your package manager/)
   assert.match(html, /disabled=""[^>]*>Use Package Manager/)
@@ -571,7 +571,7 @@ test('desktop settings defers a downloaded update to the global restart action',
     appVersion: '0.28.5',
     daemon: null,
     onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
-    onCheckUpdates: () => {}, onQuit: () => {},
+    onCheckUpdates: () => {},
   }))
   assert.match(html, /0\.29\.0 is ready to install/)
   assert.match(html, /disabled=""[^>]*>Update Ready/)
@@ -588,7 +588,7 @@ test('desktop settings explains when macOS still requires login item approval', 
     loginItem: { status: 'requires-approval', enabled: false, error: null },
     appVersion: '0.29.4', daemon: null,
     onPatch: () => {}, onBack: () => {}, onDashboard: () => {},
-    onCheckUpdates: () => {}, onQuit: () => {},
+    onCheckUpdates: () => {},
   }))
   assert.match(html, /Allow Tokmon in System Settings → General → Login Items/)
   assert.match(html, /role="switch" aria-checked="true"/)
@@ -601,7 +601,7 @@ test('settings hub orders theme, menu bar, providers, then desktop behavior', ()
   } as Config
   const html = renderToStaticMarkup(createElement(SettingsHub, {
     config: fullConfig, onBack: () => {}, onTheme: () => {}, onMenuBar: () => {},
-    onProviders: () => {}, onDesktop: () => {},
+    onProviders: () => {}, onDesktop: () => {}, onQuit: () => {},
   }))
 
   assert.match(html, /aria-label="Settings sections"/)
@@ -614,6 +614,10 @@ test('settings hub orders theme, menu bar, providers, then desktop behavior', ()
   assert.ok(html.indexOf('>Theme<') < html.indexOf('>Menu Bar<'))
   assert.ok(html.indexOf('>Menu Bar<') < html.indexOf('>Providers &amp; Accounts<'))
   assert.ok(html.indexOf('>Providers &amp; Accounts<') < html.indexOf('>Desktop App<'))
+  // Quit is one click from the settings button, and last, the way menu-bar apps order it.
+  assert.match(html, /class="settings-quit"[^>]*>Quit Tokmon</)
+  assert.ok(html.indexOf('>Desktop App<') < html.indexOf('Quit Tokmon'))
+  assert.doesNotMatch(html, /class="quit-tokmon"/)
 })
 
 test('providers and accounts separates global tracking from discovery controls', () => {

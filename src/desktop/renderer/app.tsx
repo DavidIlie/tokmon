@@ -412,6 +412,7 @@ export function App() {
               config={config} onBack={() => setSurface('usage')}
               onTheme={() => setSurface('theme')} onMenuBar={() => setSurface('menubar')}
               onProviders={() => setSurface('providers')} onDesktop={() => setSurface('desktop')}
+              onQuit={() => { void window.tokmon.quit() }}
             />
         : surface === 'theme'
           ? <ThemeSettings config={config} systemMode={state?.systemMode ?? 'dark'} onPatch={mutate => { void updateConfig(mutate) }} onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')} />
@@ -432,7 +433,6 @@ export function App() {
               onPatch={mutate => { void updateConfig(mutate) }}
               onBack={() => setSurface('settings')} onDashboard={() => openDashboard('/settings')}
               onCheckUpdates={() => { void checkForUpdates() }}
-              onQuit={() => { void window.tokmon.quit() }}
             />
         : surface === 'providers'
           // Deliberately the raw snapshot, not effectiveSnapshot: this panel must

@@ -79,13 +79,14 @@ function SettingsHeader({ title, backLabel, onBack }: { title: string; backLabel
   )
 }
 
-export function SettingsHub({ config, onBack, onTheme, onMenuBar, onProviders, onDesktop }: {
+export function SettingsHub({ config, onBack, onTheme, onMenuBar, onProviders, onDesktop, onQuit }: {
   config: Config
   onBack(): void
   onTheme(): void
   onMenuBar(): void
   onProviders(): void
   onDesktop(): void
+  onQuit(): void
 }) {
   const preset = themePresetOption(config.appearance.preset).name
   const mode = isDarkOnlyThemePreset(config.appearance.preset)
@@ -116,6 +117,9 @@ export function SettingsHub({ config, onBack, onTheme, onMenuBar, onProviders, o
           <span className="destination-chevron" aria-hidden="true">›</span>
         </button>
       </nav>
+      {/* Quit is an app command, not a preference: menu-bar apps keep it one click from
+          the menu, so it sits in the hub's footer rather than inside a settings page. */}
+      <button type="button" className="settings-quit" onClick={onQuit}>Quit Tokmon</button>
     </section>
   )
 }
@@ -398,7 +402,7 @@ function launchAtLoginHint(loginItem: DesktopState['loginItem'], requested: bool
   return loginItem.enabled ? 'Starts silently after sign-in' : 'Start Tokmon silently after sign-in'
 }
 
-export function DesktopSettings({ config, update, loginItem, appVersion, daemon, onPatch, onBack, onDashboard, onCheckUpdates, onQuit }: {
+export function DesktopSettings({ config, update, loginItem, appVersion, daemon, onPatch, onBack, onDashboard, onCheckUpdates }: {
   config: Config
   update: DesktopUpdateState
   loginItem: DesktopState['loginItem']
@@ -408,7 +412,6 @@ export function DesktopSettings({ config, update, loginItem, appVersion, daemon,
   onBack(): void
   onDashboard(): void
   onCheckUpdates(): void
-  onQuit(): void
 }) {
   const service = daemonLabel(daemon)
   const loginItemUnavailable = loginItem.status === 'development' || loginItem.status === 'unsupported'
@@ -469,7 +472,6 @@ export function DesktopSettings({ config, update, loginItem, appVersion, daemon,
               type="button" className="check-updates" disabled={updateDisabled}
               onClick={onCheckUpdates}
             >{updateLabel}</button>
-            <button type="button" className="quit-tokmon" onClick={onQuit}>Quit Tokmon</button>
           </span>
         </div>
       </div>
