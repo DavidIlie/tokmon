@@ -1,4 +1,4 @@
-import { Cause, Context, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Schedule, Schema, Stream } from 'effect'
+import { Cause, Deferred, Duration, Effect, Exit, Fiber, Latch, Layer, Schedule, Schema, Scope, Stream } from 'effect'
 import { RpcClient, RpcSerialization } from 'effect/unstable/rpc'
 import { RpcClientError } from 'effect/unstable/rpc/RpcClientError'
 import type * as RpcGroup from 'effect/unstable/rpc/RpcGroup'
@@ -61,46 +61,48 @@ type TokmonRpcs = RpcGroup.Rpcs<typeof TokmonRpcGroup>
 type TokmonClient = RpcClient.RpcClient<TokmonRpcs, RpcClientError>
 type WireConfigState = typeof ConfigStateSchema.Type
 
-class TokmonRpcClient extends Context.Service<TokmonRpcClient, TokmonClient>()(
-  'tokmon/client/DaemonRpcClient/TokmonRpcClient',
-) {}
-
-type TokmonRuntime = ManagedRuntime.ManagedRuntime<TokmonRpcClient, never>
+/** Why a session stopped, and therefore which state the client reports. */
+interface SessionDeath {
+  readonly state: Extract<RpcConnState, 'reconnecting' | 'error'>
+  readonly error?: unknown
+}
 
 interface Session {
-  readonly runtime: TokmonRuntime
-  readonly disconnected: Deferred.Deferred<DaemonRpcConnectionError>
-  invalidated: boolean
+  readonly client: TokmonClient
+  /** The attempt scope: parent of every subscription scope on this session. */
+  readonly scope: Scope.Scope
+  readonly dead: Deferred.Deferred<never, SessionDeath>
+  readonly kill: (state: SessionDeath['state'], error?: unknown) => void
 }
 
 interface Subscription<A> {
   readonly streamFor: (client: TokmonClient) => Stream.Stream<A, unknown>
   readonly onValue: (value: A) => void
   readonly staleAfterFor?: (value: A) => number
-  active: boolean
-  fiber: Fiber.Fiber<unknown, unknown> | null
-  owner: Session | null
-  watchdogFiber: Fiber.Fiber<unknown, unknown> | null
+  /** Closing it interrupts the pump and the watchdog; null means "not running". */
+  runScope: Scope.Closeable | null
   lastValueAt: number
   staleAfterMs: number
 }
 
+/** The single connection rendezvous. `connecting` coalesces every caller onto
+ * one attempt; the deferred is what unary callers park on. */
+type ConnSlot =
+  | { readonly _tag: 'idle' }
+  | { readonly _tag: 'connecting'; readonly deferred: Deferred.Deferred<Session, unknown> }
+  | { readonly _tag: 'live'; readonly session: Session }
+
+/** Failure channel of one supervisor cycle. Success means "abandoned, stop retrying". */
+type CycleEnd =
+  | { readonly _tag: 'connect-failed'; readonly error: unknown }
+  | { readonly _tag: 'session-ended' }
+
+type Command = 'stop' | 'idle' | 'attempt'
+
+const RECONNECT_MAX_DELAY_MS = 2_500
+const DEFAULT_STALE_FLOOR_MS = 90_000
+
 const dynamicImport = new Function('specifier', 'return import(specifier)') as <T>(specifier: string) => Promise<T>
-
-/** Run an effect, rejecting with the raw failure so `instanceof` checks on
- * DaemonRpcConnectionError / RpcClientError keep working at the Promise seam. */
-function runOrThrow<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
-  return Effect.runPromiseExit(effect).then((exit) => {
-    if (Exit.isSuccess(exit)) return exit.value
-    throw Cause.squash(exit.cause)
-  })
-}
-
-function interruptFiber(fiber: Fiber.Fiber<unknown, unknown> | null): Promise<void> {
-  return fiber
-    ? Effect.runPromise(Fiber.interrupt(fiber)).then(() => undefined, () => undefined)
-    : Promise.resolve()
-}
 
 function toWsUrl(baseUrl: string): string {
   const base = typeof window === 'undefined' ? undefined : window.location.origin
@@ -163,35 +165,40 @@ function isSessionFailure(error: unknown): boolean {
   return error instanceof RpcClientError || Schema.isSchemaError(error)
 }
 
-function waitForReady(
-  ready: Deferred.Deferred<void>,
-  disconnected: Deferred.Deferred<DaemonRpcConnectionError>,
-  timeoutMs: number,
-): Promise<void> {
-  return runOrThrow(
-    Deferred.await(ready).pipe(
-      Effect.raceFirst(Effect.flatMap(Deferred.await(disconnected), Effect.fail)),
-      Effect.timeoutOrElse({
-        duration: Duration.millis(timeoutMs),
-        orElse: () => Effect.fail(new DaemonRpcConnectionError(`daemon RPC connection timed out after ${timeoutMs}ms`)),
-      }),
-    ),
-  )
+/** Re-raise an interrupt without letting it widen the typed error channel. */
+function rethrowCause<E>(cause: Cause.Cause<unknown>): Effect.Effect<never, E> {
+  return Effect.failCause(cause as Cause.Cause<never>)
 }
 
 export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientOptions = {}): DaemonRpcClient {
   const url = toWsUrl(baseUrl)
   const requestTimeoutMs = Math.max(1, options.requestTimeoutMs ?? 30_000)
+  // Backstop only: deliberately looser than the connect budget so it never races
+  // the real connect error, and only ever converts a rendezvous bug into a reject.
+  const rendezvousTimeoutMs = requestTimeoutMs * 2
   const reconnectBaseDelayMs = Math.max(1, options.reconnectBaseDelayMs ?? 250)
+  const staleFloorMs = options.snapshotStaleFloorMs ?? DEFAULT_STALE_FLOOR_MS
+  const attemptBudget = typeof options.reconnectAttempts === 'number' ? options.reconnectAttempts : undefined
+
   const subscriptions = new Set<Subscription<unknown>>()
-  let session: Session | null = null
-  let sessionPromise: Promise<Session> | null = null
-  let pendingRuntime: TokmonRuntime | null = null
-  let supervisorPromise: Promise<void> | null = null
-  let reconnectFiber: Fiber.Fiber<unknown, unknown> | null = null
-  let reconnectAttemptsUsed = 0
+  // Advisory wake-up edge for the supervisor. `connSlot`/`subscriptions` stay
+  // authoritative, so a dropped open is always safe. The invariant that keeps it
+  // honest: only the supervisor waits on it, and it retires the latch at the
+  // instant it starts waiting (`nextCommand`, `preemptibleDelay`) — never after.
+  // An open raised while the supervisor is busy (mid-attempt, in scope teardown,
+  // or parked on a live session) has no waiter to serve, so it must not survive
+  // into the next backoff rung and collapse it to zero.
+  const gate = Latch.makeUnsafe(false)
+  const rootScope = Scope.makeUnsafe('sequential')
+
+  let connSlot: ConnSlot = { _tag: 'idle' }
   let hasConnected = false
   let closed = false
+  // Written only by the supervisor fiber: the ladder resets on a successful
+  // connect, which `Schedule`'s own per-execution attempt counter cannot express.
+  let attemptsUsed = 0
+
+  const closedError = () => new Error('daemon RPC client is closed')
 
   const reportSubscriberError = (error: unknown) => {
     if (options.onSubscriberError) {
@@ -204,171 +211,185 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
   }
 
   const setConn = (state: RpcConnState, error?: unknown) => {
+    if (closed && state !== 'closed') return
     try { options.onConn?.(state, error) } catch (callbackError) {
       reportSubscriberError(callbackError)
     }
   }
 
-  const cancelReconnect = (): Promise<void> => {
-    const fiber = reconnectFiber
-    reconnectFiber = null
-    return interruptFiber(fiber)
+  /** Squash-equivalent that keeps error identity and never fabricates
+   * `Error('All fibers interrupted without error')` for a pure interrupt. */
+  const failureOf = (cause: Cause.Cause<unknown>): unknown => {
+    const failure = cause.reasons.find(Cause.isFailReason)
+    if (failure) return failure.error
+    const die = cause.reasons.find(Cause.isDieReason)
+    if (die) return die.defect
+    return closed ? closedError() : new DaemonRpcConnectionError()
   }
 
-  const stopSubscriptionFiber = (subscription: Subscription<unknown>): Promise<void> => {
-    const fiber = subscription.fiber
-    subscription.fiber = null
-    subscription.owner = null
-    return interruptFiber(fiber)
+  /** The only Effect → Promise seam. `runFork` (not `runPromise`) because the
+   * seam needs a fiber handle to adopt: an unadopted request fiber would outlive
+   * close() with its timeout timer still armed. */
+  const settle = <A>(effect: Effect.Effect<A, unknown>): Promise<A> =>
+    new Promise<A>((resolve, reject) => {
+      const fiber = Effect.runFork(effect, { onFiberStart: Fiber.runIn(rootScope) })
+      fiber.addObserver((exit) => {
+        if (Exit.isSuccess(exit)) resolve(exit.value)
+        else reject(failureOf(exit.cause))
+      })
+    })
+
+  const detach = (effect: Effect.Effect<unknown, never>): void => {
+    Effect.runFork(effect, { onFiberStart: Fiber.runIn(rootScope) })
   }
 
-  const disposeSubscription = (subscription: Subscription<unknown>): Promise<void> => {
-    subscription.active = false
-    subscriptions.delete(subscription)
-    const watchdog = subscription.watchdogFiber
-    subscription.watchdogFiber = null
-    return Promise.all([interruptFiber(watchdog), stopSubscriptionFiber(subscription)]).then(() => undefined)
+  const enterConnecting = (): Deferred.Deferred<Session, unknown> => {
+    if (connSlot._tag === 'connecting') return connSlot.deferred
+    const deferred = Deferred.makeUnsafe<Session, unknown>()
+    connSlot = { _tag: 'connecting', deferred }
+    setConn(hasConnected ? 'reconnecting' : 'connecting')
+    return deferred
   }
 
-  const scheduleReconnect = () => {
-    if (closed || subscriptions.size === 0 || reconnectFiber || session || sessionPromise) return
-    if (typeof options.reconnectAttempts === 'number' && reconnectAttemptsUsed >= options.reconnectAttempts) return
-    const delayMs = Math.min(2_500, reconnectBaseDelayMs * 1.5 ** reconnectAttemptsUsed)
-    reconnectFiber = Effect.runFork(
-      Effect.sleep(Duration.millis(delayMs)).pipe(
-        Effect.andThen(Effect.sync(() => {
-          reconnectFiber = null
-          reconnectAttemptsUsed++
-          connectSubscriptions()
-        })),
-      ),
-    )
+  const requestConnect = (): Deferred.Deferred<Session, unknown> => {
+    const deferred = enterConnecting()
+    Latch.openUnsafe(gate)
+    return deferred
   }
 
-  const invalidateSession = (
-    active: Session,
-    state: Extract<RpcConnState, 'reconnecting' | 'error'>,
-    error?: unknown,
-  ) => {
-    if (active.invalidated) return
-    active.invalidated = true
-    if (session === active) session = null
-    // Settle the deferred so the disconnect-observer fiber always terminates,
-    // even when the session dies from a request failure rather than the socket.
-    Deferred.doneUnsafe(active.disconnected, Effect.succeed(new DaemonRpcConnectionError()))
-    void active.runtime.dispose().catch(() => {})
-    if (!closed) setConn(state, error)
-    scheduleReconnect()
-  }
-
-  const makeProtocolLayer = async (
-    ready: Deferred.Deferred<void>,
-    disconnected: Deferred.Deferred<DaemonRpcConnectionError>,
-  ) => {
-    const socketLayer = await socketLayerFor(url, options.transport, requestTimeoutMs)
-    const connectionHooksLayer = Layer.succeed(
-      RpcClient.ConnectionHooks,
-      RpcClient.ConnectionHooks.of({
-        onConnect: Effect.asVoid(Deferred.succeed(ready, undefined)),
-        onDisconnect: Effect.asVoid(
-          Effect.suspend(() => Deferred.succeed(disconnected, new DaemonRpcConnectionError())),
+  const acquireSession: Effect.Effect<Session, unknown> = Effect.suspend(() => {
+    if (closed) return Effect.fail(closedError())
+    if (connSlot._tag === 'live') return Effect.succeed(connSlot.session)
+    const deferred = requestConnect()
+    return Deferred.await(deferred).pipe(
+      Effect.timeoutOrElse({
+        duration: Duration.millis(rendezvousTimeoutMs),
+        orElse: () => Effect.fail(
+          new DaemonRpcConnectionError(`daemon RPC connection timed out after ${rendezvousTimeoutMs}ms`),
         ),
       }),
     )
-    return Layer.effect(
-      RpcClient.Protocol,
-      RpcClient.makeProtocolSocket({
-        retryPolicy: Schedule.recurs(0),
-        retryTransientErrors: false,
-      }),
-    ).pipe(
-      Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson, connectionHooksLayer)),
-    )
-  }
+  })
 
-  const ensureSession = async (): Promise<Session> => {
-    if (closed) throw new Error('daemon RPC client is closed')
-    if (session) return session
-    if (sessionPromise) return sessionPromise
-
-    setConn(hasConnected ? 'reconnecting' : 'connecting')
-    const pending = (async () => {
-      let runtime: TokmonRuntime | null = null
-      try {
-        const ready = Deferred.makeUnsafe<void>()
-        const disconnected = Deferred.makeUnsafe<DaemonRpcConnectionError>()
-        const protocolLayer = await makeProtocolLayer(ready, disconnected)
-        const clientLayer = Layer.effect(
-          TokmonRpcClient,
-          RpcClient.make(TokmonRpcGroup),
-        ).pipe(Layer.provide(protocolLayer))
-        runtime = ManagedRuntime.make(clientLayer)
-        pendingRuntime = runtime
-        await runtime.runPromise(TokmonRpcClient.use(Effect.succeed))
-        await waitForReady(ready, disconnected, requestTimeoutMs)
-        if (closed) throw new Error('daemon RPC client is closed')
-
-        const active: Session = {
-          runtime,
-          disconnected,
-          invalidated: false,
-        }
-        session = active
-        pendingRuntime = null
-        hasConnected = true
-        reconnectAttemptsUsed = 0
-        setConn('live')
-        Effect.runFork(
-          Effect.map(Deferred.await(active.disconnected), (error) => {
-            invalidateSession(active, 'reconnecting', error)
-          }),
-        )
-        startAllSubscriptions(active)
-        return active
-      } catch (error) {
-        if (pendingRuntime === runtime) pendingRuntime = null
-        await runtime?.dispose().catch(() => {})
-        if (!closed) setConn('error', error)
-        throw error
-      }
-    })()
-    sessionPromise = pending
-    try {
-      return await pending
-    } finally {
-      if (sessionPromise === pending) sessionPromise = null
-    }
-  }
-
-  const run = async <A>(
+  const run = <A>(
     method: string,
     effectFor: (client: TokmonClient) => Effect.Effect<A, unknown>,
-  ): Promise<A> => {
-    const active = await ensureSession()
-    try {
-      return await active.runtime.runPromise(
-        TokmonRpcClient.use((client) => effectFor(client)).pipe(
-          Effect.timeoutOrElse({
-            duration: Duration.millis(requestTimeoutMs),
-            orElse: () => Effect.fail(new DaemonRpcRequestTimeoutError(method, requestTimeoutMs)),
-          }),
-        ),
+  ): Promise<A> =>
+    settle(Effect.gen(function* () {
+      const session = yield* acquireSession
+      const abortOnDeath = Deferred.await(session.dead).pipe(
+        Effect.mapError((death) => death.error ?? new DaemonRpcConnectionError()),
       )
-    } catch (rawError) {
-      const error = normalizeRequestFailure(rawError)
-      if (!closed && isSessionFailure(error)) invalidateSession(active, 'error', error)
-      throw error
-    }
+      return yield* effectFor(session.client).pipe(
+        Effect.timeoutOrElse({
+          duration: Duration.millis(requestTimeoutMs),
+          orElse: () => Effect.fail(new DaemonRpcRequestTimeoutError(method, requestTimeoutMs)),
+        }),
+        // A dying session aborts its in-flight requests; raceFirst interrupts the
+        // loser, so the request's timeout timer is cleared rather than abandoned.
+        Effect.raceFirst(abortOnDeath),
+        Effect.catchCause((cause): Effect.Effect<never, unknown> => {
+          if (Cause.hasInterruptsOnly(cause)) return rethrowCause(cause)
+          const error = normalizeRequestFailure(failureOf(cause))
+          if (!closed && isSessionFailure(error)) session.kill('error', error)
+          return Effect.fail(error)
+        }),
+      )
+    }))
+
+  const connect = (
+    scope: Scope.Scope,
+    onDeath: (death: SessionDeath) => void,
+  ): Effect.Effect<Session, unknown> =>
+    Effect.gen(function* () {
+      const ready = Deferred.makeUnsafe<void>()
+      const dead = Deferred.makeUnsafe<never, SessionDeath>()
+      // doneUnsafe returns false on the second settle: that is the idempotence
+      // guarantee that used to live in an explicit `invalidated` flag.
+      const signal = (death: SessionDeath) => {
+        if (Deferred.doneUnsafe(dead, Effect.fail(death))) onDeath(death)
+      }
+
+      const socketLayer = yield* Effect.tryPromise({
+        try: () => socketLayerFor(url, options.transport, requestTimeoutMs),
+        catch: (error: unknown) => error,
+      })
+      const connectionHooksLayer = Layer.succeed(
+        RpcClient.ConnectionHooks,
+        RpcClient.ConnectionHooks.of({
+          onConnect: Effect.asVoid(Deferred.succeed(ready, undefined)),
+          onDisconnect: Effect.sync(() => {
+            signal({ state: 'reconnecting', error: new DaemonRpcConnectionError() })
+          }),
+        }),
+      )
+      const protocolLayer = Layer.effect(
+        RpcClient.Protocol,
+        RpcClient.makeProtocolSocket({
+          retryPolicy: Schedule.recurs(0),
+          retryTransientErrors: false,
+        }),
+      ).pipe(
+        Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson, connectionHooksLayer)),
+      )
+
+      // Built into the attempt scope, so the socket finalizer is registered first
+      // and — under sequential reverse-order finalization — released last.
+      const context = yield* Layer.build(protocolLayer).pipe(Scope.provide(scope))
+      const client = yield* RpcClient.make(TokmonRpcGroup).pipe(
+        Effect.provide(context),
+        Scope.provide(scope),
+      )
+
+      yield* Deferred.await(ready).pipe(
+        Effect.raceFirst(
+          Deferred.await(dead).pipe(
+            Effect.mapError((death) => death.error ?? new DaemonRpcConnectionError()),
+          ),
+        ),
+        Effect.timeoutOrElse({
+          duration: Duration.millis(requestTimeoutMs),
+          orElse: () => Effect.fail(
+            new DaemonRpcConnectionError(`daemon RPC connection timed out after ${requestTimeoutMs}ms`),
+          ),
+        }),
+      )
+
+      const session: Session = {
+        client,
+        scope,
+        dead,
+        kill: (state, error) => { signal({ state, error }) },
+      }
+      return session
+    })
+
+  const watchdog = (subscription: Subscription<unknown>, session: Session) => {
+    const checkEveryMs = Math.min(5_000, Math.max(10, staleFloorMs / 2))
+    return Effect.sync(() => {
+      if (Date.now() - subscription.lastValueAt <= subscription.staleAfterMs) return
+      // Reset before killing so a slow reconnect does not refire immediately.
+      subscription.lastValueAt = Date.now()
+      session.kill('reconnecting')
+    }).pipe(Effect.repeat(Schedule.spaced(Duration.millis(checkEveryMs))))
   }
 
-  const startSubscription = <A>(subscription: Subscription<A>, active: Session) => {
-    if (closed || !subscription.active || subscription.fiber || active.invalidated) return
-    subscription.lastValueAt = Date.now()
-    subscription.staleAfterMs = options.snapshotStaleFloorMs ?? 90_000
-    subscription.owner = active
-    const fiber = active.runtime.runFork(
-      TokmonRpcClient.use((client) =>
-        subscription.streamFor(client).pipe(
+  const startSubscription = (
+    subscription: Subscription<unknown>,
+    session: Session,
+  ): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      if (closed || !subscriptions.has(subscription) || subscription.runScope !== null) return
+      const subScope = yield* Scope.fork(session.scope)
+      subscription.runScope = subScope
+      subscription.lastValueAt = Date.now()
+      subscription.staleAfterMs = staleFloorMs
+      yield* Scope.addFinalizer(subScope, Effect.sync(() => {
+        if (subscription.runScope === subScope) subscription.runScope = null
+      }))
+
+      const pump = yield* Effect.forkIn(
+        subscription.streamFor(session.client).pipe(
           Stream.runForEach((value) =>
             Effect.sync(() => {
               subscription.lastValueAt = Date.now()
@@ -377,32 +398,131 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
             }),
           ),
         ),
-      ),
-    )
-    subscription.fiber = fiber
-    fiber.addObserver((exit) => {
-      if (subscription.fiber === fiber) subscription.fiber = null
-      if (subscription.owner === active) subscription.owner = null
-      if (closed || !subscription.active || active.invalidated) return
-      if (Exit.isSuccess(exit)) {
-        invalidateSession(active, 'reconnecting')
-      } else {
-        invalidateSession(active, 'error', Cause.squash(exit.cause))
-      }
+        subScope,
+      )
+      pump.addObserver((exit) => {
+        if (closed || !subscriptions.has(subscription)) return
+        if (Exit.isSuccess(exit)) {
+          session.kill('reconnecting')
+          return
+        }
+        // An interrupt is scope teardown, never a transport failure.
+        if (Cause.hasInterruptsOnly(exit.cause)) return
+        session.kill('error', Cause.squash(exit.cause))
+      })
+
+      if (subscription.staleAfterFor) yield* Effect.forkIn(watchdog(subscription, session), subScope)
     })
-  }
 
-  const startAllSubscriptions = (active: Session) => {
-    for (const subscription of subscriptions) startSubscription(subscription, active)
-  }
+  const startAllSubscriptions = (session: Session): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      for (const subscription of [...subscriptions]) yield* startSubscription(subscription, session)
+    })
 
-  function connectSubscriptions(): void {
-    if (closed || subscriptions.size === 0 || supervisorPromise) return
-    supervisorPromise = ensureSession()
-      .then(() => undefined)
-      .catch(() => { scheduleReconnect() })
-      .finally(() => { supervisorPromise = null })
-  }
+  /** Sleeps one backoff rung but yields the moment demand changes — a new unary
+   * caller, or the last unsubscribe. Returns zero so the Schedule's own sleep
+   * degrades to a yield and registers no timer. */
+  const preemptibleDelay = (delayMs: number): Effect.Effect<Duration.Duration> =>
+    Effect.suspend(() => {
+      // Retiring the gate as this wait begins is load-bearing, and it has to
+      // happen here rather than after the race: pokes raised while the previous
+      // attempt was running or tearing down have already been served by
+      // `connSlot`/`subscriptions`, and honouring one here would collapse this
+      // rung to zero while still charging `attemptsUsed` for it. Close and
+      // await are one synchronous step, so a poke can never be lost between
+      // them — and an open that lands during the sleep still wins the race.
+      Latch.closeUnsafe(gate)
+      return Effect.sleep(Duration.millis(delayMs)).pipe(
+        Effect.raceFirst(gate.await),
+        Effect.as(Duration.zero),
+      )
+    })
+
+  const backoff: Schedule.Schedule<number, CycleEnd> = Schedule.forever.pipe(
+    Schedule.while(() =>
+      !closed
+      && subscriptions.size > 0
+      && (attemptBudget === undefined || attemptsUsed < attemptBudget),
+    ),
+    Schedule.modifyDelay(() => {
+      const delayMs = Math.min(RECONNECT_MAX_DELAY_MS, reconnectBaseDelayMs * 1.5 ** attemptsUsed)
+      attemptsUsed += 1
+      return preemptibleDelay(delayMs)
+    }),
+  )
+
+  const runAttempt = (scope: Scope.Scope): Effect.Effect<void, CycleEnd> =>
+    Effect.gen(function* () {
+      if (closed) return
+      // A purely retry-driven attempt needs live subscription demand. Returning
+      // success stops the retry cleanly and parks the supervisor.
+      if (connSlot._tag !== 'connecting' && subscriptions.size === 0) return
+
+      let published: Session | null = null
+      const deferred = enterConnecting()
+
+      const onDeath = (death: SessionDeath) => {
+        // Pre-publish deaths are reported by the connect failure path instead.
+        if (published === null) return
+        if (connSlot._tag === 'live' && connSlot.session === published) connSlot = { _tag: 'idle' }
+        setConn(death.state, death.error)
+      }
+
+      const session = yield* connect(scope, onDeath).pipe(
+        Effect.catchCause((cause): Effect.Effect<never, CycleEnd> => {
+          if (Cause.hasInterruptsOnly(cause)) return rethrowCause(cause)
+          const error = failureOf(cause)
+          if (connSlot._tag === 'connecting' && connSlot.deferred === deferred) connSlot = { _tag: 'idle' }
+          setConn('error', error)
+          Deferred.doneUnsafe(deferred, Effect.fail(error))
+          return Effect.fail<CycleEnd>({ _tag: 'connect-failed', error })
+        }),
+      )
+
+      if (closed) return
+      published = session
+      hasConnected = true
+      attemptsUsed = 0
+      connSlot = { _tag: 'live', session }
+      setConn('live')
+      yield* startAllSubscriptions(session)
+      Deferred.doneUnsafe(deferred, Effect.succeed(session))
+
+      yield* Deferred.await(session.dead).pipe(
+        Effect.mapError((): CycleEnd => ({ _tag: 'session-ended' })),
+      )
+    })
+
+  /** Retires the gate on the way into the idle park. Closing it and reading the
+   * slot must be one synchronous step, so a poke can never land between them
+   * and be lost. */
+  const nextCommand = Effect.sync((): Command => {
+    Latch.closeUnsafe(gate)
+    if (closed) return 'stop'
+    return connSlot._tag === 'connecting' ? 'attempt' : 'idle'
+  })
+
+  const supervisorLoop = Effect.gen(function* () {
+    for (;;) {
+      const command = yield* nextCommand
+      if (command === 'stop') return
+      if (command === 'idle') {
+        yield* gate.await
+        continue
+      }
+      yield* Effect.scopedWith(runAttempt).pipe(
+        Effect.retry(backoff),
+        Effect.catchCause((cause): Effect.Effect<void> => {
+          if (Cause.hasInterrupts(cause)) return rethrowCause(cause)
+          const defect = cause.reasons.find(Cause.isDieReason)?.defect
+          if (defect !== undefined) console.error('[tokmon] daemon RPC supervisor defect', defect)
+          return Effect.void
+        }),
+      )
+    }
+  })
+
+  Effect.runFork(supervisorLoop, { onFiberStart: Fiber.runIn(rootScope) })
 
   const subscribe = <A>(
     streamFor: (client: TokmonClient) => Stream.Stream<A, unknown>,
@@ -414,34 +534,28 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       streamFor,
       onValue,
       staleAfterFor,
-      active: true,
-      fiber: null,
-      owner: null,
-      watchdogFiber: null,
+      runScope: null,
       lastValueAt: 0,
-      staleAfterMs: Number.POSITIVE_INFINITY,
+      staleAfterMs: staleFloorMs,
     }
-    subscriptions.add(subscription as Subscription<unknown>)
+    const registered = subscription as Subscription<unknown>
+    subscriptions.add(registered)
 
-    if (staleAfterFor) {
-      const checkEveryMs = Math.min(5_000, Math.max(10, (options.snapshotStaleFloorMs ?? 90_000) / 2))
-      const checkStaleness = Effect.sync(() => {
-        if (!subscription.fiber || !subscription.owner || subscription.lastValueAt === 0) return
-        if (Date.now() - subscription.lastValueAt <= subscription.staleAfterMs) return
-        subscription.lastValueAt = Date.now()
-        invalidateSession(subscription.owner, 'reconnecting')
-      })
-      subscription.watchdogFiber = Effect.runFork(
-        checkStaleness.pipe(Effect.repeat(Schedule.spaced(Duration.millis(checkEveryMs)))),
-      )
-    }
-
-    if (session) startSubscription(subscription, session)
-    else connectSubscriptions()
+    if (connSlot._tag === 'live') detach(startSubscription(registered, connSlot.session))
+    else requestConnect()
 
     return () => {
-      void disposeSubscription(subscription as Subscription<unknown>)
-      if (subscriptions.size === 0) void cancelReconnect()
+      if (!subscriptions.delete(registered)) return
+      const runScope = registered.runScope
+      registered.runScope = null
+      if (runScope) {
+        const finalize = Scope.closeUnsafe(runScope, Exit.void)
+        if (finalize) detach(finalize)
+      }
+      // Break a *sleeping* backoff rung: with no demand left it must not fire.
+      // If no rung is sleeping the open is retired unread, which is correct —
+      // the schedule re-reads `subscriptions.size` before every rung anyway.
+      if (subscriptions.size === 0) Latch.openUnsafe(gate)
     }
   }
 
@@ -469,7 +583,7 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       subscribe(
         client => client[TOKMON_WS_METHODS.snapshot]({}).pipe(Stream.map(materializeWebSnapshot)),
         onSnapshot,
-        snapshot => Math.max(options.snapshotStaleFloorMs ?? 90_000, snapshot.intervalMs * 3),
+        snapshot => Math.max(staleFloorMs, snapshot.intervalMs * 3),
       ),
 
     subscribeConfig: (onConfig) =>
@@ -481,22 +595,14 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
     async close() {
       if (closed) return
       closed = true
+      // Emitted before teardown, so teardown failures stay silent.
       setConn('closed')
-      const cleanup = [...subscriptions].map(disposeSubscription)
+      const slot = connSlot
+      connSlot = { _tag: 'idle' }
+      if (slot._tag === 'connecting') Deferred.doneUnsafe(slot.deferred, Effect.fail(closedError()))
       subscriptions.clear()
-      const activeSession = session
-      session = null
-      await cancelReconnect()
-      await pendingRuntime?.dispose().catch(() => {})
-      await Promise.all(cleanup)
-      await activeSession?.runtime.dispose().catch(() => {})
-      if (activeSession) {
-        Deferred.doneUnsafe(activeSession.disconnected, Effect.succeed(new DaemonRpcConnectionError()))
-      }
-      await sessionPromise?.catch(() => {})
-      pendingRuntime = null
-      sessionPromise = null
-      supervisorPromise = null
+      Latch.openUnsafe(gate)
+      await Effect.runPromise(Scope.close(rootScope, Exit.void)).catch(() => {})
     },
   }
 }
