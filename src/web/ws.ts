@@ -168,16 +168,21 @@ interface HeartbeatSocket {
  * never error and never close: the peer's TCP stack is gone but ours still counts
  * the client as live, keeping idle-pause off and streams pumping into the void.
  * Standard ws heartbeat — mark, ping, reap on the next tick if no pong came back.
+ *
+ * Pong listeners are attached lazily off `clients`: under noServer upgrades the
+ * Effect handler adopts sockets without ever emitting `connection`, so an
+ * on('connection') hook would never fire and the reaper would kill live peers.
  */
-function startHeartbeat(wss: { clients: Set<unknown>; on(event: 'connection', listener: (ws: unknown) => void): void }): () => void {
-  wss.on('connection', (ws) => {
-    const socket = ws as HeartbeatSocket
-    socket.isAlive = true
-    socket.on('pong', () => { socket.isAlive = true })
-  })
+function startHeartbeat(wss: { clients: Set<unknown> }): () => void {
+  const seen = new WeakSet<object>()
   const timer = setInterval(() => {
     for (const client of wss.clients) {
       const socket = client as HeartbeatSocket
+      if (!seen.has(socket)) {
+        seen.add(socket)
+        socket.isAlive = true
+        try { socket.on('pong', () => { socket.isAlive = true }) } catch { continue }
+      }
       if (socket.isAlive === false) {
         try { socket.terminate() } catch {}
         continue
