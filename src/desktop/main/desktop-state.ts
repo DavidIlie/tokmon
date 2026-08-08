@@ -66,7 +66,7 @@ export class DesktopStateStore {
     return false
   }
 
-  snapshot(snapshot: WebSnapshot): void { this.update({ snapshot, error: null }) }
+  snapshot(snapshot: WebSnapshot): void { this.update({ snapshot: projectSnapshotForPopover(snapshot), error: null }) }
 
   config(config: Config, revision: number): void {
     // A successful setConfig is observed both through the daemon subscription
@@ -84,6 +84,35 @@ export class DesktopStateStore {
       error: error instanceof Error ? error.message : error ? String(error) : null,
     })
   }
+}
+
+/**
+ * The popover reads `table` only as a has-history boolean (provider-card.tsx,
+ * desktop-settings.tsx); shipping every account's full daily/weekly/monthly
+ * per-model breakdown across IPC into the always-alive renderer multiplies the
+ * app's working set for data no surface renders. Keep one sentinel row per
+ * non-empty granularity so the boolean checks stay truthful.
+ */
+export function projectSnapshotForPopover(snapshot: WebSnapshot): WebSnapshot {
+  let changed = false
+  const accounts = snapshot.accounts.map(account => {
+    const table = account.table
+    if (!table) return account
+    const daily = table.daily.length
+    const weekly = table.weekly.length
+    const monthly = table.monthly.length
+    if (daily <= 1 && weekly <= 1 && monthly <= 1) return account
+    changed = true
+    return {
+      ...account,
+      table: {
+        daily: table.daily.slice(0, 1),
+        weekly: table.weekly.slice(0, 1),
+        monthly: table.monthly.slice(0, 1),
+      },
+    }
+  })
+  return changed ? { ...snapshot, accounts } : snapshot
 }
 
 /** Reject renderer pixels produced from any superseded presentation input. */
