@@ -128,7 +128,17 @@ export function createSnapshotDeltaEncoder(): SnapshotDeltaEncoder {
     next(snapshot) {
       if (previous === null) {
         previous = remember(snapshot)
-        return { _tag: 'init', snapshot: snapshot as unknown as WireSnapshot }
+        // Strip explicit-undefined optional keys: Schema's optionalKey accepts
+        // absence but rejects `key: undefined`, and future snapshot producers
+        // must not be able to poison every new subscription's init frame.
+        const { billingIntervalMs, installedProviders, suppressedAccounts, ...required } = snapshot
+        const init = {
+          ...required,
+          ...(billingIntervalMs === undefined ? {} : { billingIntervalMs }),
+          ...(installedProviders === undefined ? {} : { installedProviders }),
+          ...(suppressedAccounts === undefined ? {} : { suppressedAccounts }),
+        }
+        return { _tag: 'init', snapshot: init as unknown as WireSnapshot }
       }
 
       const upserts: AccountUpsertWire[] = []
