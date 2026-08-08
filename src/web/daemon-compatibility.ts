@@ -8,22 +8,49 @@ export interface DaemonOwnerIdentity {
 
 export type DaemonCompatibilityDecision =
   | { action: 'attach'; reason: 'same-protocol' }
-  | { action: 'retire'; reason: 'older-cli' | 'legacy-cli' }
+  | { action: 'retire'; reason: 'older-cli' | 'legacy-cli' | 'stale-version-cli' }
   | {
       action: 'refuse'
       reason: 'desktop-owner' | 'newer-cli' | 'ambiguous-owner'
     }
 
+/** Release-precedence compare for informational app versions; null when either side is unparseable. */
+export function compareAppVersions(left: string, right: string): number | null {
+  const parse = (value: string): [number, number, number] | null => {
+    const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(value.trim())
+    return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null
+  }
+  const a = parse(left)
+  const b = parse(right)
+  if (!a || !b) return null
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index]! < b[index]! ? -1 : 1
+  }
+  return 0
+}
+
 /**
  * Decide whether a live daemon may be shared, gracefully upgraded, or left
- * alone. App versions are deliberately informational: the RPC protocol is the
- * compatibility boundary.
+ * alone. The RPC protocol is the hard compatibility boundary; app versions
+ * additionally upgrade a same-protocol CLI-owned daemon so a machine that
+ * stays up for weeks doesn't keep serving stale parsers and pricing tables
+ * long after `npm i -g tokmon@latest`. Desktop-owned daemons live in-process
+ * and restart with the app, so they are never retired from outside.
  */
 export function classifyDaemonCompatibility(
   owner: DaemonOwnerIdentity,
   clientProtocolVersion: number,
+  clientVersion?: string,
 ): DaemonCompatibilityDecision {
   if (owner.protocolVersion === clientProtocolVersion) {
+    if (
+      owner.ownerKind === 'cli'
+      && clientVersion !== undefined
+      && owner.version !== undefined
+      && compareAppVersions(owner.version, clientVersion) === -1
+    ) {
+      return { action: 'retire', reason: 'stale-version-cli' }
+    }
     return { action: 'attach', reason: 'same-protocol' }
   }
   if (owner.ownerKind === 'desktop') {

@@ -352,8 +352,15 @@ function testDaemon(root: string, options: {
   return { child, handshake }
 }
 
-test('a client attaches across app-version mismatch when the daemon protocol matches', { timeout: 10_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), 'tokmon-daemon-compatible-version-'))
+test('a client upgrades a same-protocol CLI daemon from an older app release', { timeout: 20_000 }, async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('signal-based upgrade assertion is POSIX-specific')
+    return
+  }
+  // Old behavior attached across any app-version gap, so a machine that stayed
+  // up for weeks kept serving stale parsers and pricing tables forever after
+  // `npm i -g tokmon@latest`. Same-protocol upgrades are now graceful takeovers.
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-daemon-stale-version-'))
   await mkdir(join(root, 'home'), { recursive: true })
   const existing = testDaemon(root, {
     version: '0.22.7',
@@ -361,20 +368,31 @@ test('a client attaches across app-version mismatch when the daemon protocol mat
     ownerKind: 'cli',
   })
   try {
-    const ready = await existing.handshake
+    await existing.handshake
     const handle = await attachOrSpawn({
       cachePath: join(root, 'cache'),
       entry: join(process.cwd(), 'src/cli.tsx'),
       execArgv: ['--import', 'tsx'],
-      timeoutMs: 1_000,
+      env: {
+        ...process.env,
+        HOME: join(root, 'home'),
+        TOKMON_WEB_MODE: 'prod',
+      },
+      timeoutMs: 8_000,
     })
     assert.equal(handle.kind, 'spawned')
-    assert.equal(handle.baseUrl, ready.url)
-    assert.equal(existing.child.exitCode, null)
-    assert.equal(readLock({ cachePath: join(root, 'cache') })?.pid, existing.child.pid)
+    await waitForExit(existing.child, 3_000)
+    const replacement = readLock({ cachePath: join(root, 'cache') })
+    assert.ok(replacement, 'replacement daemon must own the lock')
+    assert.notEqual(replacement.pid, existing.child.pid)
+    assert.notEqual(replacement.version, '0.22.7')
   } finally {
     if (existing.child.exitCode === null && existing.child.signalCode === null) existing.child.kill('SIGTERM')
     await waitForExit(existing.child).catch(() => {})
+    const survivor = readLock({ cachePath: join(root, 'cache') })
+    if (survivor && survivor.pid !== process.pid) {
+      try { process.kill(survivor.pid, 'SIGTERM') } catch {}
+    }
     await rm(root, { recursive: true, force: true })
   }
 })

@@ -12,6 +12,7 @@ import {
   type LockfileOptions,
 } from '../web/lockfile'
 import { daemonChannelFromWire, resolveDaemonChannel, type DaemonChannel } from '../web/daemon-channel'
+import { appVersion } from '../web/static'
 import {
   classifyDaemonCompatibility,
   daemonConflictMessage,
@@ -179,6 +180,19 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
   const baseEnv = opts.env ?? process.env
   const channel = resolveDaemonChannel(opts.channel, baseEnv)
   const lockOpts: LockfileOptions = { cachePath: opts.cachePath, channel }
+
+  // Same-protocol daemons from an older app release keep serving stale parsers
+  // and pricing tables until something replaces them. Try a graceful upgrade
+  // first; on any failure attach as before — stale data beats no data.
+  const staleCandidate = readLock(lockOpts)
+  if (
+    staleCandidate
+    && classifyDaemonCompatibility(staleCandidate, protocolVersion, appVersion()).action === 'retire'
+    && staleCandidate.protocolVersion === protocolVersion
+  ) {
+    await retireIncompatibleCliOwner(lockOpts, protocolVersion, timeoutMs, appVersion()).catch(() => false)
+  }
+
   const existing = await attach(lockOpts, protocolVersion)
   if (existing) return existing
 

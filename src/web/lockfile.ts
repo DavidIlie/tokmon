@@ -456,12 +456,10 @@ export async function retireIncompatibleCliOwner(
   opts: LockfileOptions,
   protocolVersion: number,
   timeoutMs = TAKEOVER_TIMEOUT_MS,
+  clientVersion?: string,
 ): Promise<boolean> {
-  const compatible = readLock(opts)
-  if (compatible?.protocolVersion === protocolVersion) return false
-
   const foreign = readForeignLock(opts)
-  const decision = foreign && classifyDaemonCompatibility(foreign, protocolVersion)
+  const decision = foreign && classifyDaemonCompatibility(foreign, protocolVersion, clientVersion)
   if (
     !foreign || foreign.state !== 'ready' || decision?.action !== 'retire' ||
     foreign.pid === process.pid || !isAlive(foreign.pid)
@@ -474,6 +472,9 @@ export async function retireIncompatibleCliOwner(
     (decision.reason === 'legacy-cli'
       ? health.ownerKind !== undefined || health.protocolVersion !== undefined
       : health.ownerKind !== 'cli' || health.protocolVersion !== foreign.protocolVersion) ||
+    // A stale-version takeover must be retiring exactly the version it judged
+    // stale; a mismatch means the owner changed underneath and wins the race.
+    (decision.reason === 'stale-version-cli' && health.version !== foreign.version) ||
     healthChannel !== foreign.channel
   ) return false
 
