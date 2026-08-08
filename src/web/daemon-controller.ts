@@ -151,8 +151,9 @@ async function retireOrRefuseOwner(
   owner: DaemonOwnerIdentity,
   opts: AcquireOrAttachDaemonOptions,
   protocolVersion: number,
+  clientVersion?: string,
 ): Promise<void> {
-  const decision = classifyDaemonCompatibility(owner, protocolVersion)
+  const decision = classifyDaemonCompatibility(owner, protocolVersion, clientVersion)
   if (decision.action !== 'retire') {
     throw incompatibleOwnerError(owner, opts, protocolVersion)
   }
@@ -160,6 +161,7 @@ async function retireOrRefuseOwner(
     opts,
     protocolVersion,
     opts.ownerTakeoverTimeoutMs ?? OWNER_TAKEOVER_TIMEOUT_MS,
+    clientVersion,
   )
   if (!retired) {
     throw incompatibleOwnerError(owner, opts, protocolVersion, true)
@@ -169,11 +171,33 @@ async function retireOrRefuseOwner(
 async function discoverOwner(
   opts: AcquireOrAttachDaemonOptions,
   protocolVersion: number,
+  clientVersion?: string,
 ): Promise<DaemonLock | null> {
   const local = localOwnerFor(opts, protocolVersion)
   if (local) return local
   let current = readLock(opts)
   if (!current && reclaimAbandonedLock(opts)) current = readLock(opts)
+
+  // Same-protocol but app-stale CLI daemon: upgrade it instead of attaching,
+  // so a host that stays up for weeks stops serving outdated parsers/pricing
+  // after the CLI updates. Failure to retire falls through to a normal attach —
+  // stale data beats no data.
+  if (
+    current
+    && clientVersion !== undefined
+    && classifyDaemonCompatibility(current, protocolVersion, clientVersion).action === 'retire'
+    && current.protocolVersion === protocolVersion
+    && isAlive(current.pid)
+  ) {
+    if (await retireIncompatibleCliOwner(
+      opts,
+      protocolVersion,
+      opts.ownerTakeoverTimeoutMs ?? OWNER_TAKEOVER_TIMEOUT_MS,
+      clientVersion,
+    )) {
+      current = readLock(opts)
+    }
+  }
 
   const live = await verifyLock(current, protocolVersion)
   if (live) return live
@@ -304,7 +328,8 @@ export async function acquireOrAttachDaemon(
 ): Promise<DaemonController> {
   const protocolVersion = opts.protocolVersion ?? TOKMON_PROTOCOL_VERSION
   const capabilities = opts.capabilities ?? TOKMON_CAPABILITIES
-  const existing = await discoverOwner(opts, protocolVersion)
+  const clientVersion = opts.version ?? appVersion()
+  const existing = await discoverOwner(opts, protocolVersion, clientVersion)
   if (existing) return attached(existing)
 
   const reservation = reservationFor(

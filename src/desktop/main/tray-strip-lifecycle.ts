@@ -17,4 +17,9 @@ export class TrayStripLifecycle {
   observePinSignature(signature: string | null): void {
     if (signature === '') this.#hasComposedImage = false
   }
+
+  /** The renderer died: its last strip may describe state it can no longer repaint. */
+  reset(): void {
+    this.#hasComposedImage = false
+  }
 }

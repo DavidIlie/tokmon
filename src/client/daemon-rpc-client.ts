@@ -17,7 +17,7 @@ import {
   type FsListing,
   type RefreshScope,
 } from '../rpc/contract'
-import { materializeWebSnapshot } from '../web/snapshot-schema'
+import { createSnapshotDeltaDecoder } from '../web/snapshot-delta'
 
 export type RpcConnState = 'connecting' | 'live' | 'reconnecting' | 'error' | 'closed'
 
@@ -39,6 +39,12 @@ export interface DaemonRpcClient {
   browseFs(path: string): Promise<FsListing>
   subscribeSnapshot(onSnapshot: (snapshot: WebSnapshot) => void): () => void
   subscribeConfig(onConfig: (config: ConfigState) => void): () => void
+  /**
+   * Drop the current session (if any) and redial immediately. For wake-from-sleep:
+   * a suspended machine leaves the socket half-open, and waiting for the stale
+   * watchdog costs up to `snapshotStaleFloorMs` of frozen UI.
+   */
+  reconnectNow(): void
   close(): Promise<void>
 }
 
@@ -81,6 +87,11 @@ interface Subscription<A> {
   readonly staleAfterFor?: (value: A) => number
   /** Closing it interrupts the pump and the watchdog; null means "not running". */
   runScope: Scope.Closeable | null
+  /** Synchronous claim taken before the first yield in startSubscription, so
+   * the two starters (subscribe()'s detached start and the supervisor's
+   * startAllSubscriptions) can never both pass the runScope guard across the
+   * Scope.fork op boundary and double-pump one subscription. */
+  starting: boolean
   lastValueAt: number
   staleAfterMs: number
 }
@@ -379,39 +390,44 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
     session: Session,
   ): Effect.Effect<void> =>
     Effect.gen(function* () {
-      if (closed || !subscriptions.has(subscription) || subscription.runScope !== null) return
-      const subScope = yield* Scope.fork(session.scope)
-      subscription.runScope = subScope
-      subscription.lastValueAt = Date.now()
-      subscription.staleAfterMs = staleFloorMs
-      yield* Scope.addFinalizer(subScope, Effect.sync(() => {
-        if (subscription.runScope === subScope) subscription.runScope = null
-      }))
+      if (closed || !subscriptions.has(subscription) || subscription.runScope !== null || subscription.starting) return
+      subscription.starting = true
+      try {
+        const subScope = yield* Scope.fork(session.scope)
+        subscription.runScope = subScope
+        subscription.lastValueAt = Date.now()
+        subscription.staleAfterMs = staleFloorMs
+        yield* Scope.addFinalizer(subScope, Effect.sync(() => {
+          if (subscription.runScope === subScope) subscription.runScope = null
+        }))
 
-      const pump = yield* Effect.forkIn(
-        subscription.streamFor(session.client).pipe(
-          Stream.runForEach((value) =>
-            Effect.sync(() => {
-              subscription.lastValueAt = Date.now()
-              if (subscription.staleAfterFor) subscription.staleAfterMs = subscription.staleAfterFor(value)
-              try { subscription.onValue(value) } catch (error) { reportSubscriberError(error) }
-            }),
+        const pump = yield* Effect.forkIn(
+          subscription.streamFor(session.client).pipe(
+            Stream.runForEach((value) =>
+              Effect.sync(() => {
+                subscription.lastValueAt = Date.now()
+                if (subscription.staleAfterFor) subscription.staleAfterMs = subscription.staleAfterFor(value)
+                try { subscription.onValue(value) } catch (error) { reportSubscriberError(error) }
+              }),
+            ),
           ),
-        ),
-        subScope,
-      )
-      pump.addObserver((exit) => {
-        if (closed || !subscriptions.has(subscription)) return
-        if (Exit.isSuccess(exit)) {
-          session.kill('reconnecting')
-          return
-        }
-        // An interrupt is scope teardown, never a transport failure.
-        if (Cause.hasInterruptsOnly(exit.cause)) return
-        session.kill('error', Cause.squash(exit.cause))
-      })
+          subScope,
+        )
+        pump.addObserver((exit) => {
+          if (closed || !subscriptions.has(subscription)) return
+          if (Exit.isSuccess(exit)) {
+            session.kill('reconnecting')
+            return
+          }
+          // An interrupt is scope teardown, never a transport failure.
+          if (Cause.hasInterruptsOnly(exit.cause)) return
+          session.kill('error', Cause.squash(exit.cause))
+        })
 
-      if (subscription.staleAfterFor) yield* Effect.forkIn(watchdog(subscription, session), subScope)
+        if (subscription.staleAfterFor) yield* Effect.forkIn(watchdog(subscription, session), subScope)
+      } finally {
+        subscription.starting = false
+      }
     })
 
   const startAllSubscriptions = (session: Session): Effect.Effect<void> =>
@@ -445,7 +461,11 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       && (attemptBudget === undefined || attemptsUsed < attemptBudget),
     ),
     Schedule.modifyDelay(() => {
-      const delayMs = Math.min(RECONNECT_MAX_DELAY_MS, reconnectBaseDelayMs * 1.5 ** attemptsUsed)
+      // Upward jitter: many clients dropped by the same daemon restart must not
+      // redial in lockstep on identical exponential rungs. The rung is a floor
+      // (callers rely on "at least one full backoff"), so spread goes above it.
+      const rung = Math.min(RECONNECT_MAX_DELAY_MS, reconnectBaseDelayMs * 1.5 ** attemptsUsed)
+      const delayMs = rung * (1 + Math.random() * 0.25)
       attemptsUsed += 1
       return preemptibleDelay(delayMs)
     }),
@@ -516,6 +536,17 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
           if (Cause.hasInterrupts(cause)) return rethrowCause(cause)
           const defect = cause.reasons.find(Cause.isDieReason)?.defect
           if (defect !== undefined) console.error('[tokmon] daemon RPC supervisor defect', defect)
+          // The ladder gave up with demand still live. Connect failures emit
+          // 'error' themselves, but a session that connected then died leaves
+          // 'reconnecting' as the last emission — and a budgeted embedder
+          // (desktop) only schedules its outer retry on 'error'. Without this,
+          // budget exhaustion after a dropped session parks the client silently.
+          if (!closed && subscriptions.size > 0 && attemptBudget !== undefined && attemptsUsed >= attemptBudget) {
+            const end = cause.reasons.find(Cause.isFailReason)?.error as CycleEnd | undefined
+            if (end?._tag === 'session-ended') {
+              setConn('error', new DaemonRpcConnectionError('daemon RPC reconnect budget exhausted'))
+            }
+          }
           return Effect.void
         }),
       )
@@ -535,6 +566,7 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       onValue,
       staleAfterFor,
       runScope: null,
+      starting: false,
       lastValueAt: 0,
       staleAfterMs: staleFloorMs,
     }
@@ -581,7 +613,13 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
 
     subscribeSnapshot: (onSnapshot) =>
       subscribe(
-        client => client[TOKMON_WS_METHODS.snapshot]({}).pipe(Stream.map(materializeWebSnapshot)),
+        // A fresh decoder per session attempt: every reconnect starts with an
+        // `init` frame, and a desync throw fails the pump, which kills the
+        // session and redials into a clean init — self-healing by design.
+        client => Stream.suspend(() => {
+          const decoder = createSnapshotDeltaDecoder()
+          return client[TOKMON_WS_METHODS.snapshot]({}).pipe(Stream.map(event => decoder.apply(event)))
+        }),
         onSnapshot,
         snapshot => Math.max(staleFloorMs, snapshot.intervalMs * 3),
       ),
@@ -591,6 +629,20 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
         client => client[TOKMON_WS_METHODS.config]({}).pipe(Stream.map(normalizeConfigState)),
         onConfig,
       ),
+
+    reconnectNow() {
+      if (closed) return
+      attemptsUsed = 0
+      if (connSlot._tag === 'live') {
+        // kill() tears the session down; the supervisor's retry ladder then
+        // redials on the first (zeroed) rung.
+        connSlot.session.kill('reconnecting')
+        return
+      }
+      // Connecting: collapse the current backoff rung. Idle with demand: start.
+      if (subscriptions.size > 0) requestConnect()
+      Latch.openUnsafe(gate)
+    },
 
     async close() {
       if (closed) return

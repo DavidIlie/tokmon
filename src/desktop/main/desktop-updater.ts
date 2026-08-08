@@ -3,7 +3,9 @@ import type { DesktopUpdateState } from '../shared/desktop-contract'
 export const INITIAL_UPDATE_DELAY_MS = 10_000
 export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1_000
 export const UPDATE_DOWNLOAD_WATCHDOG_MS = 10 * 60 * 1_000
+export const UPDATE_CHECK_WATCHDOG_MS = 3 * 60 * 1_000
 export const UPDATE_DOWNLOAD_STALLED_MESSAGE = 'Update download made no progress for 10 minutes. Check your connection and retry, or choose Download Latest for the installer.'
+export const UPDATE_CHECK_STALLED_MESSAGE = 'The update check did not respond for 3 minutes. Check your connection, then choose Check for Updates to retry.'
 
 type UpdaterListener = (...args: any[]) => void
 type TimerHandle = ReturnType<typeof setTimeout>
@@ -86,6 +88,7 @@ export class DesktopUpdaterController {
   private deferredDownloadSettled = false
   private readyBeforeCheck: DesktopUpdateState | null = null
   private installPreparation: Promise<boolean> | null = null
+  private activeCancellationToken: UpdateCancellationToken | null = null
   private readonly terminalWaiters = new Set<(state: DesktopUpdateState | null) => void>()
 
   constructor(private readonly options: DesktopUpdaterControllerOptions) {
@@ -223,6 +226,7 @@ export class DesktopUpdaterController {
     const check = (async () => {
       try {
         const result = await this.options.updater.checkForUpdates()
+        this.activeCancellationToken = cancellationTokenOf(result)
         const downloadPromise = downloadPromiseOf(result)
         if (downloadPromise) await downloadPromise
         if (this.isCurrentCheck(generation, attempt)) {
@@ -237,9 +241,14 @@ export class DesktopUpdaterController {
         }
       } catch (error) {
         if (this.isCurrentCheck(generation, attempt)) {
+          const readyBeforeCheck = this.readyBeforeCheck
           this.readyBeforeCheck = null
           this.clearDeferredDownload(attempt)
-          this.fail(error)
+          // A prepareInstall preflight that fails on a transient network error
+          // must not destroy the fully staged download it was re-validating —
+          // offline users could no longer install what they already have.
+          if (readyBeforeCheck && allowDownloaded) this.publish(readyBeforeCheck)
+          else this.fail(error)
         }
       } finally {
         if (this.isCurrentCheck(generation, attempt)) {
@@ -301,6 +310,7 @@ export class DesktopUpdaterController {
     this.intervalTimer = null
     this.inFlight = null
     this.installPreparation = null
+    this.activeCancellationToken = null
     this.deferredDownloadAttempt = null
     this.deferredDownloadedInfo = null
     this.deferredDownloadSettled = false
@@ -315,8 +325,13 @@ export class DesktopUpdaterController {
   private publish(patch: DesktopUpdateState | Partial<DesktopUpdateState>): void {
     if (!this.started) return
     this.stateValue = { ...this.stateValue, ...patch }
+    // 'checking' needs a watchdog too: a hung feed request otherwise leaves the
+    // updater in 'checking' forever — runCheck() refuses to start a new cycle
+    // while one is in flight, so the updater is bricked until app restart.
     if (this.stateValue.status === 'available' || this.stateValue.status === 'downloading') {
-      this.armDownloadWatchdog()
+      this.armWatchdog(this.downloadWatchdogMs, UPDATE_DOWNLOAD_STALLED_MESSAGE)
+    } else if (this.stateValue.status === 'checking') {
+      this.armWatchdog(UPDATE_CHECK_WATCHDOG_MS, UPDATE_CHECK_STALLED_MESSAGE)
     } else {
       this.clearDownloadWatchdog()
     }
@@ -324,15 +339,16 @@ export class DesktopUpdaterController {
     for (const waiter of this.terminalWaiters) waiter(this.stateValue)
   }
 
-  private armDownloadWatchdog(): void {
+  private armWatchdog(delayMs: number, message: string): void {
     this.clearDownloadWatchdog()
+    const guarded = this.stateValue.status
     this.downloadWatchdogTimer = this.scheduler.setTimeout(() => {
       this.downloadWatchdogTimer = null
       if (!this.started) return
-      if (this.stateValue.status !== 'available' && this.stateValue.status !== 'downloading') return
+      if (this.stateValue.status !== guarded) return
       this.abandonCheck()
-      this.fail(new Error(UPDATE_DOWNLOAD_STALLED_MESSAGE))
-    }, this.downloadWatchdogMs)
+      this.fail(new Error(message))
+    }, delayMs)
     this.downloadWatchdogTimer.unref?.()
   }
 
@@ -349,6 +365,11 @@ export class DesktopUpdaterController {
     this.deferredDownloadedInfo = null
     this.deferredDownloadSettled = false
     this.readyBeforeCheck = null
+    // Abandoning without cancelling leaves electron-updater awaiting the same
+    // dead transfer; the next check would silently re-join it and stall again.
+    const token = this.activeCancellationToken
+    this.activeCancellationToken = null
+    if (token) try { token.cancel() } catch {}
   }
 
   private publishDownloadedIfReady(): void {
@@ -410,6 +431,16 @@ function downloadPromiseOf(result: unknown): Promise<unknown> | null {
   if (typeof result !== 'object' || result === null || !('downloadPromise' in result)) return null
   const downloadPromise = (result as { downloadPromise?: unknown }).downloadPromise
   return isPromiseLike(downloadPromise) ? Promise.resolve(downloadPromise) : null
+}
+
+interface UpdateCancellationToken { cancel(): void }
+
+function cancellationTokenOf(result: unknown): UpdateCancellationToken | null {
+  if (typeof result !== 'object' || result === null || !('cancellationToken' in result)) return null
+  const token = (result as { cancellationToken?: unknown }).cancellationToken
+  return typeof token === 'object' && token !== null && typeof (token as { cancel?: unknown }).cancel === 'function'
+    ? token as UpdateCancellationToken
+    : null
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {

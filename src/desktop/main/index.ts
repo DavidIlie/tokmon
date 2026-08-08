@@ -1,4 +1,4 @@
-import { app, Menu, nativeImage, nativeTheme, screen, shell, Tray, type MenuItemConstructorOptions } from 'electron'
+import { app, Menu, nativeImage, nativeTheme, powerMonitor, screen, shell, Tray, type MenuItemConstructorOptions } from 'electron'
 import updaterPackage from 'electron-updater'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -35,7 +35,7 @@ import {
   staleAgeLabel,
 } from '../shared/presentation'
 import type { HeadroomView, WebAccount, WebSnapshot } from '../../web/contract'
-import type { DesktopUpdateState } from '../shared/desktop-contract'
+import { DESKTOP_DOWNLOAD_URL, type DesktopUpdateState } from '../shared/desktop-contract'
 
 /** Unified critical band (≤10%), shared by strip, gauge, tooltip and popover. */
 function isCritical(remaining: number | null): boolean {
@@ -96,6 +96,10 @@ let daemon: DaemonController | null = null
 let rpc: DaemonRpcClient | null = null
 let closing = false
 let nativeUpdateQuitAllowed = false
+// Module-scope anchor: a Tray held only by a function scope is eligible for GC,
+// and a collected Tray silently disappears from the menu bar — the classic
+// Electron "app just vanished" failure for tray-only apps.
+let trayRef: Tray | null = null
 const runtimeDir = path.dirname(fileURLToPath(import.meta.url))
 const { autoUpdater } = updaterPackage
 const UPDATE_INSTALL_HANDOFF_TIMEOUT_MS = 2 * 60 * 1_000
@@ -116,6 +120,16 @@ if (channel === 'dev') {
 }
 const ownsInstanceLock = app.requestSingleInstanceLock()
 if (!ownsInstanceLock) app.quit()
+
+// A tray app has no window to re-open: any uncaught defect that takes down the
+// main process looks like Tokmon "just shut off". Background refresh and
+// updater failures are recoverable — log them, keep the status item alive.
+process.on('uncaughtException', error => {
+  console.error('[tokmon] uncaught exception in desktop main', error)
+})
+process.on('unhandledRejection', reason => {
+  console.error('[tokmon] unhandled rejection in desktop main', reason)
+})
 
 async function bootstrap(): Promise<void> {
   if (process.platform === 'win32') app.setAppUserModelId(
@@ -168,6 +182,7 @@ async function bootstrap(): Promise<void> {
   // A dev shell may run beside the installed release app. Separate status-item
   // identities prevent macOS from assigning both processes the same saved slot.
   const tray = new Tray(createTrayIcon(null, false), channel === 'dev' ? DEV_TRAY_GUID : RELEASE_TRAY_GUID)
+  trayRef = tray
   tray.setToolTip(`${identity.appName} — connecting to daemon`)
   if (process.platform === 'darwin') tray.setTitle('')
   const popover = createPopoverWindow(tray, rendererUrl, initialTheme.tokens.chrome)
@@ -530,10 +545,35 @@ async function bootstrap(): Promise<void> {
                 : current.update.status === 'error'
                   ? { label: 'Update Failed — Check Again', click: () => void updater.checkForUpdates() }
                   : { label: 'Check for Updates', click: () => void updater.checkForUpdates() },
+      // The stalled-download message tells users to "choose Download Latest";
+      // the popover has that button, the tray path must offer it too.
+      ...current.update.status === 'error'
+        ? [{ label: 'Download Latest…', click: () => { void shell.openExternal(DESKTOP_DOWNLOAD_URL) } }]
+        : [],
       { type: 'separator' },
       { label: 'Quit Tokmon', click: () => app.quit() },
     ]
     tray.popUpContextMenu(Menu.buildFromTemplate(template))
+  })
+
+  // Wake-from-sleep leaves the RPC socket half-open: the daemon may also have
+  // been retired/updated while suspended. Redial immediately instead of waiting
+  // for the 90s stale-snapshot watchdog to notice.
+  const onResume = () => {
+    if (closing) return
+    if (rpc) rpc.reconnectNow()
+    else void connectDaemon(true)
+  }
+  powerMonitor.on('resume', onResume)
+  if (process.platform === 'darwin') powerMonitor.on('unlock-screen', onResume)
+
+  // A crashed/killed renderer leaves an empty popover and a stale tray strip
+  // with no path back. Reload once per crash; repeated crashes surface in logs.
+  popover.window.webContents.on('render-process-gone', (_event, details) => {
+    if (closing || details.reason === 'clean-exit') return
+    console.error('[tokmon] renderer process gone', details.reason)
+    trayStrip.reset()
+    popover.window.webContents.reload()
   })
 
   if (process.env.TOKMON_DESKTOP_SHOW_ON_START === '1') popover.show()
@@ -552,6 +592,11 @@ async function bootstrap(): Promise<void> {
     if (popover.window.webContents.isLoading()) popover.window.webContents.once('did-finish-load', capture)
     else capture()
   }
+
+  // Electron's default window-all-closed behavior quits the app on
+  // Windows/Linux. The popover normally hides instead of closing, but a
+  // destroyed window (crash, display teardown) must not take the tray with it.
+  app.on('window-all-closed', () => {})
 
   app.on('second-instance', () => popover.show())
   app.on('before-quit', event => {
@@ -581,6 +626,7 @@ async function bootstrap(): Promise<void> {
     })
   })
   app.on('will-quit', () => {
+    trayRef = null
     clearInstallTimers()
     nativeTheme.removeListener('updated', onNativeThemeUpdated)
     screen.removeListener('display-metrics-changed', onDisplayMetricsChanged)
@@ -594,7 +640,10 @@ async function bootstrap(): Promise<void> {
 if (ownsInstanceLock) {
   void bootstrap().catch(error => {
     // Native-shell failures are exceptional; daemon acquisition is handled
-    // inside bootstrap and never reaches this path.
+    // inside bootstrap and never reaches this path. A shell that failed before
+    // its Tray exists has no UI at all — exiting beats an invisible process
+    // the user can only find in a process manager.
     console.error('[tokmon] desktop shell startup failed', error)
+    app.exit(1)
   })
 }

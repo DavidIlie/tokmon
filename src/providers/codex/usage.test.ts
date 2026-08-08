@@ -5,6 +5,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { codexPriceFor, codexTable } from './usage'
 
+test('Codex priority service tier doubles every token class', () => {
+  const standard = codexPriceFor('gpt-5.6-sol')
+  assert.deepEqual(codexPriceFor('gpt-5.6-sol', 'priority'), {
+    in: standard.in * 2, cr: standard.cr * 2, out: standard.out * 2,
+  })
+  assert.deepEqual(codexPriceFor('gpt-5.6-sol', 'default'), standard)
+  assert.deepEqual(codexPriceFor('gpt-5.6-sol', undefined), standard)
+})
+
 test('Codex pricing matches current short-context standard rates', () => {
   assert.deepEqual(codexPriceFor('gpt-5.6-sol'), { in: 5e-6, cr: 0.5e-6, out: 30e-6 })
   assert.deepEqual(codexPriceFor('gpt-5.6-terra'), { in: 2.5e-6, cr: 0.25e-6, out: 15e-6 })

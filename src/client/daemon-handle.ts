@@ -12,6 +12,7 @@ import {
   type LockfileOptions,
 } from '../web/lockfile'
 import { daemonChannelFromWire, resolveDaemonChannel, type DaemonChannel } from '../web/daemon-channel'
+import { appVersion } from '../web/static'
 import {
   classifyDaemonCompatibility,
   daemonConflictMessage,
@@ -146,12 +147,15 @@ async function arbitrateIncompatibleOwner(
   const owner = readForeignLock(opts)
   if (!owner || !isAlive(owner.pid)) return { retired: false, issue: null }
   const decision = classifyDaemonCompatibility(owner, protocolVersion)
+  // Post-wake or under load a healthy daemon can exceed 500ms; a failed probe
+  // here surfaces as a hard "could not be verified" error, so give the owner a
+  // real budget before declaring it unverifiable.
   const verified = await probeHealth(owner.url, owner.wsToken, {
     channel: owner.channel,
     ...(owner.ownerKind ? { ownerKind: owner.ownerKind } : {}),
     ...(owner.protocolVersion === undefined ? {} : { protocolVersion: owner.protocolVersion }),
     ...(owner.version ? { version: owner.version } : {}),
-  }, Math.min(500, timeoutMs))
+  }, Math.min(2_000, timeoutMs))
   if (!verified) {
     return {
       retired: false,
@@ -176,6 +180,19 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
   const baseEnv = opts.env ?? process.env
   const channel = resolveDaemonChannel(opts.channel, baseEnv)
   const lockOpts: LockfileOptions = { cachePath: opts.cachePath, channel }
+
+  // Same-protocol daemons from an older app release keep serving stale parsers
+  // and pricing tables until something replaces them. Try a graceful upgrade
+  // first; on any failure attach as before — stale data beats no data.
+  const staleCandidate = readLock(lockOpts)
+  if (
+    staleCandidate
+    && classifyDaemonCompatibility(staleCandidate, protocolVersion, appVersion()).action === 'retire'
+    && staleCandidate.protocolVersion === protocolVersion
+  ) {
+    await retireIncompatibleCliOwner(lockOpts, protocolVersion, timeoutMs, appVersion()).catch(() => false)
+  }
+
   const existing = await attach(lockOpts, protocolVersion)
   if (existing) return existing
 

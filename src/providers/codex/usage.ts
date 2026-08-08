@@ -10,6 +10,10 @@ import { makePriceResolver } from '../_shared/pricing'
 import { timestampMs } from '../_shared/time'
 
 const PRICING: Record<string, { in: number; cr: number; out: number }> = {
+  // Bare 'gpt-5.6' (no tier suffix) appears in real session logs; without an
+  // explicit key it drifted to the flagship fallback, which happened to match
+  // today but silently breaks the moment either price moves.
+  'gpt-5.6': { in: 5e-6, cr: 0.5e-6, out: 30e-6 },
   'gpt-5.6-terra': { in: 2.5e-6, cr: 0.25e-6, out: 15e-6 },
   'gpt-5.6-luna': { in: 1e-6, cr: 0.1e-6, out: 6e-6 },
   'gpt-5.6-sol': { in: 5e-6, cr: 0.5e-6, out: 30e-6 },
@@ -56,8 +60,15 @@ export async function detectCodex(homeDir?: string): Promise<boolean> {
   return false
 }
 
-export function codexPriceFor(model: string) {
-  return resolvePrice(model)
+// Priority processing (`service_tier: "priority"`, Codex's fast lane) bills at
+// a flat multiplier over standard rates for the gpt-5 family. Sessions record
+// tier changes in thread_settings_applied events, not per token_count.
+const PRIORITY_TIER_MULTIPLIER = 2
+
+export function codexPriceFor(model: string, serviceTier?: string) {
+  const base = resolvePrice(model)
+  if (serviceTier !== 'priority') return base
+  return { in: base.in * PRIORITY_TIER_MULTIPLIER, cr: base.cr * PRIORITY_TIER_MULTIPLIER, out: base.out * PRIORITY_TIER_MULTIPLIER }
 }
 
 function extractModel(obj: any): string | null {
@@ -174,6 +185,7 @@ function findTimestamp(obj: any): number | null {
 async function parseFile(path: string): Promise<Entry[]> {
   const entries: Entry[] = []
   let model = 'gpt-5'
+  let serviceTier: string | undefined
   let prevTotal: CodexDelta | null = null
   let prevSig: string | null = null
   let skipReplay = await hasForkedHistory(path)
@@ -181,6 +193,7 @@ async function parseFile(path: string): Promise<Entry[]> {
     line.includes('token_count')
     || line.includes('task_started')
     || line.includes('turn_context')
+    || line.includes('thread_settings')
     || line.includes('"usage"')
     || line.includes('input_tokens')
     || line.includes('prompt_tokens')
@@ -196,6 +209,11 @@ async function parseFile(path: string): Promise<Entry[]> {
         if (typeof m === 'string' && m.trim()) model = m
         continue
       }
+      if (payloadType === 'thread_settings_applied') {
+        const tier = obj?.payload?.thread_settings?.service_tier
+        if (typeof tier === 'string') serviceTier = tier
+        continue
+      }
       if (payloadType !== 'token_count') {
         const usage = findUsage(obj)
         if (!usage) continue
@@ -208,11 +226,11 @@ async function parseFile(path: string): Promise<Entry[]> {
         const inputTokens = inputTotal - cached
         const output = safeNum(usage.output_tokens)
         if (inputTokens + output + cached === 0) continue
-        const p = codexPriceFor(model)
+        const p = codexPriceFor(model, serviceTier)
         entries.push({
           id: `${ts}|${model}|${inputTotal}|${cached}|${output}|${safeNum(usage.reasoning_output_tokens)}|${safeNum(usage.total_tokens)}`,
           ts,
-          model,
+          model: serviceTier === 'priority' ? `${model} (priority)` : model,
           cost: inputTokens * p.in + cached * p.cr + output * p.out,
           input: inputTokens,
           output,
@@ -251,11 +269,11 @@ async function parseFile(path: string): Promise<Entry[]> {
       const output = safeNum(d.output_tokens)
       if (inputTokens + output + cached === 0) continue
 
-      const p = codexPriceFor(model)
+      const p = codexPriceFor(model, serviceTier)
       entries.push({
         id: `${ts}|${model}|${inputTotal}|${cached}|${output}|${safeNum(d.reasoning_output_tokens)}|${safeNum(d.total_tokens)}`,
         ts,
-        model,
+        model: serviceTier === 'priority' ? `${model} (priority)` : model,
         cost: inputTokens * p.in + cached * p.cr + output * p.out,
         input: inputTokens,
         output,

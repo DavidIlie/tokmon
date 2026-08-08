@@ -49,9 +49,12 @@ export function createPopoverWindow(tray: Tray, rendererUrl: string, initialBack
     maximizable: false,
     webPreferences: {
       preload: path.join(runtimeDir, 'preload.cjs'),
-      // The hidden renderer paints the composed two-provider macOS status item.
-      // Throttling it while the popover is closed would leave the tray stale.
-      backgroundThrottling: false,
+      // The hidden renderer paints the composed two-provider macOS status item,
+      // so on macOS throttling it while the popover is closed would leave the
+      // tray stale. Windows/Linux never consume renderer strip paints (see
+      // onTrayStrip), so their hidden renderer can throttle to ~1fps and stop
+      // burning CPU/RAM on invisible work.
+      backgroundThrottling: !mac,
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,

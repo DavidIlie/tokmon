@@ -428,7 +428,14 @@ export async function verifyLock(
   timeoutMs?: number,
 ): Promise<DaemonLock | null> {
   if (!lock || lock.state !== 'ready' || lock.protocolVersion !== protocolVersion || !isAlive(lock.pid)) return null
-  return await probeHealth(lock.url, lock.wsToken, lock, timeoutMs) ? lock : null
+  if (await probeHealth(lock.url, lock.wsToken, lock, timeoutMs)) return lock
+  // One immediate wider retry, but only for default-budget callers (attach and
+  // discovery). A live daemon can miss the first 500ms probe right after system
+  // wake or while its event loop is busy parsing logs; treating that as dead
+  // cascades into "failed to connect" and takeover attempts against a healthy
+  // owner. Pollers that pass an explicit budget (waitForOwner) keep tight loops.
+  if (timeoutMs !== undefined) return null
+  return await probeHealth(lock.url, lock.wsToken, lock, 2_000) ? lock : null
 }
 
 const TAKEOVER_TIMEOUT_MS = 5_000
@@ -449,12 +456,10 @@ export async function retireIncompatibleCliOwner(
   opts: LockfileOptions,
   protocolVersion: number,
   timeoutMs = TAKEOVER_TIMEOUT_MS,
+  clientVersion?: string,
 ): Promise<boolean> {
-  const compatible = readLock(opts)
-  if (compatible?.protocolVersion === protocolVersion) return false
-
   const foreign = readForeignLock(opts)
-  const decision = foreign && classifyDaemonCompatibility(foreign, protocolVersion)
+  const decision = foreign && classifyDaemonCompatibility(foreign, protocolVersion, clientVersion)
   if (
     !foreign || foreign.state !== 'ready' || decision?.action !== 'retire' ||
     foreign.pid === process.pid || !isAlive(foreign.pid)
@@ -467,6 +472,9 @@ export async function retireIncompatibleCliOwner(
     (decision.reason === 'legacy-cli'
       ? health.ownerKind !== undefined || health.protocolVersion !== undefined
       : health.ownerKind !== 'cli' || health.protocolVersion !== foreign.protocolVersion) ||
+    // A stale-version takeover must be retiring exactly the version it judged
+    // stale; a mismatch means the owner changed underneath and wins the race.
+    (decision.reason === 'stale-version-cli' && health.version !== foreign.version) ||
     healthChannel !== foreign.channel
   ) return false
 

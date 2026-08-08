@@ -159,7 +159,9 @@ export function assembleSnapshot(opts: {
     tz: opts.tz,
     intervalMs: opts.intervalMs,
     billingIntervalMs: opts.billingIntervalMs,
-    installedProviders: opts.installedProviders,
+    // Conditional like suppressedAccounts below: optionalKey wire fields must
+    // be absent, never present-with-undefined, or Schema.encode rejects them.
+    ...(opts.installedProviders ? { installedProviders: opts.installedProviders } : {}),
     providers,
     accounts,
     // Omitted rather than empty when the resolution did not report liveness, so

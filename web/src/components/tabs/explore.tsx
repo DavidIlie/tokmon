@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useMemo, useState } from 'react'
 import type { WebSnapshot } from '@shared'
 import { deriveModelSpotlight, exploreRows, selectAccounts, type Filters, type Granularity } from '../../lib/derive'
 import { privacyText } from '../privacy-label'
@@ -21,6 +21,9 @@ export function ExploreTab({ snapshot, filters, periodLabel, privacyMode }: {
   privacyMode: boolean
 }) {
   const [query, setQuery] = useState('')
+  // Keep the input synchronous but let the table re-filter at deferred priority,
+  // so typing stays responsive on large histories.
+  const deferredQuery = useDeferredValue(query)
   const [granularity, setGranularity] = useState<Granularity>('daily')
   const openShare = useShare()
   const selectedModel = filters.models.length === 1 ? filters.models[0] : null
@@ -94,7 +97,7 @@ export function ExploreTab({ snapshot, filters, periodLabel, privacyMode }: {
           ) : null}
         </div>
       </div>
-      <ExploreTable rows={rows} granLabel={granularity} q={query} />
+      <ExploreTable rows={rows} granLabel={granularity} q={deferredQuery} />
     </div>
   )
 }

@@ -279,7 +279,10 @@ async function newestRolloutFiles(homeDir?: string): Promise<{ path: string; mti
         if (!entry.isFile() || !entry.name.endsWith('.jsonl') || !entry.name.includes('rollout-')) continue
         try {
           const s = await fsStat(path)
-          all.push({ path, mtime: s.mtimeMs })
+          // Floored: mtimeMs is fractional, and asOfMs crosses the RPC boundary
+          // whose wire schema requires an integer — a fraction would fail the
+          // snapshot encode for every subscriber, not just this account.
+          all.push({ path, mtime: Math.floor(s.mtimeMs) })
         } catch {}
         if (visitedFiles >= MAX_SNAPSHOT_SCAN_FILES) break
       }

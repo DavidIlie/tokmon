@@ -25,6 +25,7 @@ import {
   toConfigState,
 } from './config-control'
 import type { DataEngine } from './data-engine'
+import { createSnapshotDeltaEncoder } from './snapshot-delta'
 import { listHomeDirectory } from './fs'
 import { isAllowedLocalRequest } from './request-guard'
 
@@ -55,7 +56,7 @@ function rejectUpgrade(socket: Duplex, status = 403, message = 'Forbidden'): voi
 }
 
 function snapshotStream(engine: DataEngine) {
-  return Stream.callback<ReturnType<DataEngine['snapshot']> extends infer S ? NonNullable<S> : never>((queue) =>
+  const raw = Stream.callback<ReturnType<DataEngine['snapshot']> extends infer S ? NonNullable<S> : never>((queue) =>
     Effect.gen(function* () {
       const scope = yield* Scope.Scope
       const unsubscribe = engine.subscribe((snapshot) => {
@@ -63,6 +64,13 @@ function snapshotStream(engine: DataEngine) {
       })
       yield* Scope.addFinalizer(scope, Effect.sync(unsubscribe))
     }), { bufferSize: 16, strategy: 'sliding' })
+  // One encoder per stream, applied downstream of the sliding buffer: a delta
+  // is always relative to the previous frame this client actually dequeued,
+  // so slow consumers that drop intermediate snapshots can never desync.
+  return Stream.suspend(() => {
+    const encoder = createSnapshotDeltaEncoder()
+    return raw.pipe(Stream.map((snapshot) => encoder.next(snapshot)))
+  })
 }
 
 function configStream(engine: DataEngine) {
@@ -153,9 +161,52 @@ function readEffect<A, E>(
       }))
 }
 
+/** Interval for server-initiated pings; a peer missing one full interval is half-open. */
+export const WS_HEARTBEAT_INTERVAL_MS = 30_000
+
+interface HeartbeatSocket {
+  isAlive?: boolean
+  ping(): void
+  terminate(): void
+  on(event: 'pong', listener: () => void): void
+}
+
+/**
+ * A laptop sleeping mid-session leaves the daemon holding half-open sockets that
+ * never error and never close: the peer's TCP stack is gone but ours still counts
+ * the client as live, keeping idle-pause off and streams pumping into the void.
+ * Standard ws heartbeat — mark, ping, reap on the next tick if no pong came back.
+ *
+ * Pong listeners are attached lazily off `clients`: under noServer upgrades the
+ * Effect handler adopts sockets without ever emitting `connection`, so an
+ * on('connection') hook would never fire and the reaper would kill live peers.
+ */
+function startHeartbeat(wss: { clients: Set<unknown> }): () => void {
+  const seen = new WeakSet<object>()
+  const timer = setInterval(() => {
+    for (const client of wss.clients) {
+      const socket = client as HeartbeatSocket
+      if (!seen.has(socket)) {
+        seen.add(socket)
+        socket.isAlive = true
+        try { socket.on('pong', () => { socket.isAlive = true }) } catch { continue }
+      }
+      if (socket.isAlive === false) {
+        try { socket.terminate() } catch {}
+        continue
+      }
+      socket.isAlive = false
+      try { socket.ping() } catch {}
+    }
+  }, WS_HEARTBEAT_INTERVAL_MS)
+  timer.unref?.()
+  return () => clearInterval(timer)
+}
+
 export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<() => Promise<void>> {
   const scope = await Effect.runPromise(Scope.make())
   const wss = new NodeWS.WebSocketServer({ noServer: true })
+  const stopHeartbeat = startHeartbeat(wss as never)
 
   const handlersLayer = TokmonRpcGroup.toLayer(
     TokmonRpcGroup.of({
@@ -222,6 +273,7 @@ export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<
   server.prependListener('upgrade', onUpgrade)
 
   return async () => {
+    stopHeartbeat()
     server.off('upgrade', onUpgrade)
     // ws.close waits for peers to close voluntarily; a browser with a suspended tab
     // must not keep the daemon alive forever.

@@ -174,6 +174,7 @@ export function TrayStripPainter({ snapshot, config, pins, platform, update, dis
   const canvas1x = useRef<HTMLCanvasElement>(null)
   const canvas2x = useRef<HTMLCanvasElement>(null)
   const valueMemory = useRef<Map<string, RetainedMenuBarValue>>(new Map())
+  const lastPaintKey = useRef<string | null>(null)
   const menuBarDependency = JSON.stringify(config.tray.menuBar)
   const effectiveDisplayWidth = displayWidthPt ?? window.screen.availWidth
   useEffect(() => {
@@ -195,6 +196,13 @@ export function TrayStripPainter({ snapshot, config, pins, platform, update, dis
       const updateReady = update.status === 'downloaded'
       const plan = measuredPlan(values, config.tray.menuBar, effectiveDisplayWidth)
       if (!plan) return
+      // Every snapshot delivery lands here, but the strip's pixels only depend
+      // on the displayed values. Re-encoding two PNGs and shipping them over
+      // IPC each ~30s tick with identical content is pure churn — the tray
+      // keeps the last accepted image, so an unchanged paint can be skipped.
+      const paintKey = JSON.stringify([values, config.tray.menuBar, config.tray.menuBarValue, effectiveDisplayWidth, updateReady, pins])
+      if (paintKey === lastPaintKey.current) return
+      lastPaintKey.current = paintKey
       const logicalWidth = paintMenuBarStrip(canvas1, 1, plan)
       paintMenuBarStrip(canvas2, 2, plan)
       void window.tokmon.sendTrayStrip({

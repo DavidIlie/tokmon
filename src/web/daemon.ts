@@ -1,6 +1,8 @@
 import { acquireOrAttachDaemon, type DaemonController } from './daemon-controller'
 import { openBrowser } from './open'
-import { unlinkLock, type DaemonLock } from './lockfile'
+import { readLock, unlinkLock, type DaemonLock } from './lockfile'
+
+const LOCK_SELF_CHECK_INTERVAL_MS = 30_000
 
 interface DaemonArgs { port?: number; open: boolean; help: boolean }
 
@@ -92,6 +94,18 @@ export async function runDaemon(args: string[], opts: RunDaemonOptions): Promise
   process.once('exit', () => { unlinkLock(daemon.lock.ownerId) })
   process.once('SIGINT', () => { void shutdown(0) })
   process.once('SIGTERM', () => { void shutdown(0) })
+
+  // Reclaim paths can unlink this daemon's lock while it is merely slow (e.g.
+  // right after wake) rather than dead. Without a self-check the orphan keeps
+  // running unowned forever, holding its port and burning refresh cycles
+  // beside the replacement daemon. Eventual consistency: notice and exit.
+  const selfCheck = setInterval(() => {
+    const current = readLock()
+    if (current?.ownerId === daemon.lock.ownerId && current.pid === process.pid) return
+    if (opts.foreground) process.stdout.write('\n  daemon lock lost or replaced — shutting down\n')
+    void shutdown(0)
+  }, LOCK_SELF_CHECK_INTERVAL_MS)
+  selfCheck.unref?.()
 
   if (opts.foreground) {
     process.stdout.write(`\n  ◆ tokmon web  →  ${daemon.baseUrl}\n`)

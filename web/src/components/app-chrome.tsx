@@ -1,20 +1,11 @@
-import { useEffect, useState } from 'react'
 import type { WebSnapshot } from '@shared'
 import { fmtAgo, fmtResetAt } from '../lib/format'
+import { useNow } from '../lib/use-now'
 import type { ConnState } from '../lib/use-snapshot'
 import { Moon, Refresh, Settings, Sun } from './icons'
 import { FOCUS_RING } from './ui/primitives'
 
 export type RefreshPhase = 'idle' | 'refreshing' | 'success' | 'error'
-
-function useNow(intervalMs = 1000): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), intervalMs)
-    return () => clearInterval(id)
-  }, [intervalMs])
-  return now
-}
 
 export function ThemeToggle({ mode, resolvedMode, disabled, onToggle }: {
   mode: 'auto' | 'dark' | 'light'
@@ -117,15 +108,16 @@ export function PeakStatusBadge({ peak, resetDisplay, tz }: {
   resetDisplay: 'relative' | 'absolute'
   tz: string
 }) {
+  const now = useNow(30_000)
   const color = peak.state === 'peak' ? 'var(--color-warning)' : 'var(--color-positive)'
   const changesAt = peak.changesAt ?? (peak.minutesUntilChange != null
-    ? new Date(Date.now() + peak.minutesUntilChange * 60_000).toISOString()
+    ? new Date(now + peak.minutesUntilChange * 60_000).toISOString()
     : null)
   return (
     <span className="hidden items-center gap-1 text-xs text-fg-dim lg:flex">
       <span aria-hidden style={{ color }}>●</span>
       <span style={{ color }}>{peak.label}</span>
-      {changesAt && <span className="tnum text-fg-faint">({fmtResetAt(changesAt, resetDisplay, Date.now(), tz)})</span>}
+      {changesAt && <span className="tnum text-fg-faint">({fmtResetAt(changesAt, resetDisplay, now, tz)})</span>}
     </span>
   )
 }

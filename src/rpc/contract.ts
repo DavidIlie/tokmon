@@ -8,8 +8,11 @@ import { BUILT_IN_THEME_PRESET_IDS, THEME_PRESET_IDS } from '../theme'
 export const TOKMON_WS_PATH = '/ws'
 
 /** Bump only for an incompatible wire change. Capabilities gate additive features. */
-export const TOKMON_PROTOCOL_VERSION = 4
-export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1', 'account-provenance-v1', 'installed-harnesses-v1', 'discovery-refresh-v1', 'menu-bar-today-tokens', 'menu-bar-builder-v1', 'typed-read-failures-v1'] as const
+// v5: tokmon.snapshot streams SnapshotEvent (init + deltas) instead of full
+// WebSnapshot frames. Not expressible as a capability — the stream's success
+// schema itself changed shape, so v4 peers cannot decode any frame.
+export const TOKMON_PROTOCOL_VERSION = 5
+export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1', 'account-provenance-v1', 'installed-harnesses-v1', 'discovery-refresh-v1', 'menu-bar-today-tokens', 'menu-bar-builder-v1', 'typed-read-failures-v1', 'snapshot-deltas-v1'] as const
 export const TYPED_READ_FAILURES_CAPABILITY = 'typed-read-failures-v1'
 
 export const TOKMON_WS_METHODS = {
@@ -426,10 +429,20 @@ const BillingResultSchema = Schema.Struct({
     usd: Schema.Finite,
     requests: Schema.Finite,
   })))),
-  asOfMs: Schema.optionalKey(NonNegativeIntegerSchema),
+  // Finite, not Int: the app type is plain `number` and one producer derived
+  // this from fractional fs mtimeMs. A wire schema stricter than its producer
+  // type turns a stray fraction into a failed encode for the whole stream.
+  asOfMs: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
 })
 
-const WebAccountSchema = Schema.Struct({
+/**
+ * The account splits into a light "shell" (identity, quota views, fetch state —
+ * rebuilt every snapshot) and three heavy sections (dashboard/table/billing —
+ * referentially stable in the engine between refetches). The delta protocol
+ * ships the shell whenever an account changes and each heavy section only when
+ * its content actually changed.
+ */
+const WebAccountShellFields = {
   id: Schema.String,
   providerId: ProviderIdSchema,
   name: Schema.String,
@@ -445,15 +458,21 @@ const WebAccountSchema = Schema.Struct({
   headroom: Schema.optionalKey(HeadroomViewSchema),
   plan: Schema.optionalKey(Schema.NullOr(Schema.String)),
   lastActivityAt: Schema.NullOr(NonNegativeIntegerSchema),
-  dashboard: Schema.NullOr(DashboardDataSchema),
-  table: Schema.NullOr(TableDataSchema),
-  billing: Schema.NullOr(BillingResultSchema),
   summaryState: Schema.Literals(['pending', 'ready', 'error'] as const),
   billingState: Schema.Literals(['pending', 'ready', 'error'] as const),
   tableState: Schema.Literals(['pending', 'ready', 'error'] as const),
   summaryUpdatedAt: Schema.optionalKey(Schema.NullOr(NonNegativeIntegerSchema)),
   billingUpdatedAt: Schema.optionalKey(Schema.NullOr(NonNegativeIntegerSchema)),
   tableUpdatedAt: Schema.optionalKey(Schema.NullOr(NonNegativeIntegerSchema)),
+} as const
+
+export const WebAccountShellSchema = Schema.Struct(WebAccountShellFields)
+
+const WebAccountSchema = Schema.Struct({
+  ...WebAccountShellFields,
+  dashboard: Schema.NullOr(DashboardDataSchema),
+  table: Schema.NullOr(TableDataSchema),
+  billing: Schema.NullOr(BillingResultSchema),
 })
 
 /** Runtime validation for streamed dashboard state; unknown JSON is never trusted. */
@@ -482,6 +501,74 @@ export const WebSnapshotSchema = Schema.Struct({
     changesAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   })),
 })
+
+/**
+ * Everything in a snapshot except the per-account heavy sections. Small enough
+ * to ship on every delta; `accountIds` is the authoritative account order, so
+ * membership and ordering never need separate remove events.
+ */
+export const SnapshotMetaSchema = Schema.Struct({
+  version: Schema.String,
+  generatedAt: NonNegativeIntegerSchema,
+  tz: Schema.String,
+  intervalMs: PositiveFiniteSchema,
+  billingIntervalMs: Schema.optionalKey(PositiveFiniteSchema),
+  installedProviders: Schema.optionalKey(Schema.Array(ProviderIdSchema)),
+  providers: Schema.Array(Schema.Struct({
+    id: ProviderIdSchema,
+    name: Schema.String,
+    color: Schema.String,
+    headroom: Schema.optionalKey(HeadroomViewSchema),
+  })),
+  suppressedAccounts: Schema.optionalKey(Schema.Array(DetectedAccountRefSchema)),
+  seeded: Schema.Boolean,
+  peak: Schema.NullOr(Schema.Struct({
+    state: Schema.Literals(['peak', 'off-peak', 'weekend'] as const),
+    label: Schema.String,
+    minutesUntilChange: Schema.NullOr(Schema.Finite),
+    changesAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  })),
+  accountIds: Schema.Array(Schema.String),
+})
+
+/**
+ * One changed account. The shell is always present (it is cheap and rebuilt per
+ * snapshot); each heavy section is tri-state — key absent means "unchanged
+ * since the previous frame on this stream", present (including null) replaces.
+ */
+export const AccountUpsertSchema = Schema.Struct({
+  shell: WebAccountShellSchema,
+  dashboard: Schema.optionalKey(Schema.NullOr(DashboardDataSchema)),
+  table: Schema.optionalKey(Schema.NullOr(TableDataSchema)),
+  billing: Schema.optionalKey(Schema.NullOr(BillingResultSchema)),
+})
+
+/**
+ * The tokmon.snapshot stream protocol (v5). Every subscription starts with an
+ * `init` carrying the full snapshot; subsequent frames are `delta`s relative to
+ * the previous frame emitted on the same stream. Deltas are encoded after the
+ * server's backpressure buffer, so frame N+1 is always relative to frame N as
+ * the client received it — dropped intermediate snapshots cannot desync.
+ */
+export const SnapshotInitEventSchema = Schema.Struct({
+  _tag: Schema.Literal('init'),
+  snapshot: WebSnapshotSchema,
+})
+
+export const SnapshotDeltaEventSchema = Schema.Struct({
+  _tag: Schema.Literal('delta'),
+  meta: SnapshotMetaSchema,
+  upserts: Schema.Array(AccountUpsertSchema),
+})
+
+export const SnapshotEventSchema = Schema.Union([
+  SnapshotInitEventSchema,
+  SnapshotDeltaEventSchema,
+])
+
+export type SnapshotMetaWire = typeof SnapshotMetaSchema.Type
+export type AccountUpsertWire = typeof AccountUpsertSchema.Type
+export type SnapshotEventWire = typeof SnapshotEventSchema.Type
 
 const EmptyPayloadSchema = Schema.Struct({})
 const ReadFailurePayloadFields = {
@@ -517,7 +604,7 @@ export const BrowseFsRpc = Rpc.make(TOKMON_WS_METHODS.browseFs, {
 
 export const SnapshotRpc = Rpc.make(TOKMON_WS_METHODS.snapshot, {
   payload: EmptyPayloadSchema,
-  success: WebSnapshotSchema,
+  success: SnapshotEventSchema,
   stream: true,
 })
 
