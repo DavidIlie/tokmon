@@ -429,7 +429,10 @@ const BillingResultSchema = Schema.Struct({
     usd: Schema.Finite,
     requests: Schema.Finite,
   })))),
-  asOfMs: Schema.optionalKey(NonNegativeIntegerSchema),
+  // Finite, not Int: the app type is plain `number` and one producer derived
+  // this from fractional fs mtimeMs. A wire schema stricter than its producer
+  // type turns a stray fraction into a failed encode for the whole stream.
+  asOfMs: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
 })
 
 /**
