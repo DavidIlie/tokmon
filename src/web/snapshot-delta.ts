@@ -128,17 +128,15 @@ export function createSnapshotDeltaEncoder(): SnapshotDeltaEncoder {
     next(snapshot) {
       if (previous === null) {
         previous = remember(snapshot)
-        // Strip explicit-undefined optional keys: Schema's optionalKey accepts
-        // absence but rejects `key: undefined`, and future snapshot producers
-        // must not be able to poison every new subscription's init frame.
-        const { billingIntervalMs, installedProviders, suppressedAccounts, ...required } = snapshot
-        const init = {
-          ...required,
-          ...(billingIntervalMs === undefined ? {} : { billingIntervalMs }),
-          ...(installedProviders === undefined ? {} : { installedProviders }),
-          ...(suppressedAccounts === undefined ? {} : { suppressedAccounts }),
-        }
-        return { _tag: 'init', snapshot: init as unknown as WireSnapshot }
+        // JSON round-trip drops explicit-undefined keys at every depth.
+        // Schema's optionalKey accepts absence but rejects `key: undefined`,
+        // and a producer emitting one anywhere in the account tree would
+        // otherwise fail the encode of every new subscription's init frame.
+        // One-time per subscription; deltas are built from JSON-derived parts
+        // (shellJson / section values that already round-tripped) so they
+        // don't need this.
+        const init = JSON.parse(JSON.stringify(snapshot)) as WireSnapshot
+        return { _tag: 'init', snapshot: init }
       }
 
       const upserts: AccountUpsertWire[] = []
@@ -163,7 +161,10 @@ export function createSnapshotDeltaEncoder(): SnapshotDeltaEncoder {
       }
 
       previous = nextState
-      return { _tag: 'delta', meta: metaOf(snapshot), upserts }
+      // Same explicit-undefined scrub as init. Deltas are small (KBs), so the
+      // round-trip is cheap; meta and heavy sections travel by reference from
+      // provider-built objects whose optional keys aren't guaranteed absent.
+      return JSON.parse(JSON.stringify({ _tag: 'delta', meta: metaOf(snapshot), upserts })) as SnapshotEventWire
     },
   }
 }

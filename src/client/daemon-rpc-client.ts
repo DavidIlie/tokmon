@@ -87,6 +87,11 @@ interface Subscription<A> {
   readonly staleAfterFor?: (value: A) => number
   /** Closing it interrupts the pump and the watchdog; null means "not running". */
   runScope: Scope.Closeable | null
+  /** Synchronous claim taken before the first yield in startSubscription, so
+   * the two starters (subscribe()'s detached start and the supervisor's
+   * startAllSubscriptions) can never both pass the runScope guard across the
+   * Scope.fork op boundary and double-pump one subscription. */
+  starting: boolean
   lastValueAt: number
   staleAfterMs: number
 }
@@ -385,39 +390,44 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
     session: Session,
   ): Effect.Effect<void> =>
     Effect.gen(function* () {
-      if (closed || !subscriptions.has(subscription) || subscription.runScope !== null) return
-      const subScope = yield* Scope.fork(session.scope)
-      subscription.runScope = subScope
-      subscription.lastValueAt = Date.now()
-      subscription.staleAfterMs = staleFloorMs
-      yield* Scope.addFinalizer(subScope, Effect.sync(() => {
-        if (subscription.runScope === subScope) subscription.runScope = null
-      }))
+      if (closed || !subscriptions.has(subscription) || subscription.runScope !== null || subscription.starting) return
+      subscription.starting = true
+      try {
+        const subScope = yield* Scope.fork(session.scope)
+        subscription.runScope = subScope
+        subscription.lastValueAt = Date.now()
+        subscription.staleAfterMs = staleFloorMs
+        yield* Scope.addFinalizer(subScope, Effect.sync(() => {
+          if (subscription.runScope === subScope) subscription.runScope = null
+        }))
 
-      const pump = yield* Effect.forkIn(
-        subscription.streamFor(session.client).pipe(
-          Stream.runForEach((value) =>
-            Effect.sync(() => {
-              subscription.lastValueAt = Date.now()
-              if (subscription.staleAfterFor) subscription.staleAfterMs = subscription.staleAfterFor(value)
-              try { subscription.onValue(value) } catch (error) { reportSubscriberError(error) }
-            }),
+        const pump = yield* Effect.forkIn(
+          subscription.streamFor(session.client).pipe(
+            Stream.runForEach((value) =>
+              Effect.sync(() => {
+                subscription.lastValueAt = Date.now()
+                if (subscription.staleAfterFor) subscription.staleAfterMs = subscription.staleAfterFor(value)
+                try { subscription.onValue(value) } catch (error) { reportSubscriberError(error) }
+              }),
+            ),
           ),
-        ),
-        subScope,
-      )
-      pump.addObserver((exit) => {
-        if (closed || !subscriptions.has(subscription)) return
-        if (Exit.isSuccess(exit)) {
-          session.kill('reconnecting')
-          return
-        }
-        // An interrupt is scope teardown, never a transport failure.
-        if (Cause.hasInterruptsOnly(exit.cause)) return
-        session.kill('error', Cause.squash(exit.cause))
-      })
+          subScope,
+        )
+        pump.addObserver((exit) => {
+          if (closed || !subscriptions.has(subscription)) return
+          if (Exit.isSuccess(exit)) {
+            session.kill('reconnecting')
+            return
+          }
+          // An interrupt is scope teardown, never a transport failure.
+          if (Cause.hasInterruptsOnly(exit.cause)) return
+          session.kill('error', Cause.squash(exit.cause))
+        })
 
-      if (subscription.staleAfterFor) yield* Effect.forkIn(watchdog(subscription, session), subScope)
+        if (subscription.staleAfterFor) yield* Effect.forkIn(watchdog(subscription, session), subScope)
+      } finally {
+        subscription.starting = false
+      }
     })
 
   const startAllSubscriptions = (session: Session): Effect.Effect<void> =>
@@ -556,6 +566,7 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       onValue,
       staleAfterFor,
       runScope: null,
+      starting: false,
       lastValueAt: 0,
       staleAfterMs: staleFloorMs,
     }
