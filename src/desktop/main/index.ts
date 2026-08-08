@@ -1,4 +1,4 @@
-import { app, Menu, nativeImage, nativeTheme, screen, shell, Tray, type MenuItemConstructorOptions } from 'electron'
+import { app, Menu, nativeImage, nativeTheme, powerMonitor, screen, shell, Tray, type MenuItemConstructorOptions } from 'electron'
 import updaterPackage from 'electron-updater'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -116,6 +116,16 @@ if (channel === 'dev') {
 }
 const ownsInstanceLock = app.requestSingleInstanceLock()
 if (!ownsInstanceLock) app.quit()
+
+// A tray app has no window to re-open: any uncaught defect that takes down the
+// main process looks like Tokmon "just shut off". Background refresh and
+// updater failures are recoverable — log them, keep the status item alive.
+process.on('uncaughtException', error => {
+  console.error('[tokmon] uncaught exception in desktop main', error)
+})
+process.on('unhandledRejection', reason => {
+  console.error('[tokmon] unhandled rejection in desktop main', reason)
+})
 
 async function bootstrap(): Promise<void> {
   if (process.platform === 'win32') app.setAppUserModelId(
@@ -534,6 +544,26 @@ async function bootstrap(): Promise<void> {
       { label: 'Quit Tokmon', click: () => app.quit() },
     ]
     tray.popUpContextMenu(Menu.buildFromTemplate(template))
+  })
+
+  // Wake-from-sleep leaves the RPC socket half-open: the daemon may also have
+  // been retired/updated while suspended. Redial immediately instead of waiting
+  // for the 90s stale-snapshot watchdog to notice.
+  const onResume = () => {
+    if (closing) return
+    if (rpc) rpc.reconnectNow()
+    else void connectDaemon(true)
+  }
+  powerMonitor.on('resume', onResume)
+  if (process.platform === 'darwin') powerMonitor.on('unlock-screen', onResume)
+
+  // A crashed/killed renderer leaves an empty popover and a stale tray strip
+  // with no path back. Reload once per crash; repeated crashes surface in logs.
+  popover.window.webContents.on('render-process-gone', (_event, details) => {
+    if (closing || details.reason === 'clean-exit') return
+    console.error('[tokmon] renderer process gone', details.reason)
+    trayStrip.reset()
+    popover.window.webContents.reload()
   })
 
   if (process.env.TOKMON_DESKTOP_SHOW_ON_START === '1') popover.show()

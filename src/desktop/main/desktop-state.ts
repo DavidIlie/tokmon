@@ -38,11 +38,32 @@ export class DesktopStateStore {
   }
 
   update(patch: Partial<DesktopState>): DesktopState {
+    // Every send serializes the full state — including the snapshot — across
+    // the IPC boundary into the always-alive renderer. Presentation repaints
+    // call update() with values that are usually unchanged; skip those sends.
+    if (!this.patchChangesValue(patch)) return this.value
     this.value = { ...this.value, ...patch }
     for (const target of this.targets) {
       if (!target.isDestroyed()) target.send(DESKTOP_CHANNELS.state, this.value)
     }
     return this.value
+  }
+
+  private patchChangesValue(patch: Partial<DesktopState>): boolean {
+    for (const key of Object.keys(patch) as (keyof DesktopState)[]) {
+      const next = patch[key]
+      const prev = this.value[key]
+      if (next === prev) continue
+      // activeAccountIds is rebuilt per repaint; treat same-content as unchanged.
+      if (
+        key === 'activeAccountIds'
+        && Array.isArray(next) && Array.isArray(prev)
+        && next.length === prev.length
+        && next.every((id, index) => id === prev[index])
+      ) continue
+      return true
+    }
+    return false
   }
 
   snapshot(snapshot: WebSnapshot): void { this.update({ snapshot, error: null }) }

@@ -61,11 +61,26 @@ function handleRpcConn(state: RpcConnState): void {
   if (state !== 'closed') emitConn(state)
 }
 
+let lastConn: BrowserRpcConnState = 'connecting'
+
 export function daemonRpcClient(): DaemonRpcClient {
   if (!client) {
     client = createDaemonRpcClient(window.location.origin, {
       transport: 'browser',
-      onConn: handleRpcConn,
+      onConn: (state) => {
+        if (state !== 'closed') lastConn = state
+        handleRpcConn(state)
+      },
+    })
+    // A sleeping laptop or a backgrounded tab leaves the socket half-open; the
+    // stale watchdog eventually notices, but visibility/online transitions are
+    // an immediate, free signal that the transport should be re-proven now.
+    const wake = () => {
+      if (lastConn !== 'live') client?.reconnectNow()
+    }
+    window.addEventListener('online', wake)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') wake()
     })
   }
   return client

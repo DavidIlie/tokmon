@@ -7,6 +7,7 @@ import { Sparkline } from '../ui/primitives'
 import { PrivacyLabel, privacyText } from '../privacy-label'
 import { accountIdentityText } from '../../lib/account-identity'
 import { dataInkColor, usesAccentInk } from '../../lib/theme-visualization'
+import { useNow } from '../../lib/use-now'
 import { useTheme } from '../theme-provider'
 
 // Severity → visual tokens. The ≤10/≤25 thresholds live once in `severity()`;
@@ -209,6 +210,7 @@ function Mini({ label, cost, tokens }: { label: string; cost: number; tokens: nu
 }
 
 function QuotaBar({ quota, resetDisplay, tz }: { quota: QuotaView; resetDisplay: 'relative' | 'absolute'; tz: string }) {
+  const now = useNow(30_000)
   const ratio = quota.usedPct == null ? null : Math.min(1, Math.max(0, quota.usedPct / 100))
   // severity(null) → 'unknown' → accent, matching the prior explicit null case.
   const color = SEV_BAR[severity(quota.remainingPct)]
@@ -218,7 +220,7 @@ function QuotaBar({ quota, resetDisplay, tz }: { quota: QuotaView; resetDisplay:
         <span className="truncate text-fg-dim">{quota.label}</span>
         <span className="tnum text-fg">
           {quota.valueText}
-          {quota.resetsAt && <span className="ml-1.5 text-fg-faint">· {fmtResetAt(new Date(quota.resetsAt).toISOString(), resetDisplay, Date.now(), tz)}</span>}
+          {quota.resetsAt && <span className="ml-1.5 text-fg-faint">· {fmtResetAt(new Date(quota.resetsAt).toISOString(), resetDisplay, now, tz)}</span>}
         </span>
       </div>
       {ratio != null && (
@@ -230,7 +232,7 @@ function QuotaBar({ quota, resetDisplay, tz }: { quota: QuotaView; resetDisplay:
           aria-valuemin={0}
           aria-valuemax={100}
         >
-          <div className="h-full rounded-full transition-[width] motion-reduce:transition-none" style={{ width: `${ratio * 100}%`, background: color }} />
+          <div className="h-full rounded-full transition-[width,background-color] duration-500 ease-out motion-reduce:transition-none" style={{ width: `${ratio * 100}%`, background: color }} />
         </div>
       )}
     </div>

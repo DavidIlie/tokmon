@@ -9,6 +9,7 @@ import { makePriceResolver } from '../_shared/pricing'
 import { timestampMs } from '../_shared/time'
 
 const PRICING: Record<string, { i: number; o: number; cc: number; cr: number }> = {
+  'claude-opus-5': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
   'claude-opus-4-8': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
   'claude-opus-4-7': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
   'claude-opus-4-6': { i: 5e-6, o: 25e-6, cc: 6.25e-6, cr: 5e-7 },
@@ -75,15 +76,21 @@ export async function detectClaude(homeDir?: string): Promise<boolean> {
   return false
 }
 
-export function claudePriceFor(model: string, timestamp = Date.now()) {
+// Fast mode (`/fast`) reruns the same model at a flat multiplier on every token
+// class, across the full context window. The transcript marks it per message in
+// usage.speed; ignoring it undercounts fast sessions by the whole multiplier.
+const FAST_MODE_MULTIPLIER = 2
+
+export function claudePriceFor(model: string, timestamp = Date.now(), speed?: string) {
   // Strip a trailing context-window tag (e.g. the `[1m]` long-context suffix) so
   // 'claude-opus-4-8[1m]' prices the same as 'claude-opus-4-8' instead of falling
   // through to a shorter legacy key (overcharge) or the flagship fallback.
   const m = model.toLowerCase().trim().replace(/\[[^\]]*\]$/, '')
-  if ((m === 'claude-sonnet-5' || m.startsWith('claude-sonnet-5-')) && timestamp >= SONNET_5_STANDARD_FROM) {
-    return SONNET_5_STANDARD_PRICE
-  }
-  return resolvePrice(m)
+  const base = (m === 'claude-sonnet-5' || m.startsWith('claude-sonnet-5-')) && timestamp >= SONNET_5_STANDARD_FROM
+    ? SONNET_5_STANDARD_PRICE
+    : resolvePrice(m)
+  if (speed !== 'fast') return base
+  return { i: base.i * FAST_MODE_MULTIPLIER, o: base.o * FAST_MODE_MULTIPLIER, cc: base.cc * FAST_MODE_MULTIPLIER, cr: base.cr * FAST_MODE_MULTIPLIER }
 }
 
 interface UsageTokens {
@@ -95,10 +102,12 @@ interface UsageTokens {
     ephemeral_5m_input_tokens?: number
     ephemeral_1h_input_tokens?: number
   } | null
+  /** 'fast' when the message ran under /fast mode; 'standard' or absent otherwise. */
+  speed?: string
 }
 
 function costOf(model: string, u: UsageTokens, cacheCreate5m: number, cacheCreate1h: number, hasCacheCreateSplit: boolean, timestamp: number): number {
-  const p = claudePriceFor(model, timestamp)
+  const p = claudePriceFor(model, timestamp, typeof u.speed === 'string' ? u.speed : undefined)
   const cacheCreateCost = hasCacheCreateSplit
     ? cacheCreate5m * p.cc + cacheCreate1h * (2 * p.i)
     : safeNum(u.cache_creation_input_tokens) * p.cc
@@ -130,12 +139,15 @@ async function parseFile(path: string): Promise<Entry[]> {
       const cacheCreate = hasCacheCreateSplit ? cacheCreate5m + cacheCreate1h : safeNum(u.cache_creation_input_tokens)
       const cacheRead = safeNum(u.cache_read_input_tokens)
       if (inputTokens + output + cacheCreate + cacheRead === 0) continue
-      const p = claudePriceFor(model, ts)
+      const speed = typeof u.speed === 'string' ? u.speed : undefined
+      const p = claudePriceFor(model, ts, speed)
       const msgId = obj.message?.id
       entries.push({
         id: msgId ? msgId + (obj.requestId ? ':' + obj.requestId : '') : undefined,
         ts,
-        model: shortModel(model),
+        // Fast-mode turns bill differently; keep them a distinct model row so
+        // per-model tables reconcile against the invoice instead of blending.
+        model: speed === 'fast' ? `${shortModel(model)} (fast)` : shortModel(model),
         cost: costOf(model, u, cacheCreate5m, cacheCreate1h, hasCacheCreateSplit, ts),
         input: inputTokens,
         output,

@@ -39,6 +39,12 @@ export interface DaemonRpcClient {
   browseFs(path: string): Promise<FsListing>
   subscribeSnapshot(onSnapshot: (snapshot: WebSnapshot) => void): () => void
   subscribeConfig(onConfig: (config: ConfigState) => void): () => void
+  /**
+   * Drop the current session (if any) and redial immediately. For wake-from-sleep:
+   * a suspended machine leaves the socket half-open, and waiting for the stale
+   * watchdog costs up to `snapshotStaleFloorMs` of frozen UI.
+   */
+  reconnectNow(): void
   close(): Promise<void>
 }
 
@@ -445,7 +451,10 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       && (attemptBudget === undefined || attemptsUsed < attemptBudget),
     ),
     Schedule.modifyDelay(() => {
-      const delayMs = Math.min(RECONNECT_MAX_DELAY_MS, reconnectBaseDelayMs * 1.5 ** attemptsUsed)
+      // Full jitter: many clients dropped by the same daemon restart must not
+      // redial in lockstep on identical exponential rungs.
+      const ceiling = Math.min(RECONNECT_MAX_DELAY_MS, reconnectBaseDelayMs * 1.5 ** attemptsUsed)
+      const delayMs = ceiling / 2 + Math.random() * (ceiling / 2)
       attemptsUsed += 1
       return preemptibleDelay(delayMs)
     }),
@@ -516,6 +525,16 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
           if (Cause.hasInterrupts(cause)) return rethrowCause(cause)
           const defect = cause.reasons.find(Cause.isDieReason)?.defect
           if (defect !== undefined) console.error('[tokmon] daemon RPC supervisor defect', defect)
+          // The ladder gave up with demand still live. A budgeted embedder
+          // (desktop) reacts to 'error', not to a parked 'reconnecting' — the
+          // last emission after a session-ended run. Without this, exhaustion
+          // after established-then-dropped sessions parks the client silently.
+          if (!closed && subscriptions.size > 0 && attemptBudget !== undefined && attemptsUsed >= attemptBudget) {
+            const end = cause.reasons.find(Cause.isFailReason)?.error as CycleEnd | undefined
+            setConn('error', end?._tag === 'connect-failed'
+              ? end.error
+              : new DaemonRpcConnectionError('daemon RPC reconnect budget exhausted'))
+          }
           return Effect.void
         }),
       )
@@ -591,6 +610,20 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
         client => client[TOKMON_WS_METHODS.config]({}).pipe(Stream.map(normalizeConfigState)),
         onConfig,
       ),
+
+    reconnectNow() {
+      if (closed) return
+      attemptsUsed = 0
+      if (connSlot._tag === 'live') {
+        // kill() tears the session down; the supervisor's retry ladder then
+        // redials on the first (zeroed) rung.
+        connSlot.session.kill('reconnecting')
+        return
+      }
+      // Connecting: collapse the current backoff rung. Idle with demand: start.
+      if (subscriptions.size > 0) requestConnect()
+      Latch.openUnsafe(gate)
+    },
 
     async close() {
       if (closed) return

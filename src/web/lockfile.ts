@@ -428,7 +428,14 @@ export async function verifyLock(
   timeoutMs?: number,
 ): Promise<DaemonLock | null> {
   if (!lock || lock.state !== 'ready' || lock.protocolVersion !== protocolVersion || !isAlive(lock.pid)) return null
-  return await probeHealth(lock.url, lock.wsToken, lock, timeoutMs) ? lock : null
+  if (await probeHealth(lock.url, lock.wsToken, lock, timeoutMs)) return lock
+  // One immediate wider retry, but only for default-budget callers (attach and
+  // discovery). A live daemon can miss the first 500ms probe right after system
+  // wake or while its event loop is busy parsing logs; treating that as dead
+  // cascades into "failed to connect" and takeover attempts against a healthy
+  // owner. Pollers that pass an explicit budget (waitForOwner) keep tight loops.
+  if (timeoutMs !== undefined) return null
+  return await probeHealth(lock.url, lock.wsToken, lock, 2_000) ? lock : null
 }
 
 const TAKEOVER_TIMEOUT_MS = 5_000

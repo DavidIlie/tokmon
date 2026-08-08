@@ -146,12 +146,15 @@ async function arbitrateIncompatibleOwner(
   const owner = readForeignLock(opts)
   if (!owner || !isAlive(owner.pid)) return { retired: false, issue: null }
   const decision = classifyDaemonCompatibility(owner, protocolVersion)
+  // Post-wake or under load a healthy daemon can exceed 500ms; a failed probe
+  // here surfaces as a hard "could not be verified" error, so give the owner a
+  // real budget before declaring it unverifiable.
   const verified = await probeHealth(owner.url, owner.wsToken, {
     channel: owner.channel,
     ...(owner.ownerKind ? { ownerKind: owner.ownerKind } : {}),
     ...(owner.protocolVersion === undefined ? {} : { protocolVersion: owner.protocolVersion }),
     ...(owner.version ? { version: owner.version } : {}),
-  }, Math.min(500, timeoutMs))
+  }, Math.min(2_000, timeoutMs))
   if (!verified) {
     return {
       retired: false,

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Derived } from '../../lib/derive'
 import { fmtCost, fmtCostAxis, fmtDayLabel } from '../../lib/format'
@@ -43,11 +43,13 @@ export function CostTimeline({ derived, title = 'cost over time', height = 260, 
   const [scale, setScale] = useState<Scale>('linear')
   const [mode, setMode] = useState<Mode>(multiProvider ? 'byProvider' : 'combined')
 
-  const data = derived.timeline.map(p => {
+  // Rebuilding this array every render gives Recharts fresh row identities and
+  // forces it to re-diff the whole series on unrelated parent updates.
+  const data = useMemo(() => derived.timeline.map(p => {
     const row: Record<string, number | string | null> = { date: p.date, total: p.total, ...p.byProvider }
     if (scale === 'log') for (const k of Object.keys(row)) if (k !== 'date' && row[k] === 0) row[k] = null
     return row
-  })
+  }), [derived.timeline, scale])
 
   const yAxis = (
     <YAxis

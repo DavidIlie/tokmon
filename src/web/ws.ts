@@ -153,9 +153,47 @@ function readEffect<A, E>(
       }))
 }
 
+/** Interval for server-initiated pings; a peer missing one full interval is half-open. */
+export const WS_HEARTBEAT_INTERVAL_MS = 30_000
+
+interface HeartbeatSocket {
+  isAlive?: boolean
+  ping(): void
+  terminate(): void
+  on(event: 'pong', listener: () => void): void
+}
+
+/**
+ * A laptop sleeping mid-session leaves the daemon holding half-open sockets that
+ * never error and never close: the peer's TCP stack is gone but ours still counts
+ * the client as live, keeping idle-pause off and streams pumping into the void.
+ * Standard ws heartbeat — mark, ping, reap on the next tick if no pong came back.
+ */
+function startHeartbeat(wss: { clients: Set<unknown>; on(event: 'connection', listener: (ws: unknown) => void): void }): () => void {
+  wss.on('connection', (ws) => {
+    const socket = ws as HeartbeatSocket
+    socket.isAlive = true
+    socket.on('pong', () => { socket.isAlive = true })
+  })
+  const timer = setInterval(() => {
+    for (const client of wss.clients) {
+      const socket = client as HeartbeatSocket
+      if (socket.isAlive === false) {
+        try { socket.terminate() } catch {}
+        continue
+      }
+      socket.isAlive = false
+      try { socket.ping() } catch {}
+    }
+  }, WS_HEARTBEAT_INTERVAL_MS)
+  timer.unref?.()
+  return () => clearInterval(timer)
+}
+
 export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<() => Promise<void>> {
   const scope = await Effect.runPromise(Scope.make())
   const wss = new NodeWS.WebSocketServer({ noServer: true })
+  const stopHeartbeat = startHeartbeat(wss as never)
 
   const handlersLayer = TokmonRpcGroup.toLayer(
     TokmonRpcGroup.of({
@@ -222,6 +260,7 @@ export async function mountWsRpc(server: Server, deps: MountWsRpcDeps): Promise<
   server.prependListener('upgrade', onUpgrade)
 
   return async () => {
+    stopHeartbeat()
     server.off('upgrade', onUpgrade)
     // ws.close waits for peers to close voluntarily; a browser with a suspended tab
     // must not keep the daemon alive forever.

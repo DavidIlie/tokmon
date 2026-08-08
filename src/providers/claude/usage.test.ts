@@ -38,3 +38,13 @@ test('Claude pricing falls back to the flagship rate for unknown models', () => 
   // An unrecognized base with a [1m] tag still resolves to the fallback, not a partial match.
   assert.deepEqual(claudePriceFor('claude-unknown-99[1m]'), flagship)
 })
+
+test('Claude fast mode (usage.speed = fast) doubles every token class', () => {
+  const standard = claudePriceFor('claude-opus-4-8')
+  assert.deepEqual(claudePriceFor('claude-opus-4-8', Date.now(), 'fast'), {
+    i: standard.i * 2, o: standard.o * 2, cc: standard.cc * 2, cr: standard.cr * 2,
+  })
+  // Absent or standard speed leaves pricing untouched.
+  assert.deepEqual(claudePriceFor('claude-opus-4-8', Date.now(), 'standard'), standard)
+  assert.deepEqual(claudePriceFor('claude-opus-4-8', Date.now(), undefined), standard)
+})
