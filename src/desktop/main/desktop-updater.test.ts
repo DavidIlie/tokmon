@@ -180,17 +180,19 @@ test('an install preflight keeps the staged update when the feed has nothing new
   assert.equal(states.at(-1)?.status, 'restarting')
 })
 
-test('an install preflight blocks restart when the freshness check fails', async () => {
+test('an install preflight proceeds with the staged update when the freshness check fails', async () => {
+  // The staged payload was verified when it downloaded. A transient feed
+  // failure (captive portal, offline install) must not destroy it and strand
+  // the user in 'error' with no way to install what they already have.
   const { controller, updater, states } = setup()
   controller.start()
   updater.emit('update-downloaded', { version: '0.29.7' })
   updater.nextError = new Error('feed unavailable')
 
-  assert.equal(await controller.prepareInstall(), false)
+  assert.equal(await controller.prepareInstall(), true)
 
   assert.equal(updater.checks, 1)
-  assert.equal(states.at(-1)?.status, 'error')
-  assert.deepEqual(updater.installs, [])
+  assert.equal(states.at(-1)?.status, 'restarting')
 })
 
 test('an install preflight waits for the newer updater download to settle', async () => {

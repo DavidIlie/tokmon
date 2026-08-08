@@ -35,7 +35,7 @@ import {
   staleAgeLabel,
 } from '../shared/presentation'
 import type { HeadroomView, WebAccount, WebSnapshot } from '../../web/contract'
-import type { DesktopUpdateState } from '../shared/desktop-contract'
+import { DESKTOP_DOWNLOAD_URL, type DesktopUpdateState } from '../shared/desktop-contract'
 
 /** Unified critical band (≤10%), shared by strip, gauge, tooltip and popover. */
 function isCritical(remaining: number | null): boolean {
@@ -540,6 +540,11 @@ async function bootstrap(): Promise<void> {
                 : current.update.status === 'error'
                   ? { label: 'Update Failed — Check Again', click: () => void updater.checkForUpdates() }
                   : { label: 'Check for Updates', click: () => void updater.checkForUpdates() },
+      // The stalled-download message tells users to "choose Download Latest";
+      // the popover has that button, the tray path must offer it too.
+      ...current.update.status === 'error'
+        ? [{ label: 'Download Latest…', click: () => { void shell.openExternal(DESKTOP_DOWNLOAD_URL) } }]
+        : [],
       { type: 'separator' },
       { label: 'Quit Tokmon', click: () => app.quit() },
     ]

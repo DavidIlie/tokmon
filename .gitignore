@@ -12,3 +12,6 @@ site/.astro/
 .vercel/
 .env.local
 .env.*.local
+
+# local benchmarks (results are quoted in PRs, scripts stay out of the tree)
+bench/
