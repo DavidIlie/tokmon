@@ -640,7 +640,10 @@ async function bootstrap(): Promise<void> {
 if (ownsInstanceLock) {
   void bootstrap().catch(error => {
     // Native-shell failures are exceptional; daemon acquisition is handled
-    // inside bootstrap and never reaches this path.
+    // inside bootstrap and never reaches this path. A shell that failed before
+    // its Tray exists has no UI at all — exiting beats an invisible process
+    // the user can only find in a process manager.
     console.error('[tokmon] desktop shell startup failed', error)
+    app.exit(1)
   })
 }
