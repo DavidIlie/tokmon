@@ -96,6 +96,10 @@ let daemon: DaemonController | null = null
 let rpc: DaemonRpcClient | null = null
 let closing = false
 let nativeUpdateQuitAllowed = false
+// Module-scope anchor: a Tray held only by a function scope is eligible for GC,
+// and a collected Tray silently disappears from the menu bar — the classic
+// Electron "app just vanished" failure for tray-only apps.
+let trayRef: Tray | null = null
 const runtimeDir = path.dirname(fileURLToPath(import.meta.url))
 const { autoUpdater } = updaterPackage
 const UPDATE_INSTALL_HANDOFF_TIMEOUT_MS = 2 * 60 * 1_000
@@ -178,6 +182,7 @@ async function bootstrap(): Promise<void> {
   // A dev shell may run beside the installed release app. Separate status-item
   // identities prevent macOS from assigning both processes the same saved slot.
   const tray = new Tray(createTrayIcon(null, false), channel === 'dev' ? DEV_TRAY_GUID : RELEASE_TRAY_GUID)
+  trayRef = tray
   tray.setToolTip(`${identity.appName} — connecting to daemon`)
   if (process.platform === 'darwin') tray.setTitle('')
   const popover = createPopoverWindow(tray, rendererUrl, initialTheme.tokens.chrome)
@@ -588,6 +593,11 @@ async function bootstrap(): Promise<void> {
     else capture()
   }
 
+  // Electron's default window-all-closed behavior quits the app on
+  // Windows/Linux. The popover normally hides instead of closing, but a
+  // destroyed window (crash, display teardown) must not take the tray with it.
+  app.on('window-all-closed', () => {})
+
   app.on('second-instance', () => popover.show())
   app.on('before-quit', event => {
     if (nativeUpdateQuitAllowed) return
@@ -616,6 +626,7 @@ async function bootstrap(): Promise<void> {
     })
   })
   app.on('will-quit', () => {
+    trayRef = null
     clearInstallTimers()
     nativeTheme.removeListener('updated', onNativeThemeUpdated)
     screen.removeListener('display-metrics-changed', onDisplayMetricsChanged)
