@@ -627,7 +627,7 @@ test('the desktop replaces an authenticated protocol-v3 CLI daemon before decodi
   let controller: DaemonController | null = null
   try {
     const oldReady = await old.handshake
-    assert.equal(oldReady.protocolVersion, 3)
+    assert.equal(oldReady.protocolVersion, TOKMON_PROTOCOL_VERSION - 1)
     const config: Config = {
       ...DEFAULTS,
       accounts: [],

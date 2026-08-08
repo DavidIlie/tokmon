@@ -207,11 +207,13 @@ test('the strict RPC tray schema accepts only the normalized shape', () => {
   }))
 })
 
-test('the desktop snapshot contract has a distinct protocol version', () => {
-  // Required snapshot fields added by the desktop contract are not wire-compatible
-  // with the pre-desktop v3 daemon. Keeping this assertion explicit prevents a
-  // packaged app from silently attaching to an older daemon and reconnect-looping.
-  assert.equal(TOKMON_PROTOCOL_VERSION, 4)
+test('the snapshot delta stream has a distinct protocol version', () => {
+  // v5 changed the tokmon.snapshot stream's success schema from full
+  // WebSnapshot frames to SnapshotEvent (init + deltas) — v4 peers cannot
+  // decode any frame. Keeping this assertion explicit prevents a packaged app
+  // from silently attaching to an older daemon and reconnect-looping.
+  assert.equal(TOKMON_PROTOCOL_VERSION, 5)
+  assert.ok(TOKMON_CAPABILITIES.includes('snapshot-deltas-v1'))
   assert.ok(TOKMON_CAPABILITIES.includes('appearance-v1'))
   assert.ok(TOKMON_CAPABILITIES.includes('theme-engine'))
   assert.ok(TOKMON_CAPABILITIES.includes('menu-bar-builder-v1'))

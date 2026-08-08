@@ -17,7 +17,7 @@ import {
   type FsListing,
   type RefreshScope,
 } from '../rpc/contract'
-import { materializeWebSnapshot } from '../web/snapshot-schema'
+import { createSnapshotDeltaDecoder } from '../web/snapshot-delta'
 
 export type RpcConnState = 'connecting' | 'live' | 'reconnecting' | 'error' | 'closed'
 
@@ -602,7 +602,13 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
 
     subscribeSnapshot: (onSnapshot) =>
       subscribe(
-        client => client[TOKMON_WS_METHODS.snapshot]({}).pipe(Stream.map(materializeWebSnapshot)),
+        // A fresh decoder per session attempt: every reconnect starts with an
+        // `init` frame, and a desync throw fails the pump, which kills the
+        // session and redials into a clean init — self-healing by design.
+        client => Stream.suspend(() => {
+          const decoder = createSnapshotDeltaDecoder()
+          return client[TOKMON_WS_METHODS.snapshot]({}).pipe(Stream.map(event => decoder.apply(event)))
+        }),
         onSnapshot,
         snapshot => Math.max(staleFloorMs, snapshot.intervalMs * 3),
       ),

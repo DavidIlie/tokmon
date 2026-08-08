@@ -25,6 +25,7 @@ import {
   toConfigState,
 } from './config-control'
 import type { DataEngine } from './data-engine'
+import { createSnapshotDeltaEncoder } from './snapshot-delta'
 import { listHomeDirectory } from './fs'
 import { isAllowedLocalRequest } from './request-guard'
 
@@ -55,7 +56,7 @@ function rejectUpgrade(socket: Duplex, status = 403, message = 'Forbidden'): voi
 }
 
 function snapshotStream(engine: DataEngine) {
-  return Stream.callback<ReturnType<DataEngine['snapshot']> extends infer S ? NonNullable<S> : never>((queue) =>
+  const raw = Stream.callback<ReturnType<DataEngine['snapshot']> extends infer S ? NonNullable<S> : never>((queue) =>
     Effect.gen(function* () {
       const scope = yield* Scope.Scope
       const unsubscribe = engine.subscribe((snapshot) => {
@@ -63,6 +64,13 @@ function snapshotStream(engine: DataEngine) {
       })
       yield* Scope.addFinalizer(scope, Effect.sync(unsubscribe))
     }), { bufferSize: 16, strategy: 'sliding' })
+  // One encoder per stream, applied downstream of the sliding buffer: a delta
+  // is always relative to the previous frame this client actually dequeued,
+  // so slow consumers that drop intermediate snapshots can never desync.
+  return Stream.suspend(() => {
+    const encoder = createSnapshotDeltaEncoder()
+    return raw.pipe(Stream.map((snapshot) => encoder.next(snapshot)))
+  })
 }
 
 function configStream(engine: DataEngine) {
