@@ -612,7 +612,7 @@ test('a new client safely takes over an authenticated legacy CLI lock', { timeou
   }
 })
 
-test('the desktop replaces an authenticated protocol-v3 CLI daemon before decoding snapshots', { timeout: 20_000 }, async (t) => {
+test('the desktop replaces an authenticated previous-protocol CLI daemon before decoding snapshots', { timeout: 20_000 }, async (t) => {
   if (process.platform === 'win32') {
     t.skip('signal-based upgrade assertion is POSIX-specific')
     return

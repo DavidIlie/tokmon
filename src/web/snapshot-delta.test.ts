@@ -179,6 +179,14 @@ test('null transitions are sent explicitly, never confused with unchanged', () =
   assert.equal(decoded.accounts[0]!.billing, null)
 })
 
+test('decoder throws SnapshotDeltaDesyncError on a delta before any init', () => {
+  const encoder = createSnapshotDeltaEncoder()
+  const decoder = createSnapshotDeltaDecoder()
+  encoder.next(snapshot([account('a')]))
+  const delta = encoder.next(snapshot([account('a')], 2_000))
+  assert.throws(() => decoder.apply(overWire(delta) as never), SnapshotDeltaDesyncError)
+})
+
 test('decoder throws SnapshotDeltaDesyncError on a frame referencing unknown accounts', () => {
   const encoderA = createSnapshotDeltaEncoder()
   const decoder = createSnapshotDeltaDecoder()

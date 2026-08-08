@@ -3,6 +3,7 @@ import {
   type DaemonRpcClient,
   type RpcConnState,
 } from '../../../src/client/daemon-rpc-client'
+import { TOKMON_PROTOCOL_VERSION } from '../../../src/rpc/contract'
 
 let client: DaemonRpcClient | null = null
 export type BrowserRpcConnState = Exclude<RpcConnState, 'closed'>
@@ -69,6 +70,10 @@ export function daemonRpcClient(): DaemonRpcClient {
       transport: 'browser',
       onConn: (state) => {
         if (state !== 'closed') lastConn = state
+        // Persistent failures on a visible tab may be protocol drift after a
+        // daemon upgrade (the WS connects but every stream frame fails to
+        // decode) — reconnects alone can never recover that.
+        if (state === 'error') void checkProtocolDrift()
         handleRpcConn(state)
       },
     })
@@ -76,7 +81,10 @@ export function daemonRpcClient(): DaemonRpcClient {
     // stale watchdog eventually notices, but visibility/online transitions are
     // an immediate, free signal that the transport should be re-proven now.
     const wake = () => {
-      if (lastConn !== 'live') client?.reconnectNow()
+      if (lastConn !== 'live') {
+        void checkProtocolDrift()
+        client?.reconnectNow()
+      }
     }
     window.addEventListener('online', wake)
     document.addEventListener('visibilitychange', () => {
@@ -84,6 +92,27 @@ export function daemonRpcClient(): DaemonRpcClient {
     })
   }
   return client
+}
+
+let reloadingForProtocolDrift = false
+
+/**
+ * A long-lived browser tab keeps its bundle across daemon upgrades. After a
+ * protocol bump the daemon can no longer speak this tab's stream dialect, so
+ * reconnecting would loop on decode failures forever. /healthz names the live
+ * protocol; on drift, reload once so the daemon serves the matching bundle.
+ */
+async function checkProtocolDrift(): Promise<void> {
+  if (reloadingForProtocolDrift) return
+  try {
+    const res = await fetch('/healthz', { signal: AbortSignal.timeout(2_000) })
+    if (!res.ok) return
+    const body = await res.json() as { protocolVersion?: unknown }
+    if (typeof body.protocolVersion === 'number' && body.protocolVersion !== TOKMON_PROTOCOL_VERSION) {
+      reloadingForProtocolDrift = true
+      window.location.reload()
+    }
+  } catch {}
 }
 
 export function subscribeRpcConnection(listener: (state: BrowserRpcConnState) => void): () => void {

@@ -182,14 +182,21 @@ export interface SnapshotDeltaDecoder {
 
 export function createSnapshotDeltaDecoder(): SnapshotDeltaDecoder {
   let accounts = new Map<string, WebAccount>()
+  let sawInit = false
 
   return {
     apply(event) {
       if (event._tag === 'init') {
+        sawInit = true
         const snapshot = materializeWebSnapshot(event.snapshot)
         accounts = new Map(snapshot.accounts.map(account => [account.id, account]))
         return snapshot
       }
+
+      // The encoder always leads with init; a delta-first stream means this
+      // decoder is paired with the wrong stream state. Fail loudly rather
+      // than materialize a snapshot from nothing.
+      if (!sawInit) throw new SnapshotDeltaDesyncError('delta received before init frame')
 
       for (const upsert of event.upserts) {
         const prev = accounts.get(upsert.shell.id)
