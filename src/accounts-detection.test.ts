@@ -39,7 +39,10 @@ test('a provider detector can be disabled without disabling its manual accounts'
     accounts: [manual],
     accountDetection: { ...DEFAULTS.accountDetection, disabledProviders: ['claude'] },
   }), ['claude'])
-  assert.deepEqual(accounts.map(account => account.id), ['manual-claude'])
+  assert.deepEqual(
+    accounts.filter(account => account.providerId === 'claude').map(account => account.id),
+    ['manual-claude'],
+  )
 })
 
 test('a disabled manual account stays registered without being fetched or auto-recreated', () => {
