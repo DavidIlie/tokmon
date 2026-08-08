@@ -113,3 +113,10 @@ builds never contact the update feed.
 Use **Check for Updates** in Desktop App settings or the tray context menu to
 request an immediate check. Linux AppImage builds use the same updater; deb
 packages defer updates to the system package manager.
+
+macOS versions 0.28.8 through 0.29.9 can download an update but wait forever for
+a native staging signal that only starts after restart. If one of those versions
+reports that the update made no progress, install the current signed build once
+from [GitHub Releases](https://github.com/DavidIlie/tokmon/releases/latest).
+Automatic updates resume after that manual bridge. Current builds also keep a
+**Download Latest** escape hatch beside updater errors.

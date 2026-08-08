@@ -26,6 +26,7 @@ const api: DesktopApi = {
     ipcRenderer.invoke(DESKTOP_CHANNELS.setConfig, config, expectedRevision) as Promise<DesktopState>,
   retryConnection: () => ipcRenderer.invoke(DESKTOP_CHANNELS.retryConnection) as Promise<void>,
   openDashboard: (path?: DashboardPath) => ipcRenderer.invoke(DESKTOP_CHANNELS.openDashboard, path) as Promise<void>,
+  openDownloadPage: () => ipcRenderer.invoke(DESKTOP_CHANNELS.openDownloadPage) as Promise<void>,
   checkForUpdates: () => ipcRenderer.invoke(DESKTOP_CHANNELS.checkForUpdates) as Promise<void>,
   installUpdate: () => ipcRenderer.invoke(DESKTOP_CHANNELS.installUpdate) as Promise<boolean>,
   setPopoverHeight: (height: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.setPopoverHeight, height) as Promise<void>,

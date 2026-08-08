@@ -718,6 +718,7 @@ button {
 .update-copy { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
 .update-copy strong { color: var(--text-1); font-size: 12px; font-weight: 600; }
 .update-copy small { color: var(--text-3); font-size: 10px; font-variant-numeric: tabular-nums; }
+.update-actions { display: flex; flex: 0 0 auto; gap: 6px; }
 
 .update-ready button {
   min-width: 64px;
@@ -731,6 +732,8 @@ button {
 }
 
 .update-ready button:hover { background: var(--accent-halo); }
+.update-ready .update-download { background: transparent; color: var(--text-2); }
+.update-ready .update-download:hover { background: var(--surface-hover); color: var(--text-1); }
 
 .update-progress {
   width: 72px;

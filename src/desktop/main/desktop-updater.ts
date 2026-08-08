@@ -3,7 +3,7 @@ import type { DesktopUpdateState } from '../shared/desktop-contract'
 export const INITIAL_UPDATE_DELAY_MS = 10_000
 export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1_000
 export const UPDATE_DOWNLOAD_WATCHDOG_MS = 10 * 60 * 1_000
-export const UPDATE_DOWNLOAD_STALLED_MESSAGE = 'Update download made no progress for 10 minutes. Check your connection, then choose Check for Updates to retry.'
+export const UPDATE_DOWNLOAD_STALLED_MESSAGE = 'Update download made no progress for 10 minutes. Check your connection and retry, or choose Download Latest for the installer.'
 
 type UpdaterListener = (...args: any[]) => void
 type TimerHandle = ReturnType<typeof setTimeout>

@@ -472,6 +472,7 @@ export function App() {
         currentVersion={state?.appVersion ?? ''}
         onInstall={() => void window.tokmon.installUpdate()}
         onCheck={() => void window.tokmon.checkForUpdates()}
+        onDownload={() => void window.tokmon.openDownloadPage()}
       />
       <Footer
         snapshot={snapshot} refreshing={refreshing} now={now}

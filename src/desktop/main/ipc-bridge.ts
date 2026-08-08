@@ -4,6 +4,7 @@ import type { Config } from '../../config-schema'
 import {
   DASHBOARD_PATHS,
   DESKTOP_CHANNELS,
+  DESKTOP_DOWNLOAD_URL,
   isTrayStripPayload,
   type DashboardPath,
   type DesktopRefreshScope,
@@ -81,6 +82,10 @@ export function registerDesktopIpc(opts: DesktopIpcOptions): () => void {
     const dashboardPath = (path as DashboardPath | undefined) ?? '/'
     // The dashboard uses hash history; the HTTP pathname must keep serving the SPA root.
     await shell.openExternal(dashboardDeepLink(url.toString(), dashboardPath))
+  })
+  ipcMain.handle(DESKTOP_CHANNELS.openDownloadPage, async event => {
+    assertSender(event)
+    await shell.openExternal(DESKTOP_DOWNLOAD_URL)
   })
   ipcMain.handle(DESKTOP_CHANNELS.checkForUpdates, async event => {
     assertSender(event)

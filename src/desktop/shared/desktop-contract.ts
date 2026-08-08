@@ -8,12 +8,15 @@ export const DESKTOP_CHANNELS = {
   setConfig: 'tokmon:desktop:set-config',
   retryConnection: 'tokmon:desktop:retry-connection',
   openDashboard: 'tokmon:desktop:open-dashboard',
+  openDownloadPage: 'tokmon:desktop:open-download-page',
   checkForUpdates: 'tokmon:desktop:check-for-updates',
   installUpdate: 'tokmon:desktop:install-update',
   setPopoverHeight: 'tokmon:desktop:set-popover-height',
   trayStrip: 'tokmon:desktop:tray-strip',
   quit: 'tokmon:desktop:quit',
 } as const
+
+export const DESKTOP_DOWNLOAD_URL = 'https://github.com/DavidIlie/tokmon/releases/latest'
 
 export type DesktopConnectionState = 'connecting' | 'live' | 'reconnecting' | 'error'
 export type DesktopRefreshScope = 'all' | 'summary' | 'table' | 'billing' | 'peak'
@@ -128,6 +131,7 @@ export interface DesktopApi {
   setConfig(config: Config, expectedRevision: number): Promise<DesktopState>
   retryConnection(): Promise<void>
   openDashboard(path?: DashboardPath): Promise<void>
+  openDownloadPage(): Promise<void>
   checkForUpdates(): Promise<void>
   installUpdate(): Promise<boolean>
   setPopoverHeight(height: number): Promise<void>

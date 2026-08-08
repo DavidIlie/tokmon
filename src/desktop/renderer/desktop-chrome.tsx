@@ -73,8 +73,8 @@ export function TotalsBar({ snapshot, now }: { snapshot: WebSnapshot; now: numbe
   )
 }
 
-export function UpdateReady({ update, currentVersion, onInstall, onCheck = () => {} }: {
-  update: DesktopUpdateState; currentVersion: string; onInstall(): void; onCheck?(): void
+export function UpdateReady({ update, currentVersion, onInstall, onCheck = () => {}, onDownload = () => {} }: {
+  update: DesktopUpdateState; currentVersion: string; onInstall(): void; onCheck?(): void; onDownload?(): void
 }) {
   if (update.status === 'error') {
     return (
@@ -83,7 +83,10 @@ export function UpdateReady({ update, currentVersion, onInstall, onCheck = () =>
           <strong>Update couldn’t finish</strong>
           <small>{update.error ?? 'Check for updates again to retry.'}</small>
         </span>
-        <button type="button" onClick={onCheck}>Check Again</button>
+        <span className="update-actions">
+          <button type="button" onClick={onCheck}>Check Again</button>
+          <button type="button" className="update-download" onClick={onDownload}>Download Latest</button>
+        </span>
       </aside>
     )
   }

@@ -459,11 +459,12 @@ test('update chrome communicates download progress and disables duplicate restar
 
   const failed = renderToStaticMarkup(createElement(UpdateReady, {
     update: { status: 'error', availableVersion: '0.29.0', progressPercent: null, error: 'Native installer rejected the update' },
-    currentVersion: '0.28.7', onInstall: () => {}, onCheck: () => {},
+    currentVersion: '0.28.7', onInstall: () => {}, onCheck: () => {}, onDownload: () => {},
   }))
   assert.match(failed, /Update couldn’t finish/)
   assert.match(failed, /Native installer rejected the update/)
   assert.match(failed, /Check Again/)
+  assert.match(failed, /Download Latest/)
   assert.match(failed, /role="alert"/)
 })
 
