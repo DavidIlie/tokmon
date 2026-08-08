@@ -451,10 +451,11 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
       && (attemptBudget === undefined || attemptsUsed < attemptBudget),
     ),
     Schedule.modifyDelay(() => {
-      // Full jitter: many clients dropped by the same daemon restart must not
-      // redial in lockstep on identical exponential rungs.
-      const ceiling = Math.min(RECONNECT_MAX_DELAY_MS, reconnectBaseDelayMs * 1.5 ** attemptsUsed)
-      const delayMs = ceiling / 2 + Math.random() * (ceiling / 2)
+      // Upward jitter: many clients dropped by the same daemon restart must not
+      // redial in lockstep on identical exponential rungs. The rung is a floor
+      // (callers rely on "at least one full backoff"), so spread goes above it.
+      const rung = Math.min(RECONNECT_MAX_DELAY_MS, reconnectBaseDelayMs * 1.5 ** attemptsUsed)
+      const delayMs = rung * (1 + Math.random() * 0.25)
       attemptsUsed += 1
       return preemptibleDelay(delayMs)
     }),
@@ -525,15 +526,16 @@ export function createDaemonRpcClient(baseUrl: string, options: DaemonRpcClientO
           if (Cause.hasInterrupts(cause)) return rethrowCause(cause)
           const defect = cause.reasons.find(Cause.isDieReason)?.defect
           if (defect !== undefined) console.error('[tokmon] daemon RPC supervisor defect', defect)
-          // The ladder gave up with demand still live. A budgeted embedder
-          // (desktop) reacts to 'error', not to a parked 'reconnecting' — the
-          // last emission after a session-ended run. Without this, exhaustion
-          // after established-then-dropped sessions parks the client silently.
+          // The ladder gave up with demand still live. Connect failures emit
+          // 'error' themselves, but a session that connected then died leaves
+          // 'reconnecting' as the last emission — and a budgeted embedder
+          // (desktop) only schedules its outer retry on 'error'. Without this,
+          // budget exhaustion after a dropped session parks the client silently.
           if (!closed && subscriptions.size > 0 && attemptBudget !== undefined && attemptsUsed >= attemptBudget) {
             const end = cause.reasons.find(Cause.isFailReason)?.error as CycleEnd | undefined
-            setConn('error', end?._tag === 'connect-failed'
-              ? end.error
-              : new DaemonRpcConnectionError('daemon RPC reconnect budget exhausted'))
+            if (end?._tag === 'session-ended') {
+              setConn('error', new DaemonRpcConnectionError('daemon RPC reconnect budget exhausted'))
+            }
           }
           return Effect.void
         }),
