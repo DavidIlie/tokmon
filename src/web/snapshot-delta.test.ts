@@ -179,6 +179,20 @@ test('null transitions are sent explicitly, never confused with unchanged', () =
   assert.equal(decoded.accounts[0]!.billing, null)
 })
 
+test('reorder without content change ships zero upserts and applies the new order', () => {
+  const encoder = createSnapshotDeltaEncoder()
+  const decoder = createSnapshotDeltaDecoder()
+  decoder.apply(overWire(encoder.next(snapshot([account('a'), account('b'), account('c')]))) as never)
+
+  const reordered = snapshot([account('c'), account('a'), account('b')], 2_000)
+  const event = encoder.next(reordered)
+  const delta = event as Extract<typeof event, { _tag: 'delta' }>
+  assert.equal(delta.upserts.length, 0)
+  const decoded = decoder.apply(overWire(event) as never)
+  assert.deepEqual(decoded.accounts.map(a => a.id), ['c', 'a', 'b'])
+  assert.deepEqual(decoded, reordered)
+})
+
 test('decoder throws SnapshotDeltaDesyncError on a delta before any init', () => {
   const encoder = createSnapshotDeltaEncoder()
   const decoder = createSnapshotDeltaDecoder()

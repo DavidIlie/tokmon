@@ -87,6 +87,38 @@ function shellOf(account: WebAccount): Shell {
   return shell
 }
 
+// Shared across subscriptions like sectionFingerprints: account objects are
+// rebuilt once per engine snapshot and shared to every subscriber, so N
+// clients stringify each shell once per tick, not N times.
+const shellJsonCache = new WeakMap<object, string>()
+
+function shellJsonOf(account: WebAccount): string {
+  const cached = shellJsonCache.get(account)
+  if (cached) return cached
+  const json = JSON.stringify(shellOf(account))
+  shellJsonCache.set(account, json)
+  return json
+}
+
+/**
+ * Strip `undefined`-valued keys at every depth. Schema's optionalKey accepts
+ * absence but rejects explicit undefined, and frames carry provider-built
+ * objects whose optional keys aren't guaranteed absent. Deliberately NOT a
+ * JSON round-trip: JSON.stringify would coerce NaN/Infinity to null, turning
+ * a loud encode failure into silently wrong data in NullOr(Finite) fields.
+ */
+function scrubUndefined<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(scrubUndefined) as T
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [key, entry] of Object.entries(value)) {
+      if (entry !== undefined) out[key] = scrubUndefined(entry)
+    }
+    return out as T
+  }
+  return value
+}
+
 function metaOf(snapshot: WebSnapshot): SnapshotMetaWire {
   return {
     version: snapshot.version,
@@ -119,7 +151,7 @@ export function createSnapshotDeltaEncoder(): SnapshotDeltaEncoder {
   const remember = (snapshot: WebSnapshot): Map<string, EncodedAccountState> => {
     const state = new Map<string, EncodedAccountState>()
     for (const account of snapshot.accounts) {
-      state.set(account.id, { account, shellJson: JSON.stringify(shellOf(account)) })
+      state.set(account.id, { account, shellJson: shellJsonOf(account) })
     }
     return state
   }
@@ -128,43 +160,37 @@ export function createSnapshotDeltaEncoder(): SnapshotDeltaEncoder {
     next(snapshot) {
       if (previous === null) {
         previous = remember(snapshot)
-        // JSON round-trip drops explicit-undefined keys at every depth.
-        // Schema's optionalKey accepts absence but rejects `key: undefined`,
-        // and a producer emitting one anywhere in the account tree would
-        // otherwise fail the encode of every new subscription's init frame.
-        // One-time per subscription; deltas are built from JSON-derived parts
-        // (shellJson / section values that already round-tripped) so they
-        // don't need this.
-        const init = JSON.parse(JSON.stringify(snapshot)) as WireSnapshot
-        return { _tag: 'init', snapshot: init }
+        return { _tag: 'init', snapshot: scrubUndefined(snapshot) as unknown as WireSnapshot }
       }
 
       const upserts: AccountUpsertWire[] = []
       const nextState = new Map<string, EncodedAccountState>()
       for (const account of snapshot.accounts) {
         const prev = previous.get(account.id)
-        const shellJson = JSON.stringify(shellOf(account))
+        const shellJson = shellJsonOf(account)
         nextState.set(account.id, { account, shellJson })
 
-        const dashboardChanged = !prev || !sameSection(prev.account.dashboard, account.dashboard)
-        const tableChanged = !prev || !sameSection(prev.account.table, account.table)
-        const billingChanged = !prev || !sameSection(prev.account.billing, account.billing)
+        // `?? null`: sections are typed non-undefined but travel from provider
+        // code; an undefined would be scrubbed to "unchanged" otherwise.
+        const dashboard = account.dashboard ?? null
+        const table = account.table ?? null
+        const billing = account.billing ?? null
+        const dashboardChanged = !prev || !sameSection(prev.account.dashboard ?? null, dashboard)
+        const tableChanged = !prev || !sameSection(prev.account.table ?? null, table)
+        const billingChanged = !prev || !sameSection(prev.account.billing ?? null, billing)
         const shellChanged = !prev || prev.shellJson !== shellJson
         if (!shellChanged && !dashboardChanged && !tableChanged && !billingChanged) continue
 
         upserts.push({
           shell: JSON.parse(shellJson),
-          ...(dashboardChanged ? { dashboard: account.dashboard } : {}),
-          ...(tableChanged ? { table: account.table } : {}),
-          ...(billingChanged ? { billing: account.billing } : {}),
+          ...(dashboardChanged ? { dashboard } : {}),
+          ...(tableChanged ? { table } : {}),
+          ...(billingChanged ? { billing } : {}),
         } as AccountUpsertWire)
       }
 
       previous = nextState
-      // Same explicit-undefined scrub as init. Deltas are small (KBs), so the
-      // round-trip is cheap; meta and heavy sections travel by reference from
-      // provider-built objects whose optional keys aren't guaranteed absent.
-      return JSON.parse(JSON.stringify({ _tag: 'delta', meta: metaOf(snapshot), upserts })) as SnapshotEventWire
+      return scrubUndefined({ _tag: 'delta', meta: metaOf(snapshot), upserts }) as SnapshotEventWire
     },
   }
 }
@@ -216,16 +242,18 @@ export function createSnapshotDeltaDecoder(): SnapshotDeltaDecoder {
 
       const meta = event.meta
       const ordered: WebAccount[] = []
+      const live = new Set<string>()
       for (const id of meta.accountIds) {
+        // Duplicates would defeat the size-based staleness reasoning and can
+        // only mean a corrupt frame — fail into a fresh init.
+        if (live.has(id)) throw new SnapshotDeltaDesyncError(`duplicate account id ${id} in delta order`)
+        live.add(id)
         const account = accounts.get(id)
         if (!account) throw new SnapshotDeltaDesyncError(`delta references unknown account ${id}`)
         ordered.push(account)
       }
       // Drop state for accounts no longer in the authoritative order.
-      if (accounts.size !== meta.accountIds.length) {
-        const live = new Set(meta.accountIds)
-        for (const id of [...accounts.keys()]) if (!live.has(id)) accounts.delete(id)
-      }
+      for (const id of [...accounts.keys()]) if (!live.has(id)) accounts.delete(id)
 
       return {
         version: meta.version,
