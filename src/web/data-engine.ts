@@ -93,6 +93,12 @@ export interface DataEngine {
    */
   configKey?(): string
   broadcastConfig(config: Config): void
+  /**
+   * Settle any in-flight snapshot-cache write. The write moved off the event
+   * loop, so shutdown must wait for it or `process.exit` can tear the process
+   * down mid-write and drop the last snapshot.
+   */
+  drainPersist?(): Promise<void>
   stop(): void
 }
 
@@ -156,7 +162,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   let loopFibers: Fiber.Fiber<unknown, unknown>[] = []
 
   let lastPersist = 0
-  let persisting = false
+  let persistInFlight: Promise<void> | null = null
   let lastReveal = 0
 
   // Bumped on setConfig(); in-flight loops bail if epoch changed to avoid clobbering reconciled maps.
@@ -214,20 +220,21 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   const persist = () => {
     if (!current) return
     if (!current.accounts.some(a => a.hasUsage && a.table != null)) return
-    if (persisting || Date.now() - lastPersist < SNAPSHOT_CACHE_THROTTLE_MS) return
+    if (persistInFlight || Date.now() - lastPersist < SNAPSHOT_CACHE_THROTTLE_MS) return
     lastPersist = Date.now()
-    persisting = true
     const payload = JSON.stringify(current)
-    void (async () => {
+    const write = (async () => {
       try {
         await mkdir(cacheDir(), { recursive: true, mode: 0o700 }) // 0o700: owner-only usage data
         const tmp = `${snapshotCacheFile()}.${process.pid}.tmp`
         await writeFile(tmp, payload, { mode: 0o600 })
         await rename(tmp, snapshotCacheFile())
-      } catch {} finally {
-        persisting = false
-      }
+      } catch {}
     })()
+    persistInFlight = write
+    void write.finally(() => {
+      if (persistInFlight === write) persistInFlight = null
+    })
   }
 
   const rebuild = () => {
@@ -490,6 +497,10 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       try { onConfig(currentConfig) } catch {}
       configSubscribers.add(onConfig)
       return () => { configSubscribers.delete(onConfig) }
+    },
+
+    async drainPersist() {
+      await persistInFlight
     },
 
     stop() {

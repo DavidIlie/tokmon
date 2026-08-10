@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { candidatePorts, findRelocatedDaemon, isLoopbackHostname } from './daemon-locator'
+import { candidatePorts, channelForPort, findRelocatedDaemon, isLoopbackHostname } from './daemon-locator'
 import { DAEMON_PORT_SPAN, daemonPortCandidates } from '../../../src/web/daemon-channel'
 
 const health = (body: unknown, ok = true) => ({
@@ -108,4 +108,46 @@ test('no daemon anywhere on the ladder resolves to null rather than hanging', as
     fetchImpl: fetchReturning({}),
   })
   assert.equal(found, null)
+})
+
+test('a dev tab is never offered the release daemon, or the reverse', async () => {
+  const release = daemonPortCandidates('release')[0]!
+  const dev = daemonPortCandidates('dev')[0]!
+
+  // Release and dev are separate installations with separate data. A dev tab
+  // relocated onto release would silently show the wrong install's usage.
+  assert.equal(await findRelocatedDaemon({
+    hostname: '127.0.0.1',
+    protocol: 'http:',
+    currentPort: daemonPortCandidates('dev')[1]!,
+    fetchImpl: fetchReturning({ [`http://127.0.0.1:${release}`]: { ...TOKMON, channel: 'release' } }),
+  }), null)
+
+  assert.equal(await findRelocatedDaemon({
+    hostname: '127.0.0.1',
+    protocol: 'http:',
+    currentPort: daemonPortCandidates('release')[1]!,
+    fetchImpl: fetchReturning({ [`http://127.0.0.1:${dev}`]: { ...TOKMON, channel: 'dev' } }),
+  }), null)
+
+  // ...but each still finds its own.
+  assert.equal(await findRelocatedDaemon({
+    hostname: '127.0.0.1',
+    protocol: 'http:',
+    currentPort: daemonPortCandidates('dev')[1]!,
+    fetchImpl: fetchReturning({ [`http://127.0.0.1:${dev}`]: { ...TOKMON, channel: 'dev' } }),
+  }), `http://127.0.0.1:${dev}`)
+})
+
+test('a tab on a legacy ephemeral port is treated as release', async () => {
+  const release = daemonPortCandidates('release')[0]!
+  assert.equal(channelForPort(60049), 'release')
+  assert.equal(channelForPort(daemonPortCandidates('dev')[3]!), 'dev')
+  // Daemons predating channels omit the field and occupied release.
+  assert.equal(await findRelocatedDaemon({
+    hostname: '127.0.0.1',
+    protocol: 'http:',
+    currentPort: 60049,
+    fetchImpl: fetchReturning({ [`http://127.0.0.1:${release}`]: { ok: true, version: '0.28.5' } }),
+  }), `http://127.0.0.1:${release}`)
 })

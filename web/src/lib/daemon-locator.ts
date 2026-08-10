@@ -1,4 +1,4 @@
-import { daemonPortCandidates } from '../../../src/web/daemon-channel'
+import { daemonChannelFromWire, daemonPortCandidates, type DaemonChannel } from '../../../src/web/daemon-channel'
 
 /**
  * A dashboard tab is bound to the origin it was served from. When the daemon
@@ -20,14 +20,32 @@ interface HealthBody {
   ok?: unknown
   version?: unknown
   protocolVersion?: unknown
+  channel?: unknown
 }
 
-function isTokmonHealth(body: unknown): boolean {
+/**
+ * The release and dev daemons are separate installations with separate data.
+ * A dev tab offered the release daemon would silently show the wrong install's
+ * usage, so the candidate has to be on this tab's channel — the ranges are
+ * adjacent enough that a single probe batch spans both.
+ */
+function isTokmonHealth(body: unknown, expected: DaemonChannel): boolean {
   const health = body as HealthBody | null
   if (!health || health.ok !== true) return false
   // Old daemons predate protocolVersion, so accept either identity marker
-  // rather than navigating a tab to whatever else happens to answer on 4317.
-  return typeof health.version === 'string' || typeof health.protocolVersion === 'number'
+  // rather than offering a tab whatever else happens to answer on 4317.
+  if (typeof health.version !== 'string' && typeof health.protocolVersion !== 'number') return false
+  return daemonChannelFromWire(health.channel) === expected
+}
+
+/**
+ * Which channel this tab belongs to. A port inside a known range is definitive.
+ * Anything else is a tab from a build that still used ephemeral ports, where the
+ * channel is unknowable once the daemon is gone — release is the default channel
+ * and the only one a non-developer ever runs, so that is the safe assumption.
+ */
+export function channelForPort(currentPort: number): DaemonChannel {
+  return DEV_PORTS.includes(currentPort) ? 'dev' : 'release'
 }
 
 export function isLoopbackHostname(hostname: string): boolean {
@@ -56,7 +74,7 @@ export interface LocatorDeps {
   timeoutMs?: number
 }
 
-async function probe(origin: string, deps: LocatorDeps): Promise<boolean> {
+async function probe(origin: string, deps: LocatorDeps, expected: DaemonChannel): Promise<boolean> {
   const doFetch = deps.fetchImpl ?? fetch
   try {
     const response = await doFetch(`${origin}/healthz`, {
@@ -64,7 +82,7 @@ async function probe(origin: string, deps: LocatorDeps): Promise<boolean> {
       signal: AbortSignal.timeout(deps.timeoutMs ?? PROBE_TIMEOUT_MS),
     })
     if (!response.ok) return false
-    return isTokmonHealth(await response.json())
+    return isTokmonHealth(await response.json(), expected)
   } catch {
     return false
   }
@@ -77,13 +95,14 @@ async function probe(origin: string, deps: LocatorDeps): Promise<boolean> {
  */
 export async function findRelocatedDaemon(deps: LocatorDeps): Promise<string | null> {
   if (deps.protocol !== 'http:' || !isLoopbackHostname(deps.hostname)) return null
+  const expected = channelForPort(deps.currentPort)
   const ports = candidatePorts(deps.currentPort)
   for (let index = 0; index < ports.length; index += PROBE_BATCH) {
     const batch = ports.slice(index, index + PROBE_BATCH)
     const results = await Promise.all(
       batch.map(async (port) => {
         const origin = `${deps.protocol}//${deps.hostname}:${port}`
-        return await probe(origin, deps) ? origin : null
+        return await probe(origin, deps, expected) ? origin : null
       }),
     )
     // Preference order within a batch is the candidate order, not whichever

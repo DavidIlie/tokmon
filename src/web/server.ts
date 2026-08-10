@@ -214,6 +214,9 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
         if (stopped) return
         stopped = true
         engine?.stop()
+        // The snapshot cache write is off-loop now, so it has to be settled
+        // before the caller unlinks the lock and exits the process.
+        await engine?.drainPersist?.().catch(() => {})
         await closeWsRpc?.().catch(() => {})
         server.closeAllConnections?.()
         await closeServer(server)

@@ -115,15 +115,20 @@ async function localSnapshot(timeoutMs: number, refresh: 'table' | 'all' | null)
   })
   try {
     // The engine hydrates from the on-disk cache when constructed, so --cached
-    // can answer without touching a provider. Anything else needs a real pass.
-    const cached = refresh === null ? engine.snapshot() : null
-    if (cached) return cached
-    await withTimeout(engine.refresh(refresh ?? 'all'), timeoutMs).catch(() => {})
+    // answers without touching a provider. When there is no cache, --cached must
+    // say so rather than quietly turning into the full scan it exists to avoid.
+    if (refresh === null) {
+      const cached = engine.snapshot()
+      if (cached) return cached
+      throw new Error('no cached usage data is available; re-run without --cached')
+    }
+    await withTimeout(engine.refresh(refresh), timeoutMs).catch(() => {})
     const snapshot = engine.snapshot()
     if (!snapshot) throw new Error('no usage data could be read locally')
     return snapshot
   } finally {
     engine.stop()
+    await engine.drainPersist?.().catch(() => {})
   }
 }
 
