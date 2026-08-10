@@ -88,9 +88,52 @@ function isSnapshot(value: unknown): value is WebSnapshot {
 
 const delay = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms) })
 
+/**
+ * Compute a snapshot in this process, with no daemon.
+ *
+ * The singleton is shared by independently released surfaces: the desktop app
+ * auto-updates while an npm-installed CLI does not, and a protocol bump between
+ * them is refused by design and never recovers on its own. Refusal used to mean
+ * this command produced nothing at all — exit 1, no output — which reads as a
+ * broken tool rather than a version mismatch. The readers are right here, so
+ * answer the question locally and say why on stderr.
+ *
+ * Loaded lazily: the attached path must not pay for the engine graph.
+ */
+async function localSnapshot(timeoutMs: number, refresh: 'table' | 'all' | null): Promise<WebSnapshot> {
+  const [{ loadConfig }, { resolveEngineConfig }, { createDataEngine }, { appVersion }] = await Promise.all([
+    import('./config'),
+    import('./web/config-control'),
+    import('./web/data-engine'),
+    import('./web/static'),
+  ])
+  const config = await loadConfig()
+  const engine = createDataEngine({
+    version: appVersion(),
+    config,
+    ...await resolveEngineConfig(config),
+  })
+  try {
+    // The engine hydrates from the on-disk cache when constructed, so --cached
+    // can answer without touching a provider. Anything else needs a real pass.
+    const cached = refresh === null ? engine.snapshot() : null
+    if (cached) return cached
+    await withTimeout(engine.refresh(refresh ?? 'all'), timeoutMs).catch(() => {})
+    const snapshot = engine.snapshot()
+    if (!snapshot) throw new Error('no usage data could be read locally')
+    return snapshot
+  } finally {
+    engine.stop()
+  }
+}
+
 export async function fetchDaemonSnapshot(timeoutMs: number, refresh: 'table' | 'all' | null): Promise<WebSnapshot> {
   const handle = await attachOrSpawn({ timeoutMs })
-  if (handle.kind !== 'spawned' || !handle.baseUrl) throw new Error(handle.issue?.message ?? 'tokmon daemon is unavailable')
+  if (handle.kind !== 'spawned' || !handle.baseUrl) {
+    const reason = handle.issue?.message ?? 'the tokmon background service is unavailable'
+    process.stderr.write(`tokmon: ${reason}\ntokmon: reading usage locally instead.\n`)
+    return await localSnapshot(timeoutMs, refresh)
+  }
   const deadline = Date.now() + timeoutMs
 
   if (refresh) {
@@ -122,7 +165,13 @@ export async function fetchDaemonSnapshot(timeoutMs: number, refresh: 'table' | 
     } catch {}
     await delay(100)
   }
-  throw new Error(`snapshot unavailable after ${timeoutMs / 1_000}s`)
+  // Reachable but never served a usable snapshot. Same outcome for the caller as
+  // an unreachable daemon, so take the same escape hatch rather than exiting empty.
+  process.stderr.write(
+    `tokmon: the background service did not return data within ${timeoutMs / 1_000}s\n`
+    + 'tokmon: reading usage locally instead.\n',
+  )
+  return await localSnapshot(timeoutMs, refresh)
 }
 
 function json(value: unknown, compact: boolean): string {

@@ -192,32 +192,48 @@ export class UsageShardStore<T> {
     }
 
     const entries = await parse()
-    const cached: Cached<T> = { source: { ...source }, entries, bytes: this.estimate(entries), persisted: false }
+    // Serialize once. The shard that is about to be written is byte-for-byte
+    // what the LRU wants to account for, so encoding a second time purely to
+    // measure it doubled the cost on exactly the file that changes most often.
+    // A serialization failure must stay as survivable as it was when the byte
+    // count came from a separate guarded estimate: keep serving the entries and
+    // let the write path fail on its own inside persist().
+    let serialized: string | undefined
+    try { serialized = this.serialize({ ...source }, entries) } catch {}
+    const cached: Cached<T> = {
+      source: { ...source },
+      entries,
+      bytes: serialized === undefined ? 1024 : Buffer.byteLength(serialized),
+      persisted: false,
+    }
     // A slower parse of an older file revision must not overwrite the shard or
     // memory entry produced by a newer observation of the same path.
     if (this.latestRequest.get(key) !== requestKey) return cached
     this.remember(key, cached)
-    await this.persist(key, cached)
+    await this.persist(key, cached, serialized)
     void this.prune().catch(() => {})
     return cached
   }
 
   private async read(key: string, source: UsageCacheSource): Promise<Cached<T> | null> {
     try {
-      const raw = JSON.parse(await readFile(this.file(key), 'utf8')) as DiskShard
+      const text = await readFile(this.file(key), 'utf8')
+      const raw = JSON.parse(text) as DiskShard
       if (!raw || raw.format !== 'tokmon.usage-shard/v1'
         || !sameFingerprint(raw.fingerprint, this.options.fingerprint)
         || !sameSource(raw.source, source)) return null
       const entries = this.options.decode(raw.entries)
       if (!entries) return null
-      return { source: { ...source }, entries, bytes: this.estimate(entries), persisted: true }
+      // The file we just read is the serialized shard; its length is the
+      // accounting figure, so re-encoding to measure it is pure waste.
+      return { source: { ...source }, entries, bytes: Buffer.byteLength(text), persisted: true }
     } catch {
       return null
     }
   }
 
-  private async persist(key: string, cached: Cached<T>): Promise<void> {
-    const write = this.write(key, cached).then(() => { cached.persisted = true }).catch(() => {
+  private async persist(key: string, cached: Cached<T>, serialized?: string): Promise<void> {
+    const write = this.write(key, cached, serialized).then(() => { cached.persisted = true }).catch(() => {
       // Keep serving the parsed entries.  A later cache hit retries persistence.
       cached.persisted = false
     })
@@ -225,18 +241,25 @@ export class UsageShardStore<T> {
     try { await write } finally { this.writes.delete(write) }
   }
 
-  private async write(key: string, cached: Cached<T>): Promise<void> {
-    await this.ensureDirectory()
-    const file = this.file(key)
-    const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`
+  private serialize(source: UsageCacheSource, entries: T[]): string {
     const value: DiskShard = {
       format: 'tokmon.usage-shard/v1',
       fingerprint: this.options.fingerprint,
-      source: cached.source,
-      entries: this.options.encode(cached.entries),
+      source,
+      entries: this.options.encode(entries),
     }
+    return JSON.stringify(value)
+  }
+
+  private async write(key: string, cached: Cached<T>, serialized?: string): Promise<void> {
+    await this.ensureDirectory()
+    const file = this.file(key)
+    const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`
+    // The retry path (a memory hit whose earlier write failed) has no payload
+    // in hand and re-serializes; the common path never does.
+    const payload = serialized ?? this.serialize(cached.source, cached.entries)
     try {
-      await writeFile(tmp, JSON.stringify(value), { encoding: 'utf8', mode: 0o600 })
+      await writeFile(tmp, payload, { encoding: 'utf8', mode: 0o600 })
       await rename(tmp, file)
     } catch (error) {
       // This process created this exact name; never touch another writer's temp.
@@ -286,11 +309,6 @@ export class UsageShardStore<T> {
 
   private key(path: string): string { return digest(path) }
   private file(key: string): string { return join(this.shardDir, `${key}.json`) }
-  private estimate(entries: T[]): number {
-    // Serialized length tracks the dominant retention cost without retaining a
-    // second copy of every payload just for accounting.
-    try { return Buffer.byteLength(JSON.stringify(this.options.encode(entries))) } catch { return 1024 }
-  }
 }
 
 async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {

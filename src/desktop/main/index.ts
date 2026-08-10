@@ -9,6 +9,7 @@ import { usageFromHeadroom } from '../../usage-semantics'
 import { formatCompactTokens } from '../../shared/format'
 import { createDaemonRpcClient, type DaemonRpcClient } from '../../client/daemon-rpc-client'
 import { acquireOrAttachDaemon, type DaemonController } from '../../web/daemon-controller'
+import { readLock } from '../../web/lockfile'
 import { DesktopStateStore, trayStripPayloadMatchesState } from './desktop-state'
 import { DesktopUpdaterController, type DesktopAutoUpdater } from './desktop-updater'
 import { desktopIdentity, desktopUserDataPath, resolveDesktopChannel } from './desktop-runtime'
@@ -103,6 +104,7 @@ let trayRef: Tray | null = null
 const runtimeDir = path.dirname(fileURLToPath(import.meta.url))
 const { autoUpdater } = updaterPackage
 const UPDATE_INSTALL_HANDOFF_TIMEOUT_MS = 2 * 60 * 1_000
+const LOCK_SELF_CHECK_INTERVAL_MS = 30_000
 // Stable macOS/Windows identity keeps the user's chosen status-item position
 // across launches instead of registering a brand-new item every time.
 const RELEASE_TRAY_GUID = '6515998a-4215-4ba2-b9be-c1f2fe105d2a'
@@ -225,6 +227,7 @@ async function bootstrap(): Promise<void> {
   let promotion: PromotionState = { primaryId: null, promotedAt: null }
   let connectAttempt: Promise<void> | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  let lockSelfCheck: ReturnType<typeof setInterval> | null = null
   let reconnectFailures = 0
   let unsubSnapshot: (() => void) | null = null
   let unsubConfig: (() => void) | null = null
@@ -349,6 +352,7 @@ async function bootstrap(): Promise<void> {
   }
 
   const closeDaemonSession = async () => {
+    stopLockSelfCheck()
     const activeRpc = rpc
     const activeDaemon = daemon
     rpc = null
@@ -362,6 +366,33 @@ async function bootstrap(): Promise<void> {
       await activeRpc?.close().catch(() => {})
       await activeDaemon?.stop().catch(() => {})
     })(), 4_000).catch(error => console.warn('[tokmon] background service cleanup timed out', error))
+  }
+
+  /**
+   * The CLI daemon notices a reclaimed lock and exits (src/web/daemon.ts). This
+   * process hosts its daemon in-process and had no equivalent, so a reclaim left
+   * Electron serving an orphaned HTTP server and running a second data engine
+   * forever: two daemons polling the same logs, clients split across them, and
+   * nothing to indicate it. An owner that no longer owns the lock rejoins the
+   * singleton instead of exiting — this is the menu-bar app, not a daemon.
+   */
+  const stopLockSelfCheck = () => {
+    if (!lockSelfCheck) return
+    clearInterval(lockSelfCheck)
+    lockSelfCheck = null
+  }
+
+  const startLockSelfCheck = (controller: DaemonController) => {
+    stopLockSelfCheck()
+    if (controller.role !== 'owner') return
+    lockSelfCheck = setInterval(() => {
+      if (closing || daemon !== controller) return
+      const current = readLock({ channel: controller.lock.channel })
+      if (current?.ownerId === controller.lock.ownerId && current.pid === process.pid) return
+      console.warn('[tokmon] background service lock lost or replaced — rejoining')
+      void connectDaemon(true)
+    }, LOCK_SELF_CHECK_INTERVAL_MS)
+    lockSelfCheck.unref?.()
   }
 
   const scheduleReconnect = (connect: (replace?: boolean) => Promise<void>) => {
@@ -387,9 +418,10 @@ async function bootstrap(): Promise<void> {
         // The web runtime resolves lock isolation from TOKMON_CHANNEL. Packaged
         // dev launches therefore attach to the same dev daemon as pnpm clients.
         process.env.TOKMON_WEB_MODE = 'prod'
+        // No explicit port: take the channel's canonical port so "Open
+        // Dashboard" produces a URL that still works after the app restarts.
         const controller = await acquireOrAttachDaemon({
           ownerKind: 'desktop',
-          port: 0,
           webRoot,
           version: app.getVersion(),
         })
@@ -398,6 +430,7 @@ async function bootstrap(): Promise<void> {
           return
         }
         daemon = controller
+        startLockSelfCheck(controller)
         state.update({
           daemon: {
             role: controller.role,

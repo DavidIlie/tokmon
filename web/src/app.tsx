@@ -23,6 +23,7 @@ import { deriveAll, hasBillingSignal, PERIODS, type Derived, type Filters } from
 import { cleanUnavailableFilters } from './lib/filter-cleanup'
 import { useFilters } from './lib/use-filters'
 import { useSnapshot } from './lib/use-snapshot'
+import { followDaemonRelocation, subscribeDaemonRelocation } from './lib/rpc-client'
 import { configStateFromUpdateFailure, refreshAllData, subscribeConfig, togglePrivacyMode } from './lib/config-client'
 import { isRefreshShortcut } from './lib/refresh-shortcut'
 import { isPrivacyShortcut } from './lib/privacy-shortcut'
@@ -81,6 +82,8 @@ function RootLayout() {
   const pathname = useRouterState({ select: s => s.location.pathname })
   const navigate = useNavigate()
   const { snapshot, conn } = useSnapshot()
+  const [relocatedOrigin, setRelocatedOrigin] = useState<string | null>(null)
+  useEffect(() => subscribeDaemonRelocation(setRelocatedOrigin), [])
   const [filters, setFilters] = useFilters()
   const theme = useTheme()
   const settingsDeepLink = pathname === '/settings/accounts'
@@ -269,6 +272,21 @@ function RootLayout() {
         {snapshot && conn !== 'live' && (
           <div className="mb-4 rounded border border-line bg-bg-1 px-3 py-2 text-xs text-fg-dim" role="status" aria-live="polite">
             {connectionMessage(conn, 'Reconnecting…')}
+          </div>
+        )}
+        {relocatedOrigin && conn !== 'live' && (
+          // The origin is shown rather than followed automatically: this page
+          // cannot prove the responder is really tokmon, so the decision is the
+          // user's and the address they would land on has to be visible.
+          <div className="mb-4 flex flex-wrap items-center gap-2 rounded border border-line bg-bg-1 px-3 py-2 text-xs text-fg-dim" role="status" aria-live="polite">
+            <span>A tokmon daemon is answering at <code className="text-fg">{relocatedOrigin}</code>. This tab is on {window.location.origin}.</span>
+            <button
+              type="button"
+              className="rounded border border-line px-2 py-0.5 text-fg hover:bg-bg-2"
+              onClick={followDaemonRelocation}
+            >
+              Open it
+            </button>
           </div>
         )}
         {snapshot?.seeded && (

@@ -217,7 +217,10 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
   const entry = opts.entry ?? process.argv[1]
   if (!entry) return degraded()
   const execPath = opts.execPath ?? process.execPath
-  const args = ['__daemon', '--port', '0', '--no-open']
+  // No explicit port: the daemon takes its channel's canonical port so the
+  // dashboard keeps a predictable origin across restarts. An ephemeral port
+  // stranded every open browser tab the moment this daemon was replaced.
+  const args = ['__daemon', '--no-open']
   const env = {
     ...baseEnv,
     TOKMON_CHANNEL: channel,

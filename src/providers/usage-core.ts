@@ -165,25 +165,56 @@ export async function flushDisk(): Promise<void> {
   await Promise.all([...stores.values()].map(store => store.flush()))
 }
 
-export async function walkFiles(root: string): Promise<string[]> {
-  const files: string[] = []
-  const stack = ['']
-  while (stack.length > 0) {
-    const rel = stack.pop() ?? ''
-    const dir = rel ? join(root, rel) : root
-    let entries: Dirent<string>[]
-    try {
-      entries = await readdir(dir, { withFileTypes: true })
-    } catch {
-      continue
-    }
-    for (const entry of entries) {
-      const child = rel ? join(rel, entry.name) : entry.name
-      if (entry.isDirectory()) stack.push(child)
-      else if (entry.isFile()) files.push(child)
+async function mapLimit<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++
+      await fn(items[index]!, index)
     }
   }
-  return files
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+}
+
+// Discovery re-walks the whole session tree on every refresh tick, so its cost
+// is paid continuously rather than once. One syscall at a time leaves libuv's
+// threadpool idle between round trips and stretches a tick far enough that
+// /healthz — served from this same event loop — misses the discovery probe
+// budgets, at which point clients declare a live daemon dead. Fan out instead.
+const DIR_CONCURRENCY = 8
+const STAT_CONCURRENCY = 8
+
+export async function walkFiles(root: string): Promise<string[]> {
+  const files: string[] = []
+  let frontier = ['']
+  while (frontier.length > 0) {
+    const children: string[] = []
+    await mapLimit(frontier, DIR_CONCURRENCY, async (rel) => {
+      const dir = rel ? join(root, rel) : root
+      let entries: Dirent<string>[]
+      try {
+        entries = await readdir(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const entry of entries) {
+        const child = rel ? join(rel, entry.name) : entry.name
+        if (entry.isDirectory()) children.push(child)
+        else if (entry.isFile()) files.push(child)
+      }
+    })
+    frontier = children
+  }
+  // Concurrent workers complete in whatever order the filesystem answers, so
+  // the raw order varies run to run. Downstream that is not cosmetic: dedupe()
+  // is last-write-wins across files, and shard-cache eviction follows load
+  // order, so an unstable order makes results drift between identical refreshes.
+  // Sorting costs ~1ms on a few thousand paths and buys a stable contract.
+  return files.sort()
 }
 
 /**
@@ -224,34 +255,52 @@ export async function collectSessionFiles(
   predicate: (path: string) => boolean,
   since: number,
 ): Promise<{ path: string; mtimeMs: number; size: number }[]> {
-  const files: { path: string; mtimeMs: number; size: number }[] = []
+  const walks = new Array<string[]>(roots.length)
+  await mapLimit(roots, DIR_CONCURRENCY, async (root, index) => {
+    walks[index] = await walkFiles(root)
+  })
+
+  const candidates: string[] = []
   const seen = new Set<string>()
-  const seenIno = new Set<string>()
-  for (const root of roots) {
-    for (const relativePath of await walkFiles(root)) {
+  for (const [index, root] of roots.entries()) {
+    for (const relativePath of walks[index] ?? []) {
       if (!predicate(relativePath)) continue
       const path = join(root, relativePath)
       if (seen.has(path)) continue
       seen.add(path)
-      try {
-        const stat = await fsStat(path)
-        if (stat.mtimeMs < since) continue
-        if (stat.ino && process.platform !== 'win32') {
-          const inode = `${stat.dev}:${stat.ino}`
-          if (seenIno.has(inode)) continue
-          seenIno.add(inode)
-        }
-        files.push({ path, mtimeMs: stat.mtimeMs, size: stat.size })
-      } catch {}
+      candidates.push(path)
     }
   }
-  return files
-}
 
-async function mapLimit<T>(items: T[], limit: number, fn: (t: T) => Promise<void>): Promise<void> {
-  let i = 0
-  const worker = async () => { while (i < items.length) await fn(items[i++]) }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  // Stat concurrently, but keep results slot-indexed so the inode filter below
+  // still runs in candidate order. Which of two hardlinked paths wins must not
+  // depend on which stat happened to resolve first.
+  const stats = new Array<{ mtimeMs: number; size: number; inode: string | null } | null>(candidates.length)
+  await mapLimit(candidates, STAT_CONCURRENCY, async (path, index) => {
+    try {
+      const stat = await fsStat(path)
+      stats[index] = {
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        inode: stat.ino && process.platform !== 'win32' ? `${stat.dev}:${stat.ino}` : null,
+      }
+    } catch {
+      stats[index] = null
+    }
+  })
+
+  const files: { path: string; mtimeMs: number; size: number }[] = []
+  const seenIno = new Set<string>()
+  for (const [index, path] of candidates.entries()) {
+    const stat = stats[index]
+    if (!stat || stat.mtimeMs < since) continue
+    if (stat.inode !== null) {
+      if (seenIno.has(stat.inode)) continue
+      seenIno.add(stat.inode)
+    }
+    files.push({ path, mtimeMs: stat.mtimeMs, size: stat.size })
+  }
+  return files
 }
 
 export async function loadCachedEntries(

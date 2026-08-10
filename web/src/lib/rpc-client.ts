@@ -4,6 +4,7 @@ import {
   type RpcConnState,
 } from '../../../src/client/daemon-rpc-client'
 import { TOKMON_PROTOCOL_VERSION } from '../../../src/rpc/contract'
+import { findRelocatedDaemon } from './daemon-locator'
 
 let client: DaemonRpcClient | null = null
 export type BrowserRpcConnState = Exclude<RpcConnState, 'closed'>
@@ -72,8 +73,12 @@ export function daemonRpcClient(): DaemonRpcClient {
         if (state !== 'closed') lastConn = state
         // Persistent failures on a visible tab may be protocol drift after a
         // daemon upgrade (the WS connects but every stream frame fails to
-        // decode) — reconnects alone can never recover that.
-        if (state === 'error') void checkProtocolDrift()
+        // decode), or the daemon may have restarted on another port. Neither
+        // is recoverable by redialling this origin.
+        if (state === 'error') {
+          void checkProtocolDrift()
+          void checkDaemonRelocated()
+        }
         handleRpcConn(state)
       },
     })
@@ -83,6 +88,7 @@ export function daemonRpcClient(): DaemonRpcClient {
     const wake = () => {
       if (lastConn !== 'live') {
         void checkProtocolDrift()
+        void checkDaemonRelocated()
         client?.reconnectNow()
       }
     }
@@ -92,6 +98,57 @@ export function daemonRpcClient(): DaemonRpcClient {
     })
   }
   return client
+}
+
+let relocating = false
+let lastRelocationAttempt = 0
+let relocationTarget: string | null = null
+const RELOCATION_COOLDOWN_MS = 15_000
+const relocationListeners = new Set<(origin: string | null) => void>()
+
+/**
+ * The supervisor redials this origin forever, which can never succeed once the
+ * daemon has moved to another port. Reconnects are the right first response, so
+ * this only runs after the transport has actually failed, and at a cooldown —
+ * it is a recovery path, not a poll.
+ *
+ * Deliberately does NOT navigate on its own. Since the daemon now occupies a
+ * small fixed port range, any local process can pre-bind a candidate port and
+ * answer /healthz convincingly — the body carries no secret a real daemon could
+ * prove with. Auto-navigating would hand that impostor a live tab. So the
+ * destination is offered to the user with its origin shown, and only an explicit
+ * click moves the page.
+ */
+async function checkDaemonRelocated(): Promise<void> {
+  if (relocating || reloadingForProtocolDrift || relocationTarget) return
+  if (Date.now() - lastRelocationAttempt < RELOCATION_COOLDOWN_MS) return
+  lastRelocationAttempt = Date.now()
+  relocating = true
+  try {
+    const origin = await findRelocatedDaemon({
+      hostname: window.location.hostname,
+      protocol: window.location.protocol,
+      currentPort: Number(window.location.port),
+    })
+    if (!origin) return
+    relocationTarget = origin
+    for (const listener of relocationListeners) listener(origin)
+  } finally {
+    relocating = false
+  }
+}
+
+export function subscribeDaemonRelocation(listener: (origin: string | null) => void): () => void {
+  relocationListeners.add(listener)
+  listener(relocationTarget)
+  return () => { relocationListeners.delete(listener) }
+}
+
+/** Follow the offered relocation, preserving the route the user was on. */
+export function followDaemonRelocation(): void {
+  if (!relocationTarget) return
+  const { pathname, search, hash } = window.location
+  window.location.assign(`${relocationTarget}${pathname}${search}${hash}`)
 }
 
 let reloadingForProtocolDrift = false

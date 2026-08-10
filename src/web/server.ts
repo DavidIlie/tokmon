@@ -9,13 +9,15 @@ import type { WebSnapshot } from './contract'
 import { resolveEngineConfig } from './config-control'
 import { mountWsRpc } from './ws'
 import { isAllowedHostHeader, isSameOriginRequest } from './request-guard'
-import { resolveDaemonChannel, type DaemonChannel } from './daemon-channel'
+import {
+  DAEMON_PORT_SPAN,
+  daemonPortBase,
+  resolveDaemonChannel,
+  type DaemonChannel,
+} from './daemon-channel'
 
 const LOOPBACK_HOST = '127.0.0.1'
 const NETWORK_HOST = '0.0.0.0'
-
-const DEFAULT_PORT = 4317
-const MAX_PORT_TRIES = 20
 export interface WebServerController {
   url: string
   port: number
@@ -50,6 +52,26 @@ function tokenMatches(given: string | undefined, expected: string): boolean {
   const actual = Buffer.from(given)
   const token = Buffer.from(expected)
   return actual.length === token.length && timingSafeEqual(actual, token)
+}
+
+/**
+ * A dashboard tab stranded on a dead origin has to probe the other candidate
+ * ports to find where the daemon moved, and a cross-port fetch is cross-origin.
+ * Echo the origin for loopback callers only: a page on a real site sends its own
+ * scheme/host here and gets no header, so it still cannot read this response —
+ * exactly as before this existed. The Host guard above is untouched.
+ */
+function allowLoopbackOrigin(req: IncomingMessage, res: ServerResponse): void {
+  const origin = header(req, 'origin')
+  if (!origin) return
+  try {
+    const url = new URL(origin)
+    if (url.protocol !== 'http:') return
+    const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+    if (hostname !== '127.0.0.1' && hostname !== 'localhost' && hostname !== '::1') return
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Vary', 'Origin')
+  } catch {}
 }
 
 function guardHost(req: IncomingMessage, res: ServerResponse, config: Config): boolean {
@@ -94,6 +116,7 @@ function createRouter(
     }
 
     if (path === '/healthz') {
+      allowLoopbackOrigin(req, res)
       sendJson(res, 200, {
         ok: true,
         ready: engine.snapshot() !== null,
@@ -168,7 +191,12 @@ export async function startWebServer(opts: StartOptions): Promise<WebServerContr
     ))
     closeWsRpc = await mountWsRpc(server, { engine, state })
     const bindHost = state.config.allowNetworkAccess ? NETWORK_HOST : LOOPBACK_HOST
-    const port = await listenWithFallback(server, opts.port ?? DEFAULT_PORT, bindHost)
+    const port = await listenWithFallback(
+      server,
+      opts.port ?? daemonPortBase(channel),
+      bindHost,
+      DAEMON_PORT_SPAN,
+    )
     const serverUrl = `http://${LOOPBACK_HOST}:${port}`
 
     if (vite?.warmupRequest) {
@@ -215,27 +243,33 @@ function closeServer(server: Server, timeoutMs = 1_000): Promise<void> {
   })
 }
 
-function listenWithFallback(server: Server, startPort: number, host: string): Promise<number> {
+function listenWithFallback(server: Server, startPort: number, host: string, span: number): Promise<number> {
   return new Promise((resolve, reject) => {
     if (startPort === 0) {
-      server.once('error', reject)
+      const onError = (error: unknown) => reject(error)
+      server.once('error', onError)
       server.listen(0, host, () => {
+        server.off('error', onError)
         const addr = server.address()
         resolve(typeof addr === 'object' && addr ? addr.port : 0)
       })
       return
     }
     let port = startPort
-    let tries = 0
+    let tries = 1
     const attempt = () => {
-      server.once('error', (err: NodeJS.ErrnoException) => {
-        if (err.code === 'EADDRINUSE' && tries < MAX_PORT_TRIES) {
+      const onError = (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE' && tries < span) {
           tries++; port++; setImmediate(attempt)
         } else {
           reject(err)
         }
-      })
-      server.listen(port, host, () => resolve(port))
+      }
+      server.once('error', onError)
+      // Drop the attempt's error handler once bound. Leaving it attached let a
+      // later runtime error re-enter the ladder and call listen() on an already
+      // listening server.
+      server.listen(port, host, () => { server.off('error', onError); resolve(port) })
     }
     attempt()
   })

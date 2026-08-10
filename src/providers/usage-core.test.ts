@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
   SPARK_DAYS,
+  collectSessionFiles,
   dedupe,
   flushDisk,
   hasFileMatching,
@@ -306,6 +307,83 @@ test('session detection does not follow symlinks back into the tree', async () =
     // entered and the linked session file is not accepted as evidence.
     assert.equal(await hasFileMatching(root, name => name === 'linked.jsonl'), false)
     assert.equal(await hasFileMatching(root, isClaudeSessionFile), true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Discovery walks the tree and stats every candidate with bounded concurrency
+// rather than one syscall at a time. Concurrency must not leak into the result:
+// these lock down that the output is complete and identical run to run, since a
+// nondeterministic file set silently changes which usage rows get parsed.
+async function discoveryTree(): Promise<{ root: string; expected: number }> {
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-discovery-'))
+  let expected = 0
+  for (let dir = 0; dir < 6; dir++) {
+    const branch = join(root, `project-${dir}`, 'nested', `deep-${dir}`)
+    await mkdir(branch, { recursive: true })
+    for (let file = 0; file < 7; file++) {
+      await writeFile(join(branch, `session-${file}.jsonl`), '{}\n')
+      expected++
+    }
+    await writeFile(join(branch, 'ignored.txt'), 'x')
+  }
+  return { root, expected }
+}
+
+test('parallel discovery returns the complete file set, identically every run', async () => {
+  const { root, expected } = await discoveryTree()
+  try {
+    const runs = await Promise.all(
+      Array.from({ length: 5 }, () => collectSessionFiles([root], path => path.endsWith('.jsonl'), 0)),
+    )
+    for (const run of runs) {
+      assert.equal(run.length, expected)
+      assert.deepEqual(run.map(file => file.path), runs[0]!.map(file => file.path))
+    }
+    // The predicate still excludes non-session files.
+    assert.equal((await walkFiles(root)).length, expected + 6)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('one usage log reached by two paths is counted once, and always the same one', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-hardlink-'))
+  try {
+    await mkdir(join(root, 'a'), { recursive: true })
+    await mkdir(join(root, 'b'), { recursive: true })
+    const original = join(root, 'a', 'session.jsonl')
+    await writeFile(original, '{}\n')
+    await link(original, join(root, 'b', 'session.jsonl'))
+
+    const runs = await Promise.all(
+      Array.from({ length: 5 }, () => collectSessionFiles([root], path => path.endsWith('.jsonl'), 0)),
+    )
+    for (const run of runs) {
+      // Double-counting a hardlinked log double-counts its cost and tokens.
+      assert.equal(run.length, 1)
+      // Which path wins must not depend on which stat resolved first.
+      assert.equal(run[0]!.path, runs[0]![0]!.path)
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('discovery skips files older than the requested window', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-since-'))
+  try {
+    await writeFile(join(root, 'recent.jsonl'), '{}\n')
+    const old = join(root, 'old.jsonl')
+    await writeFile(old, '{}\n')
+    const ancient = new Date(Date.now() - 400 * 86_400_000)
+    await utimes(old, ancient, ancient)
+
+    const all = await collectSessionFiles([root], path => path.endsWith('.jsonl'), 0)
+    assert.equal(all.length, 2)
+    const recent = await collectSessionFiles([root], path => path.endsWith('.jsonl'), Date.now() - 86_400_000)
+    assert.deepEqual(recent.map(file => file.path), [join(root, 'recent.jsonl')])
   } finally {
     await rm(root, { recursive: true, force: true })
   }

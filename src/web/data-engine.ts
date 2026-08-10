@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
+import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { Duration, Effect, Fiber } from 'effect'
 import type { DashboardData, TableData } from '../types'
 import type { BillingResult, ProviderId } from '../providers/types'
@@ -155,6 +156,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   let loopFibers: Fiber.Fiber<unknown, unknown>[] = []
 
   let lastPersist = 0
+  let persisting = false
   let lastReveal = 0
 
   // Bumped on setConfig(); in-flight loops bail if epoch changed to avoid clobbering reconciled maps.
@@ -204,17 +206,28 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     } catch {}
   }
 
+  // The cache write sat on the daemon's event loop as three synchronous fs
+  // calls. It is throttled, but it fired inside the same loop that answers
+  // /healthz, so every write was a window in which discovery could time out
+  // against a healthy owner. Serialize it off-loop instead; a dropped write
+  // only costs the next client's warm start.
   const persist = () => {
     if (!current) return
     if (!current.accounts.some(a => a.hasUsage && a.table != null)) return
-    if (Date.now() - lastPersist < SNAPSHOT_CACHE_THROTTLE_MS) return
+    if (persisting || Date.now() - lastPersist < SNAPSHOT_CACHE_THROTTLE_MS) return
     lastPersist = Date.now()
-    try {
-      mkdirSync(cacheDir(), { recursive: true, mode: 0o700 }) // 0o700: owner-only usage data
-      const tmp = `${snapshotCacheFile()}.${process.pid}.tmp`
-      writeFileSync(tmp, JSON.stringify(current), { mode: 0o600 })
-      renameSync(tmp, snapshotCacheFile())
-    } catch {}
+    persisting = true
+    const payload = JSON.stringify(current)
+    void (async () => {
+      try {
+        await mkdir(cacheDir(), { recursive: true, mode: 0o700 }) // 0o700: owner-only usage data
+        const tmp = `${snapshotCacheFile()}.${process.pid}.tmp`
+        await writeFile(tmp, payload, { mode: 0o600 })
+        await rename(tmp, snapshotCacheFile())
+      } catch {} finally {
+        persisting = false
+      }
+    })()
   }
 
   const rebuild = () => {
