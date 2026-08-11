@@ -21,8 +21,8 @@
     "dist": "electron-builder --config electron-builder.yml"
   },
   "dependencies": {
-    "@effect/platform-node": "4.0.0-beta.59",
-    "effect": "4.0.0-beta.59",
+    "@effect/platform-node": "4.0.0-beta.102",
+    "effect": "4.0.0-beta.102",
     "electron-updater": "^6.6.2",
     "react": "18.3.1",
     "react-dom": "18.3.1"
