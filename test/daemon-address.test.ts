@@ -26,6 +26,27 @@ function close(server: Server): Promise<void> {
   return new Promise(resolve => { server.close(() => resolve()) })
 }
 
+function isFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = createServer()
+    probe.once('error', () => resolve(false))
+    probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)))
+  })
+}
+
+/**
+ * The contract is "the first free port in the channel's range", not a literal
+ * number. Asserting the base directly made the test fail whenever anything on
+ * the machine happened to hold it - a developer's own dev daemon, or a leftover
+ * from a previous run - which is a flake, not a regression.
+ */
+async function firstFreeCandidate(channel: 'release' | 'dev'): Promise<number> {
+  for (const port of daemonPortCandidates(channel)) {
+    if (await isFree(port)) return port
+  }
+  throw new Error(`no free port in the ${channel} range`)
+}
+
 function fetchHeaders(url: string, headers: Record<string, string>): Promise<{ status: number; headers: Record<string, string | string[] | undefined> }> {
   return new Promise((resolve, reject) => {
     const req = get(url, { headers }, (res) => {
@@ -51,11 +72,14 @@ test('a daemon with no explicit port takes its channel canonical port', async ()
   const cachePath = await mkdtemp(join(tmpdir(), 'tokmon-address-'))
   let server: WebServerController | null = null
   try {
+    const expected = await firstFreeCandidate('dev')
     server = await startWebServer({ config: config(), channel: 'dev' })
     // The whole point: the dashboard origin is predictable, so a tab reopened
     // after a daemon restart lands on a live server instead of a dead port.
-    assert.equal(server.port, daemonPortBase('dev'))
-    assert.equal(server.url, `http://127.0.0.1:${daemonPortBase('dev')}`)
+    assert.equal(server.port, expected)
+    assert.equal(server.url, `http://127.0.0.1:${expected}`)
+    // And predictable means inside the range, never an ephemeral port.
+    assert.ok(daemonPortCandidates('dev').includes(server.port))
   } finally {
     await server?.stop()
     await rm(cachePath, { recursive: true, force: true })
@@ -64,11 +88,16 @@ test('a daemon with no explicit port takes its channel canonical port', async ()
 
 test('a taken canonical port walks the ladder instead of going ephemeral', async () => {
   const candidates = daemonPortCandidates('dev')
-  const blocker = await occupy(candidates[0]!)
+  const taken = await firstFreeCandidate('dev')
+  const blocker = await occupy(taken)
   let server: WebServerController | null = null
   try {
+    // Whatever the daemon would have taken is now held, so it must step past it
+    // rather than falling back to an OS-assigned port.
+    const expected = await firstFreeCandidate('dev')
+    assert.notEqual(expected, taken)
     server = await startWebServer({ config: config(), channel: 'dev' })
-    assert.equal(server.port, candidates[1])
+    assert.equal(server.port, expected)
     // Still inside the range the browser's recovery scan covers.
     assert.ok(candidates.includes(server.port))
   } finally {
