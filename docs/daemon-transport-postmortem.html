@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tokmon daemon post-mortem</title>
+<style>
+  :root {
+    --bg: #0b0d10; --bg-2: #12151a; --bg-3: #191d24;
+    --line: #262b33; --fg: #e7e9ec; --fg-2: #a8aeb6; --fg-3: #757c85;
+    --accent: #5cc8a3;                                  /* 7.9:1 on --bg */
+    --ok: #5cc8a3; --warn: #e0b35a; --bad: #e06c6c;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; padding: 48px 24px 96px; max-width: 1100px;
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  h1 { font-size: 30px; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 20px; letter-spacing: -0.01em; margin: 44px 0 12px; padding-top: 8px; }
+  h3 { font-size: 15px; margin: 24px 0 8px; color: var(--fg); }
+  p { margin: 0 0 12px; }
+  .kicker { font: 600 11px/1 var(--mono); text-transform: uppercase;
+            letter-spacing: 0.1em; color: var(--fg-3); margin: 0 0 10px; }
+  .dek { color: var(--fg-2); font-size: 17px; margin: 0 0 4px; max-width: 72ch; }
+  a { color: var(--accent); }
+  code, pre { font-family: var(--mono); font-size: 13px; background: var(--bg-2);
+              border: 1px solid var(--line); border-radius: 4px; }
+  code { padding: 1px 5px; }
+  pre { padding: 14px 16px; overflow-x: auto; line-height: 1.5; margin: 12px 0; }
+  pre code { border: 0; padding: 0; background: none; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line);
+           vertical-align: top; }
+  th { color: var(--fg-3); font-weight: 600; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  .table-wrap { overflow-x: auto; margin: 12px 0; }
+  .table-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  details { border: 1px solid var(--line); border-radius: var(--radius);
+            padding: 10px 16px; margin: 12px 0; background: var(--bg-2); }
+  summary { cursor: pointer; font-weight: 600; }
+  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  li { margin: 5px 0; }
+  ul, ol { padding-left: 22px; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 32px 0; }
+
+  .badge { display: inline-block; font: 600 11px/1.5 var(--mono); padding: 2px 7px;
+           border-radius: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .badge.bad  { color: var(--bad);  background: color-mix(in oklab, var(--bad) 18%, transparent); }
+  .badge.warn { color: var(--warn); background: color-mix(in oklab, var(--warn) 18%, transparent); }
+  .badge.ok   { color: var(--ok);   background: color-mix(in oklab, var(--ok) 18%, transparent); }
+  .badge.plain{ color: var(--fg-3); background: var(--bg-3); }
+
+  .callout { border: 1px solid var(--line); border-left: 3px solid var(--fg-3);
+             border-radius: var(--radius); background: var(--bg-2);
+             padding: 14px 18px; margin: 16px 0; }
+  .callout .title { font-weight: 600; margin: 0 0 6px; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.ok { border-left-color: var(--ok); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+           gap: 12px; margin: 24px 0 8px; }
+  .stat { border: 1px solid var(--line); border-radius: var(--radius);
+          background: var(--bg-2); padding: 12px 14px; }
+  .stat .label { font: 600 10px/1 var(--mono); text-transform: uppercase;
+                 letter-spacing: 0.08em; color: var(--fg-3); }
+  .stat .value { font-size: 26px; font-variant-numeric: tabular-nums;
+                 letter-spacing: -0.02em; margin: 6px 0 2px; }
+  .stat .sub { font-size: 12px; color: var(--fg-3); }
+
+  .facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px;
+           margin: 20px 0 0; font-size: 14px; }
+  .facts dt { color: var(--fg-3); }
+  .facts dd { margin: 0; }
+
+  .page-layout { display: block; }
+  .section-nav { display: none; }
+  @media (min-width: 1000px) {
+    .page-layout { display: grid; grid-template-columns: 200px 1fr; gap: 48px;
+                   align-items: start; }
+    .section-nav { display: block; position: sticky; top: 24px; font-size: 13px; }
+    .section-nav ul { list-style: none; padding: 0; margin: 0; }
+    .section-nav li { margin: 0 0 6px; }
+    .section-nav a { color: var(--fg-2); text-decoration: none; }
+    .section-nav a:hover { color: var(--accent); }
+    .section-nav .nav-title { font: 600 10px/1 var(--mono); text-transform: uppercase;
+                              letter-spacing: 0.08em; color: var(--fg-3); margin: 0 0 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+  @media print {
+    body { background: #fff; color: #111; max-width: none; }
+    .section-nav { display: none; }
+    details { display: block; }
+    summary { list-style: none; }
+    pre, code, .stat, .callout { background: #f4f4f4; border-color: #ccc; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="kicker">Post-mortem - 2026-08-11</p>
+  <h1>Tokmon: why the web dashboard could not see the CLI or the desktop app</h1>
+  <p class="dek">Three independent defects, one shared symptom. The headline one was a
+  dependency version split that silently broke the RPC wire format between surfaces that
+  both believed they were speaking the same protocol.</p>
+
+  <dl class="facts">
+    <dt>Repo</dt><dd>DavidIlie/tokmon at v0.32.0</dd>
+    <dt>Branch</dt><dd><code>fix/daemon-transport-resilience</code></dd>
+    <dt>Commits</dt><dd><code>453c61a</code>, <code>50620ad</code>, <code>5378662</code></dd>
+  </dl>
+</header>
+
+<div class="stats">
+  <div class="stat">
+    <div class="label">Root causes</div>
+    <div class="value">3</div>
+    <div class="sub">1 blocking, 2 contributing</div>
+  </div>
+  <div class="stat">
+    <div class="label">Health probes over budget</div>
+    <div class="value">0 / 4,136</div>
+    <div class="sub">killed the first hypothesis</div>
+  </div>
+  <div class="stat">
+    <div class="label">Tests passing</div>
+    <div class="value">718</div>
+    <div class="sub">502 root, 158 desktop, 58 web</div>
+  </div>
+  <div class="stat">
+    <div class="label">Discovery pass</div>
+    <div class="value">43 -&gt; 19ms</div>
+    <div class="sub">2,658 files, deterministic</div>
+  </div>
+</div>
+
+<div class="page-layout">
+
+<nav class="section-nav" aria-label="On this page">
+  <p class="nav-title">On this page</p>
+  <ul>
+    <li><a href="#symptom">1. Symptom</a></li>
+    <li><a href="#not">2. What it was not</a></li>
+    <li><a href="#cause-a">3. Cause A: RPC dialect</a></li>
+    <li><a href="#cause-b">4. Cause B: no stable address</a></li>
+    <li><a href="#cause-c">5. Cause C: orphaned daemon</a></li>
+    <li><a href="#fixes">6. The fixes</a></li>
+    <li><a href="#review">7. Review findings</a></li>
+    <li><a href="#verification">8. Verification</a></li>
+    <li><a href="#deployed">9. Deployed here</a></li>
+    <li><a href="#open">10. Still open</a></li>
+  </ul>
+</nav>
+
+<main>
+
+<section id="symptom">
+  <h2>1. Symptom</h2>
+  <p>The dashboard sat on <code>Connection lost - waiting for the local tokmon daemon...</code>
+  while a daemon was listening, healthy, and answering HTTP in under a millisecond. The CLI
+  showed <code>reconnecting - showing last known data</code>. It worked, then one day it did not,
+  with no user-visible change in between.</p>
+
+  <p>The reported shape was "randomly breaks". That word turned out to be literally accurate,
+  and the randomness had a specific mechanism - see cause A.</p>
+</section>
+
+<section id="not">
+  <h2>2. What it was not</h2>
+
+  <p>Two hypotheses were pursued and killed by measurement. Recording them because both were
+  plausible enough to have shipped a wrong fix.</p>
+
+  <h3>Refuted: load-induced health-probe false negatives</h3>
+  <p>Discovery probes <code>/healthz</code> with hard-coded budgets - 250ms in
+  <code>waitForOwner</code>, 500ms in <code>probeHealth</code>. The theory was that a busy daemon
+  misses those, gets declared dead, and is destructively reclaimed. It would have explained
+  everything, including why a loaded machine made it worse.</p>
+
+  <div class="table-wrap" role="region" aria-label="Health probe latency measurements" tabindex="0">
+  <table>
+    <thead><tr><th>Run</th><th class="num">n</th><th class="num">p50</th><th class="num">p99</th><th class="num">max</th><th class="num">over 250ms</th></tr></thead>
+    <tbody>
+      <tr><td>Idle</td><td class="num">1,272</td><td class="num">0.6ms</td><td class="num">2.4ms</td><td class="num">78.8ms</td><td class="num">0</td></tr>
+      <tr><td>Idle, second pass</td><td class="num">200</td><td class="num">0.42ms</td><td class="num">1.3ms</td><td class="num">1.4ms</td><td class="num">0</td></tr>
+      <tr><td>12 of 14 cores saturated</td><td class="num">200</td><td class="num">1.0ms</td><td class="num">31.9ms</td><td class="num">34.7ms</td><td class="num">0</td></tr>
+      <tr><td>Continuous 80s</td><td class="num">1,649</td><td class="num">0.83ms</td><td class="num">13.9ms</td><td class="num">103.1ms</td><td class="num">0</td></tr>
+      <tr><td>Tick-correlated 90s</td><td class="num">815</td><td class="num">1.0ms</td><td class="num">1.7ms</td><td class="num">32.1ms</td><td class="num">0</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p><strong>4,136 probes, zero over even the tightest budget.</strong> Worst sample ever
+  observed was 103ms against a 250ms floor. Load does inflate the tail by ~25x, so the
+  sensitivity is real, but the headroom is about two orders of magnitude. Hypothesis dead.</p>
+
+  <h3>Refuted: the discovery walk is a multi-second event-loop stall</h3>
+  <p>An automated performance review estimated <code>collectSessionFiles</code> at
+  "0.5-3+ seconds" per tick because it walks directories and stats files strictly
+  sequentially. Measured against a real 2,658-file corpus: <strong>43ms, with 0.0ms of
+  event-loop lag.</strong> The pattern was genuinely inefficient and worth fixing, but it
+  was never the outage.</p>
+
+  <div class="callout warn">
+    <p class="title">The check that misled the investigation</p>
+    <p><code>/healthz</code> was being used as a liveness signal. It is a plain HTTP handler
+    on the same server and says nothing whatsoever about whether the RPC layer works. It
+    answered in 0.4ms throughout, which is exactly why the daemon kept looking healthy while
+    every client was being rejected. Andrei called this out; it was the turning point.</p>
+  </div>
+</section>
+
+<section id="cause-a">
+  <h2>3. Cause A: two RPC dialects <span class="badge bad">Blocking</span></h2>
+
+  <p>Instrumenting <code>WebSocket</code> inside the live dashboard produced the actual
+  exchange:</p>
+
+<pre><code>SEND {"_tag":"Request","id":125,"tag":"tokmon.config","payload":{},...}
+SEND {"_tag":"Request","id":126,"tag":"tokmon.snapshot","payload":{},...}
+RECV {"_tag":"Defect","defect":"Invalid request id: 125"}
+SEND {"_tag":"Interrupt","requestId":126}
+CLOSE code=1000
+
+...then a new socket, ids 128-130, same rejection. Forever.</code></pre>
+
+  <p>The socket upgrades correctly. The very first frame is rejected by the server, the
+  session dies, and the supervisor redials into an identical failure. To a user that is
+  simply "offline".</p>
+
+  <h3>Why</h3>
+  <p><code>effect-rpc</code> changed how a request id is encoded on the wire between the two
+  versions present in this repo.</p>
+
+  <div class="table-wrap" role="region" aria-label="effect version comparison" tabindex="0">
+  <table>
+    <thead><tr><th>Surface</th><th>effect</th><th><code>RequestId</code></th><th>Server accepts</th></tr></thead>
+    <tbody>
+      <tr><td>root: daemon, CLI, and the shared RPC client the dashboard bundles</td>
+          <td><code>4.0.0-beta.102</code></td><td><code>id =&gt; id</code></td><td>number, string</td></tr>
+      <tr><td><code>src/desktop</code> and <code>web</code> pins</td>
+          <td><code>4.0.0-beta.59</code></td><td><code>id =&gt; BigInt(id)</code></td><td>bigint, string</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>The dashboard's RPC client is not local to the web package - it imports
+  <code>src/client/daemon-rpc-client.ts</code> from the repo root. Vite resolves that file's
+  <code>effect</code> import from the <em>root</em> <code>node_modules</code>, so the browser
+  bundle shipped beta.102 and sent numeric ids <strong>regardless of the beta.59 pin in
+  <code>web/package.json</code></strong>. Meanwhile the desktop app bundled beta.59 for its
+  in-process daemon, whose server rejects numbers.</p>
+
+  <div class="callout">
+    <p class="title">Why the protocol check did not catch it</p>
+    <p><code>TOKMON_PROTOCOL_VERSION = 5</code> versions the application's own contract. The
+    frame codec underneath it is an unversioned third-party dependency. Both sides validated
+    "protocol 5", agreed, attached, and then failed on the first frame. The compatibility
+    gate was checking the wrong layer.</p>
+  </div>
+
+  <h3>Where the randomness came from</h3>
+  <p>The daemon is a singleton and either surface can own it. beta.102's server accepts
+  <em>both</em> encodings; beta.59's accepts only its own. So the outcome depended entirely on
+  who won the lock race at startup:</p>
+
+  <div class="table-wrap" role="region" aria-label="Outcome by daemon owner" tabindex="0">
+  <table>
+    <thead><tr><th>Daemon owner</th><th>Server</th><th>Dashboard</th><th>CLI</th><th>Desktop client</th></tr></thead>
+    <tbody>
+      <tr><td>CLI</td><td>beta.102</td><td><span class="badge ok">Works</span></td><td><span class="badge ok">Works</span></td><td><span class="badge ok">Works</span></td></tr>
+      <tr><td>Desktop app</td><td>beta.59</td><td><span class="badge bad">Rejected</span></td><td><span class="badge bad">Rejected</span></td><td><span class="badge ok">Works</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Start the app before touching the CLI and nothing works. Run a CLI command first and
+  everything works. Same machine, same versions, opposite outcome - which is what "randomly
+  breaks" actually meant.</p>
+</section>
+
+<section id="cause-b">
+  <h2>4. Cause B: the dashboard had no stable address <span class="badge warn">Contributing</span></h2>
+
+  <p>Both spawn paths bound an OS-assigned ephemeral port:
+  <code>daemon-handle.ts:220</code> passed <code>--port 0</code>, and
+  <code>desktop/main/index.ts:392</code> passed <code>port: 0</code>. The browser client binds
+  to wherever the page was served from (<code>rpc-client.ts:69</code>,
+  <code>createDaemonRpcClient(window.location.origin)</code>).</p>
+
+  <p>The TUI and Electron both re-read the lockfile and follow a daemon that moves. A browser
+  tab has no lockfile access and no discovery mechanism, so <strong>every daemon restart
+  permanently orphaned every open tab</strong>, and the reconnect supervisor then redialled a
+  dead port forever.</p>
+
+  <p>Measured on the real CLI daemon path, before and after:</p>
+
+<pre><code>OLD (--port 0)                      NEW (canonical port)
+boot 1 -> http://127.0.0.1:59246    boot 1 -> http://127.0.0.1:4317
+boot 2 -> http://127.0.0.1:59249    boot 2 -> http://127.0.0.1:4317</code></pre>
+
+  <p>Observed live on the affected machine, the desktop app moved from port 60049 to 64450
+  across a single restart. This is why race-condition hardening never fixed it: it is not a
+  race, it is an addressing problem.</p>
+</section>
+
+<section id="cause-c">
+  <h2>5. Cause C: the desktop daemon never noticed it lost the lock <span class="badge warn">Contributing</span></h2>
+
+  <p>The CLI daemon self-checks every 30 seconds and exits if the lockfile is no longer its
+  own (<code>web/daemon.ts:102</code>). The Electron host, which runs its daemon in-process,
+  had no equivalent - <code>src/desktop/main/index.ts</code> contained zero references to
+  <code>readLock</code> or any interval.</p>
+
+  <p>So if anything reclaimed the desktop's lock, Electron kept serving an orphaned HTTP
+  server and running a second data engine indefinitely: two daemons parsing the same logs,
+  clients split across them, config changes landing in one and not the other, and roughly
+  double the CPU. Nothing surfaced it.</p>
+</section>
+
+<section id="fixes">
+  <h2>6. The fixes</h2>
+
+  <div class="table-wrap" role="region" aria-label="Fixes applied" tabindex="0">
+  <table>
+    <thead><tr><th>Fix</th><th>Addresses</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>One <code>effect</code> version across every surface, plus a workspace
+            <code>overrides</code> entry so it cannot drift again</td>
+        <td>A</td><td><code>pnpm-workspace.yaml</code>, both package manifests</td>
+      </tr>
+      <tr>
+        <td>Fixed per-channel port range - release 4317+, dev 4417+, span 10. The binder and
+            the browser's recovery scan share one constant</td>
+        <td>B</td><td><code>web/daemon-channel.ts</code>, <code>web/server.ts</code></td>
+      </tr>
+      <tr>
+        <td>Neither spawn path requests an ephemeral port any more</td>
+        <td>B</td><td><code>client/daemon-handle.ts</code>, <code>desktop/main/index.ts</code></td>
+      </tr>
+      <tr>
+        <td>A stranded tab probes the candidate range and offers the origin it found</td>
+        <td>B</td><td><code>web/src/lib/daemon-locator.ts</code></td>
+      </tr>
+      <tr>
+        <td>Loopback-scoped CORS on <code>/healthz</code>, which is what makes that probe
+            readable cross-port</td>
+        <td>B</td><td><code>web/server.ts</code></td>
+      </tr>
+      <tr>
+        <td>30s lock self-check on the Electron host - rejoins the singleton rather than
+            exiting, since it is the menu-bar app</td>
+        <td>C</td><td><code>desktop/main/index.ts</code></td>
+      </tr>
+      <tr>
+        <td>Query commands compute locally instead of exiting 1 when the daemon is
+            unattachable</td>
+        <td>A</td><td><code>cli-command.ts</code></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout">
+    <p class="title">Why the port range is shared, not just similar</p>
+    <p>The bind ladder and the browser scan read the same <code>DAEMON_PORT_SPAN</code>
+    constant. If the binder could land outside the range the browser scans, a tab could still
+    be stranded - which is the original bug wearing a different hat. A test asserts the two
+    ranges are identical.</p>
+  </div>
+
+  <h3>Resource work, kept separate</h3>
+  <p>Framed deliberately as a cost win rather than part of the reliability fix, because the
+  event loop was never the bottleneck:</p>
+  <ul>
+    <li>Discovery walked directories and stat'd files strictly sequentially. Bounded fan-out
+        takes a 2,658-file corpus from <strong>43ms to 19ms</strong> per pass.</li>
+    <li><code>data-engine.persist()</code> no longer calls <code>writeFileSync</code> on the
+        event loop.</li>
+    <li>The shard store encoded and stringified every payload twice - once to size it for the
+        LRU, once to write it - and re-encoded on every disk cache hit purely for accounting.
+        Now serialized once.</li>
+  </ul>
+</section>
+
+<section id="review">
+  <h2>7. Review findings acted on</h2>
+
+  <p>Three defects were found in the fix itself before it landed. Two by review agents, one
+  by a test written for the change.</p>
+
+  <div class="table-wrap" role="region" aria-label="Review findings" tabindex="0">
+  <table>
+    <thead><tr><th>Severity</th><th>Finding</th><th>Resolution</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="badge bad">High</span></td>
+        <td>Fixed ports make pre-binding 4317 trivial, and the locator was <em>silently</em>
+            navigating the tab to whatever answered <code>/healthz</code> - a body any local
+            process can forge, since it carries no secret a real daemon could prove with.</td>
+        <td>Auto-navigation removed. The origin is displayed and the user clicks. Verified
+            separately that <code>wsToken</code> never reaches the browser, so nothing could
+            be stolen even so.</td>
+      </tr>
+      <tr>
+        <td><span class="badge bad">High</span></td>
+        <td>The relocation probe ignored <code>/healthz</code>'s <code>channel</code>. Release
+            and dev are separate installations with separate data, and one probe batch spans
+            both ranges, so a dev tab could be offered the release daemon.</td>
+        <td>Candidates must match the tab's channel, derived from its own port.</td>
+      </tr>
+      <tr>
+        <td><span class="badge warn">Medium</span></td>
+        <td><code>persist()</code> became fire-and-forget when it moved off the event loop and
+            nothing awaited it, so shutdown could tear the process down mid-write.</td>
+        <td>Engine exposes the in-flight write; shutdown drains it.</td>
+      </tr>
+      <tr>
+        <td><span class="badge warn">Medium</span></td>
+        <td><code>--cached</code> exists to avoid a provider scan, but with an empty cache it
+            silently fell through to a full refresh and burned the whole timeout.</td>
+        <td>Reports that there is no cached data instead.</td>
+      </tr>
+      <tr>
+        <td><span class="badge warn">Medium</span></td>
+        <td>Making <code>walkFiles</code> concurrent made its output order vary run to run.
+            <code>dedupe()</code> is last-write-wins across files and shard eviction follows
+            load order, so identical refreshes could drift.</td>
+        <td>Sorted. Still 19ms, and now deterministic in a way the original sequential DFS
+            was only incidentally.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <details>
+    <summary>Security review of the CORS change - what was tried and rejected</summary>
+    <p>The one genuinely new surface is <code>Access-Control-Allow-Origin</code> echoed on
+    <code>/healthz</code> for loopback origins only. Every bypass attempted was rejected by
+    the parser:</p>
+    <p><code>http://127.0.0.1.evil.example</code>, <code>http://localhost.evil.example</code>,
+    <code>http://evil.example#@127.0.0.1</code>, <code>http://[::ffff:127.0.0.1]</code>,
+    <code>http://0.0.0.0</code>, <code>http://localhost./</code>, userinfo forms, duplicate
+    <code>Origin</code> headers, and <code>null</code>.</p>
+    <p>Decimal, octal and hex IPv4 forms (<code>http://2130706433</code>,
+    <code>http://0x7f.1</code>) normalize to <code>127.0.0.1</code>, but that is consistent
+    parsing rather than divergence - a browser normalizes a page served from those addresses
+    the same way, via the same WHATWG algorithm.</p>
+    <p>Net capability change for a hostile page: none. It could always <em>send</em> this
+    request; the Host guard was never what stopped it reading the reply, and a non-loopback
+    origin still receives no header. <code>/api/data</code> and <code>/api/config</code> remain
+    same-origin only, asserted by a test that sends a valid loopback origin and requires the
+    header to be absent.</p>
+  </details>
+</section>
+
+<section id="verification">
+  <h2>8. Verification</h2>
+  <ul>
+    <li><strong>718 tests</strong> passing - 502 root, 158 desktop, 58 web. Five consecutive
+        clean runs of the full suite to rule out the port contention the fixed-port change
+        introduced into the test suite.</li>
+    <li><strong>Port stability</strong>, on the real CLI daemon path: restart the daemon twice,
+        same origin both times. Compared directly against the old <code>--port 0</code>
+        behaviour in the same script.</li>
+    <li><strong>Both entry points</strong> verified independently: launching only the Electron
+        app brings the daemon up on 4317; running only <code>tokmon usage</code> with no app
+        running brings it up on 4317.</li>
+    <li><strong>Live browser check</strong> against a real daemon - dashboard reports
+        <code>live</code> with fresh data and no reconnect churn, where the same page against
+        the old build looped <code>Defect</code> plus <code>CLOSE</code> every few seconds.</li>
+    <li><strong>Socket stability</strong>: the desktop app holds one connection to the daemon
+        with an unchanged local port across a 15s sample, rather than the constant churn a
+        reconnect loop produces.</li>
+  </ul>
+
+  <details>
+    <summary>Mistakes made during the investigation</summary>
+    <ul>
+      <li>Pursued the load hypothesis first and reported it confidently before measuring it.</li>
+      <li>Used <code>/healthz</code> as a liveness proxy for the RPC layer, which is what kept
+          the real fault hidden.</li>
+      <li>Wrote a WebSocket test that opened a socket and sent nothing, then read the absence
+          of frames as evidence. An idle RPC socket never receives anything; the test proved
+          nothing.</li>
+      <li>Launched the desktop app from an automation process tree, which made Electron's
+          <code>ProcessSingleton</code> codesign check fail
+          (<code>task_name_for_pid: (os/kern) failure (5)</code>) and the app quit silently.
+          Chased that as an app defect before realising the launch method caused it.</li>
+      <li>Ran <code>build:web</code> before <code>build:cli</code>; tsup's <code>clean: true</code>
+          wiped <code>dist/web</code>, so the first packaged app shipped with no dashboard and
+          served "not found". The package's own <code>build</code> script orders them
+          correctly.</li>
+      <li><code>asar extract-file</code> writes to the basename in the working directory and
+          overwrote <code>src/desktop/package.json</code>. Restored from the commit.</li>
+    </ul>
+  </details>
+</section>
+
+<section id="deployed">
+  <h2>9. What is deployed on this machine</h2>
+
+  <div class="table-wrap" role="region" aria-label="Deployed state" tabindex="0">
+  <table>
+    <thead><tr><th>Component</th><th>State</th></tr></thead>
+    <tbody>
+      <tr><td><code>/Applications/Tokmon.app</code></td>
+          <td>Rebuilt from the branch, ad-hoc signed. Previous build kept at
+              <code>Tokmon.app.backup-20260811-1020</code></td></tr>
+      <tr><td><code>/opt/homebrew/bin/tokmon</code></td>
+          <td>Built from the branch, replacing stock npm 0.32.0</td></tr>
+      <tr><td>Daemon</td>
+          <td><code>http://127.0.0.1:4317</code>, started by whichever surface loads first</td></tr>
+      <tr><td>Removed</td>
+          <td><code>~/.local/bin/tokmon</code> - a hand-patched 0.28.5 shim that shadowed
+              homebrew on PATH and pinned the CLI four releases behind. Its workaround
+              (stripping a <code>busy_timeout</code> PRAGMA) is obsolete; current code uses
+              <code>node:sqlite</code> with a real timeout. Kept as
+              <code>tokmon.disabled-20260811</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout ok">
+    <p class="title">No login item, no manual step</p>
+    <p>The daemon comes up from whichever surface loads first - Electron app or CLI - on a
+    fixed address. <code>http://127.0.0.1:4317</code> survives app restarts, CLI runs and
+    reboots, so it can be bookmarked.</p>
+  </div>
+</section>
+
+<section id="open">
+  <h2>10. Still open</h2>
+  <ul>
+    <li><strong>Not upstream yet.</strong> Three commits sit on
+        <code>fix/daemon-transport-resilience</code>. Every user running the 0.32.0 app
+        alongside the CLI has cause A.</li>
+    <li><strong>The local build is ad-hoc signed, not notarized.</strong> Auto-update will
+        likely refuse to apply a signed release over it. Reinstalling the official release
+        once the fix ships is the exit path.</li>
+    <li><strong>No independent-vendor review.</strong> The diff was reviewed by agents of the
+        same vendor that authored it, which does not satisfy the usual bar. Cursor would not
+        authenticate headlessly during this session.</li>
+    <li><strong>The desktop app has no local degraded mode.</strong> When refused it retries
+        every 30s showing disconnected, forever. Fixing that means teaching the renderer to
+        render without RPC - deliberately out of scope here.</li>
+    <li><strong><code>tableSince()</code> returns <code>0</code></strong>, so every table refresh
+        aggregates all history with no retention window. This is the main driver of the
+        daemon's ~205MB RSS. Capping it changes what history the UI shows, so it is a product
+        decision rather than a bug fix.</li>
+  </ul>
+</section>
+
+</main>
+</div>
+
+</body>
+</html>
