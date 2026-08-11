@@ -52,6 +52,12 @@ export interface AttachOrSpawnOptions extends LockfileOptions {
   /** Test-only environment override for the spawned daemon. */
   env?: NodeJS.ProcessEnv
   timeoutMs?: number
+  /**
+   * Test-only port override. Production spawns take the channel's canonical
+   * port so the dashboard origin is predictable; tests pass 0 so a suite run
+   * cannot fight itself, or a developer's real daemon, over that port.
+   */
+  port?: number
 }
 
 // In dev (tsx), forward tsx's loader flags from process.execArgv so the child runtime matches the parent.
@@ -221,6 +227,7 @@ export async function attachOrSpawn(opts: AttachOrSpawnOptions = {}): Promise<Da
   // dashboard keeps a predictable origin across restarts. An ephemeral port
   // stranded every open browser tab the moment this daemon was replaced.
   const args = ['__daemon', '--no-open']
+  if (opts.port !== undefined) args.push('--port', String(opts.port))
   const env = {
     ...baseEnv,
     TOKMON_CHANNEL: channel,

@@ -370,6 +370,7 @@ test('a client upgrades a same-protocol CLI daemon from an older app release', {
   try {
     await existing.handshake
     const handle = await attachOrSpawn({
+      port: 0,
       cachePath: join(root, 'cache'),
       entry: join(process.cwd(), 'src/cli.tsx'),
       execArgv: ['--import', 'tsx'],
@@ -413,6 +414,7 @@ test('a newer client replaces an authenticated older-protocol CLI daemon instead
   try {
     await old.handshake
     const handle = await attachOrSpawn({
+      port: 0,
       cachePath: join(root, 'cache'),
       entry: join(process.cwd(), 'src/cli.tsx'),
       execArgv: ['--import', 'tsx'],
@@ -458,6 +460,7 @@ test('an older client never signals an authenticated newer-protocol CLI daemon',
   try {
     await newer.handshake
     const handle = await attachOrSpawn({
+      port: 0,
       cachePath: join(root, 'cache'),
       entry: join(process.cwd(), 'src/cli.tsx'),
       execArgv: ['--import', 'tsx'],
@@ -582,6 +585,7 @@ test('a new client safely takes over an authenticated legacy CLI lock', { timeou
     const cachePath = join(root, 'cache')
     assert.equal(readLock({ cachePath }), null, 'strict discovery must not trust a legacy lock')
     const handle = await attachOrSpawn({
+      port: 0,
       cachePath,
       entry: join(process.cwd(), 'src/cli.tsx'),
       execArgv: ['--import', 'tsx'],
@@ -668,6 +672,7 @@ test('an incompatible desktop-owned daemon is never signalled', { timeout: 10_00
   try {
     await desktop.handshake
     const handle = await attachOrSpawn({
+      port: 0,
       cachePath: join(root, 'cache'),
       entry: join(process.cwd(), 'src/cli.tsx'),
       execArgv: ['--import', 'tsx'],
@@ -724,6 +729,7 @@ test('an incompatible CLI daemon is never signalled when owner authentication fa
     }), { mode: 0o600 })
 
     const handle = await attachOrSpawn({
+      port: 0,
       cachePath,
       entry: join(process.cwd(), 'src/cli.tsx'),
       execArgv: ['--import', 'tsx'],
@@ -747,6 +753,7 @@ test('daemon startup failures report a concrete recovery instead of a generic un
   const cachePath = await mkdtemp(join(tmpdir(), 'tokmon-daemon-spawn-error-'))
   try {
     const handle = await attachOrSpawn({
+      port: 0,
       cachePath,
       execPath: join(cachePath, 'missing-node'),
       entry: join(process.cwd(), 'src/cli.tsx'),
@@ -766,7 +773,7 @@ test('an early daemon exit reports the exit result and reinstall recovery', asyn
   const entry = join(cachePath, 'exit.mjs')
   try {
     await writeFile(entry, 'process.exit(7)\n')
-    const handle = await attachOrSpawn({ cachePath, entry, execPath: process.execPath, timeoutMs: 100 })
+    const handle = await attachOrSpawn({ port: 0, cachePath, entry, execPath: process.execPath, timeoutMs: 100 })
     assert.equal(handle.kind, 'degraded')
     assert.equal(handle.issue?.kind, 'startup-exit')
     assert.match(handle.issue?.message ?? '', /exit code 7/)
@@ -838,7 +845,7 @@ test('real daemon is singleton, loopback/same-origin guarded, durable, and bound
     assert.equal(lock.port, ready.port)
     await Promise.all(contenders.filter(contender => contender.child !== owner).map(contender => waitForExit(contender.child)))
 
-    const handle = await attachOrSpawn({ cachePath: join(root, 'cache') })
+    const handle = await attachOrSpawn({ port: 0, cachePath: join(root, 'cache') })
     assert.equal(handle.kind, 'spawned')
     assert.match(handle.baseUrl ?? '', /^http:\/\/127\.0\.0\.1:\d+$/)
     assert.equal(new URL(handle.baseUrl ?? 'http://invalid').search, '')

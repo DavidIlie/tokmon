@@ -4,6 +4,14 @@ packages:
 
 overrides:
   ws: 8.21.0
+  # effect-rpc's request-id wire encoding is part of the daemon's protocol but
+  # is not covered by TOKMON_PROTOCOL_VERSION. beta.59 serialises ids as strings
+  # and rejects numbers; beta.102 sends numbers. When the desktop shipped .59
+  # while the shared RPC client resolved .102, every client the desktop-owned
+  # daemon served was answered with "Invalid request id" and reconnected forever.
+  # Pin one version across every surface so that can never drift again.
+  effect: 4.0.0-beta.102
+  "@effect/platform-node": 4.0.0-beta.102
 
 allowBuilds:
   esbuild: true
