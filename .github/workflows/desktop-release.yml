@@ -38,7 +38,7 @@ jobs:
             platform: win
             label: Windows installer
             artifact: desktop-windows
-          - os: ubuntu-22.04
+          - os: davidapps-linux-x64
             platform: linux
             label: Linux
             artifact: desktop-linux
@@ -144,7 +144,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: pnpm exec electron-builder --config electron-builder.yml --publish never
       - name: Package Linux
-        if: startsWith(matrix.os, 'ubuntu')
+        if: matrix.platform == 'linux'
         working-directory: src/desktop
         env:
           GH_TOKEN: ${{ github.token }}
@@ -204,7 +204,7 @@ jobs:
   release:
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: davidapps-linux-x64
     permissions:
       contents: write
     steps:
@@ -216,6 +216,10 @@ jobs:
           pattern: desktop-*
           path: artifacts
           merge-multiple: true
+      - name: Install GitHub CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gh
       - name: Verify merged release payload
         run: node scripts/verify-desktop-release.mjs --platform all --release-dir artifacts --version "${RELEASE_TAG#v}"
       - uses: softprops/action-gh-release@v2
