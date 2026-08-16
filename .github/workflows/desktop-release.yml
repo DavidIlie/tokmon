@@ -216,10 +216,6 @@ jobs:
           pattern: desktop-*
           path: artifacts
           merge-multiple: true
-      - name: Install GitHub CLI
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes gh
       - name: Verify merged release payload
         run: node scripts/verify-desktop-release.mjs --platform all --release-dir artifacts --version "${RELEASE_TAG#v}"
       - uses: softprops/action-gh-release@v2
