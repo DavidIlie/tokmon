@@ -38,7 +38,7 @@ jobs:
             platform: win
             label: Windows installer
             artifact: desktop-windows
-          - os: davidapps-linux-x64
+          - os: davidapps-ubuntu
             platform: linux
             label: Linux
             artifact: desktop-linux
@@ -204,7 +204,7 @@ jobs:
   release:
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     needs: build
-    runs-on: davidapps-linux-x64
+    runs-on: davidapps-ubuntu
     permissions:
       contents: write
     steps:

@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'davidapps-linux-x64' }}
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-24.04' || 'davidapps-ubuntu' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,7 +31,7 @@ jobs:
       - run: pnpm run build:desktop
 
   site:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'davidapps-linux-x64' }}
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-24.04' || 'davidapps-ubuntu' }}
     steps:
       - uses: actions/checkout@v4
 
