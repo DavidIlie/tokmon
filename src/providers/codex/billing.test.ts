@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { codexWindowMetrics, creditBalanceMetric } from './billing'
+import { codexBilling, codexWindowMetrics, creditBalanceMetric } from './billing'
 
 test('Codex credits remain provider credits instead of invented dollars', () => {
   assert.deepEqual(creditBalanceMetric({ credits: { balance: 314 } }), {
@@ -39,4 +39,36 @@ test('Codex reset timestamps use the shared epoch boundary and sign heuristic', 
     primary_window: { used_percent: 20, reset_at: negativeMillis },
   })[0]
   assert.equal(negativeMetric?.resetsAt, new Date(negativeMillis).toISOString())
+})
+
+test('Codex custom quota source uses native quota windows without local OAuth', async () => {
+  const originalFetch = globalThis.fetch
+  const originalSecret = process.env.TOKMON_CODEX_PROXY_KEY
+  process.env.TOKMON_CODEX_PROXY_KEY = 'codex-secret'
+  globalThis.fetch = async (_input, init) => {
+    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer codex-secret')
+    return new Response(JSON.stringify({
+      plan_type: 'team',
+      rate_limit: {
+        primary_window: { used_percent: 15, reset_at: 1_787_623_200 },
+        secondary_window: { used_percent: 35, reset_at: 1_788_228_000 },
+      },
+    }), { headers: { 'content-type': 'application/json' } })
+  }
+  try {
+    const result = await codexBilling({
+      id: 'proxy', providerId: 'codex', name: 'Proxy', color: 'cyan',
+      quotaSource: {
+        url: 'https://proxy.example/backend-api/wham/usage',
+        apiKeyEnv: 'TOKMON_CODEX_PROXY_KEY',
+      },
+    })
+    assert.equal(result.error, null)
+    assert.equal(result.plan, 'ChatGPT Team')
+    assert.deepEqual(result.metrics.map(metric => [metric.label, metric.used]), [['Session', 15], ['Weekly', 35]])
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalSecret === undefined) delete process.env.TOKMON_CODEX_PROXY_KEY
+    else process.env.TOKMON_CODEX_PROXY_KEY = originalSecret
+  }
 })

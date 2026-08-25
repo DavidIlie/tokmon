@@ -59,6 +59,61 @@ test('the RPC config schema rejects malformed config documents', () => {
   }))
 })
 
+test('custom quota sources accept only the provider endpoint on a safe URL', () => {
+  const claude = normalizeConfig({
+    ...DEFAULTS,
+    accounts: [{
+      id: 'proxy-claude', providerId: 'claude', name: 'Proxy Claude', homeDir: '~',
+      quotaSource: { url: 'https://cliproxy.example/api/oauth/usage', apiKeyEnv: 'CLIPROXY_KEY' },
+    }],
+  })
+  assert.deepEqual(claude.accounts[0]?.quotaSource, {
+    url: 'https://cliproxy.example/api/oauth/usage', apiKeyEnv: 'CLIPROXY_KEY',
+  })
+
+  const codex = normalizeConfig({
+    ...DEFAULTS,
+    accounts: [{
+      id: 'proxy-codex', providerId: 'codex', name: 'Proxy Codex', homeDir: '~',
+      quotaSource: { url: 'http://127.0.0.1:8317/backend-api/wham/usage', apiKeyEnv: 'CLIPROXY_KEY_2' },
+    }],
+  })
+  assert.equal(codex.accounts[0]?.quotaSource?.url, 'http://127.0.0.1:8317/backend-api/wham/usage')
+
+  for (const url of [
+    'http://cliproxy.example/api/oauth/usage',
+    'https://user:pass@cliproxy.example/api/oauth/usage',
+    'https://cliproxy.example/api/oauth/usage?leak=1',
+    'https://cliproxy.example/api/oauth/usage#fragment',
+    'https://cliproxy.example/wrong',
+  ]) {
+    const repaired = normalizeConfig({
+      ...DEFAULTS,
+      accounts: [{
+        id: 'unsafe', providerId: 'claude', name: 'Unsafe', homeDir: '~',
+        quotaSource: { url, apiKeyEnv: 'CLIPROXY_KEY' },
+      }],
+    })
+    assert.equal(repaired.accounts[0]?.quotaSource, undefined, url)
+  }
+})
+
+test('custom quota sources reject unsafe environment variable names and unsupported providers', () => {
+  for (const account of [
+    {
+      id: 'bad-env', providerId: 'claude', name: 'Bad env', homeDir: '~',
+      quotaSource: { url: 'https://cliproxy.example/api/oauth/usage', apiKeyEnv: 'KEY=value' },
+    },
+    {
+      id: 'cursor', providerId: 'cursor', name: 'Cursor', homeDir: '~',
+      quotaSource: { url: 'https://cliproxy.example/api/oauth/usage', apiKeyEnv: 'CLIPROXY_KEY' },
+    },
+  ]) {
+    const repaired = normalizeConfig({ ...DEFAULTS, accounts: [account] })
+    assert.equal(repaired.accounts[0]?.quotaSource, undefined)
+  }
+})
+
 test('tray config defaults and repairs are stable', () => {
   assert.deepEqual(normalizeConfig({ ...DEFAULTS, tray: undefined }).tray, DEFAULT_TRAY_CONFIG)
 
@@ -484,6 +539,7 @@ test('an old full-document CAS update preserves every capability-gated config fi
         name: 'Disabled manual',
         homeDir: '/tmp/disabled-manual',
         enabled: false,
+        quotaSource: { url: 'https://proxy.example/api/oauth/usage', apiKeyEnv: 'CLIPROXY_KEY' },
       }],
       appearance: currentAppearance,
       tray: {
@@ -515,7 +571,7 @@ test('an old full-document CAS update preserves every capability-gated config fi
   } = oldClientTopLevel.tray
   const oldClientConfig = {
     ...oldClientTopLevel,
-    accounts: oldClientTopLevel.accounts.map(({ enabled: _unsupportedEnabled, ...account }) => account),
+    accounts: oldClientTopLevel.accounts.map(({ enabled: _unsupportedEnabled, quotaSource: _unsupportedQuotaSource, ...account }) => account),
     tray: oldClientTray,
   }
 
@@ -535,6 +591,7 @@ test('an old full-document CAS update preserves every capability-gated config fi
     assert.equal(saved.config.desktop.graphRangeDays, 30)
     assert.deepEqual(saved.config.accountDetection, currentDetection)
     assert.equal(saved.config.accounts[0]?.enabled, false)
+    assert.deepEqual(saved.config.accounts[0]?.quotaSource, state.config.accounts[0]?.quotaSource)
     assert.deepEqual(broadcasts[0]?.appearance, currentAppearance)
     assert.deepEqual(broadcasts[0]?.tray.pinnedProviders, currentPins)
     assert.deepEqual(broadcasts[0]?.tray.menuBar, currentMenuBar)
@@ -550,6 +607,7 @@ test('an old full-document CAS update preserves every capability-gated config fi
     assert.equal(persisted.desktop.graphRangeDays, 30)
     assert.deepEqual(persisted.accountDetection, currentDetection)
     assert.equal(persisted.accounts[0]?.enabled, false)
+    assert.deepEqual(persisted.accounts[0]?.quotaSource, state.config.accounts[0]?.quotaSource)
   } finally {
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME
     else process.env.XDG_CONFIG_HOME = previous

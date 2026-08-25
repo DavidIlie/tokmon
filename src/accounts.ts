@@ -217,6 +217,7 @@ export function collectAccounts(config: Config, detected: ProviderId[]): Collect
         color: a.color || provider.color,
         homeDir: runtimeHomeDir(a.homeDir || '~'),
         source: 'configured',
+        quotaSource: a.quotaSource,
       })
     }
 

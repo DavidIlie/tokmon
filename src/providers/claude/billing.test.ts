@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { sharedClaudeCredentialMatches, resetFrom, limitMetric, usageMetric } from './billing'
+import { claudeBilling, sharedClaudeCredentialMatches, resetFrom, limitMetric, usageMetric } from './billing'
 
 test('shared Claude credentials require a verified matching alternate account', () => {
   assert.equal(sharedClaudeCredentialMatches(undefined, { accountUuid: 'account-a', email: null }), false)
@@ -87,4 +87,45 @@ test('usageMetric returns null when utilization is absent', () => {
 
 test('Claude percentage metrics remain unclamped above 100', () => {
   assert.equal(usageMetric('Session', { utilization: 130 })?.used, 130)
+})
+
+test('Claude custom quota source uses its API key and native response shape', async () => {
+  const originalFetch = globalThis.fetch
+  const originalSecret = process.env.TOKMON_CLAUDE_PROXY_KEY
+  process.env.TOKMON_CLAUDE_PROXY_KEY = 'claude-secret'
+  globalThis.fetch = async (_input, init) => {
+    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer claude-secret')
+    return new Response(JSON.stringify({
+      five_hour: { utilization: 25, resets_at: '2026-08-26T01:00:00Z' },
+      seven_day: { utilization: 40, resets_at: '2026-08-30T01:00:00Z' },
+    }), { headers: { 'content-type': 'application/json' } })
+  }
+  try {
+    const result = await claudeBilling({
+      id: 'proxy', providerId: 'claude', name: 'Proxy', color: 'green',
+      quotaSource: {
+        url: 'https://proxy.example/api/oauth/usage',
+        apiKeyEnv: 'TOKMON_CLAUDE_PROXY_KEY',
+      },
+    })
+    assert.equal(result.error, null)
+    assert.deepEqual(result.metrics.map(metric => [metric.label, metric.used]), [['Session', 25], ['Weekly', 40]])
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalSecret === undefined) delete process.env.TOKMON_CLAUDE_PROXY_KEY
+    else process.env.TOKMON_CLAUDE_PROXY_KEY = originalSecret
+  }
+})
+
+test('Claude custom quota source reports a missing key without leaking endpoint data', async () => {
+  delete process.env.TOKMON_MISSING_CLAUDE_KEY
+  const result = await claudeBilling({
+    id: 'proxy', providerId: 'claude', name: 'Proxy', color: 'green',
+    quotaSource: {
+      url: 'https://private.example/api/oauth/usage',
+      apiKeyEnv: 'TOKMON_MISSING_CLAUDE_KEY',
+    },
+  })
+  assert.equal(result.error, 'API key environment variable TOKMON_MISSING_CLAUDE_KEY is not set')
+  assert.equal(result.error?.includes('private.example'), false)
 })

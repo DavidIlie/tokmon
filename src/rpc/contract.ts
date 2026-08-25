@@ -12,7 +12,7 @@ export const TOKMON_WS_PATH = '/ws'
 // WebSnapshot frames. Not expressible as a capability — the stream's success
 // schema itself changed shape, so v4 peers cannot decode any frame.
 export const TOKMON_PROTOCOL_VERSION = 5
-export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1', 'account-provenance-v1', 'installed-harnesses-v1', 'discovery-refresh-v1', 'menu-bar-today-tokens', 'menu-bar-builder-v1', 'typed-read-failures-v1', 'snapshot-deltas-v1'] as const
+export const TOKMON_CAPABILITIES = ['config-cas', 'config-revision', 'allowed-hosts', 'tray-config', 'usage-activity', 'tray-pins', 'provider-pins', 'desktop-disclosure', 'desktop-graph-range', 'provider-headroom', 'canonical-identity', 'appearance-v1', 'theme-engine', 'account-detection-v1', 'account-provenance-v1', 'installed-harnesses-v1', 'discovery-refresh-v1', 'menu-bar-today-tokens', 'menu-bar-builder-v1', 'typed-read-failures-v1', 'snapshot-deltas-v1', 'custom-quota-source-v1'] as const
 export const TYPED_READ_FAILURES_CAPABILITY = 'typed-read-failures-v1'
 
 export const TOKMON_WS_METHODS = {
@@ -45,6 +45,10 @@ const AccountSchema = Schema.Struct({
   homeDir: Schema.String,
   color: Schema.optionalKey(Schema.String),
   enabled: Schema.optionalKey(Schema.Boolean),
+  quotaSource: Schema.optionalKey(Schema.Struct({
+    url: Schema.String,
+    apiKeyEnv: Schema.String,
+  })),
 })
 
 export const TrayConfigSchema = Schema.Struct({
