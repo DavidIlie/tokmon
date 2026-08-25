@@ -16,6 +16,7 @@ export interface AccountForm {
   homeDir: string
   quotaUrl?: string
   apiKeyEnv?: string
+  hadQuotaSource?: boolean
   color: string
   caret: number
   editingId: string | null

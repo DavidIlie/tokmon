@@ -16,6 +16,7 @@ export interface AccountDraft {
   color: string
   quotaUrl: string
   apiKeyEnv: string
+  hadQuotaSource: boolean
 }
 
 export interface AccountDraftDefaults {
@@ -34,7 +35,7 @@ export function newDraft(cfg: Config, defaults: AccountDraftDefaults = {}): Acco
     name: defaults.name ?? '',
     homeDir: defaults.homeDir ?? '~',
     color: defaults.color ?? pickAccentColor(cfg.accounts),
-    quotaUrl: '', apiKeyEnv: '',
+    quotaUrl: '', apiKeyEnv: '', hadQuotaSource: false,
   }
 }
 
@@ -45,7 +46,7 @@ export function toDraft(a: Account): AccountDraft {
     providerId: a.providerId,
     name: a.name, homeDir: a.homeDir,
     color: a.color || PROVIDER_META[a.providerId].color,
-    quotaUrl: a.quotaSource?.url ?? '', apiKeyEnv: a.quotaSource?.apiKeyEnv ?? '',
+    quotaUrl: a.quotaSource?.url ?? '', apiKeyEnv: a.quotaSource?.apiKeyEnv ?? '', hadQuotaSource: Boolean(a.quotaSource),
   }
 }
 
@@ -73,13 +74,13 @@ export function buildAccountFromDraft(editor: AccountDraft, accounts: Account[])
   const hasQuotaSource = Boolean(editor.quotaUrl.trim() || editor.apiKeyEnv.trim())
   const quotaSource = hasQuotaSource
     ? normalizeQuotaSource({ url: editor.quotaUrl, apiKeyEnv: editor.apiKeyEnv }, editor.providerId)
-    : null
+    : editor.hadQuotaSource ? null : undefined
   if (hasQuotaSource && !quotaSource) return { ok: false, error: 'Quota endpoint or API key environment variable is invalid' }
   if (editor.mode === 'add') {
     const id = generateAccountId(name, accounts)
     return {
       ok: true,
-      account: { id, providerId: editor.providerId, name, homeDir, color: editor.color, quotaSource },
+      account: { id, providerId: editor.providerId, name, homeDir, color: editor.color, ...(quotaSource !== undefined ? { quotaSource } : {}) },
       mode: 'add',
       editingId: null,
       convertedFromId: editor.convertedFromId,
@@ -87,7 +88,7 @@ export function buildAccountFromDraft(editor: AccountDraft, accounts: Account[])
   }
   return {
     ok: true,
-    account: { id: editor.editingId!, providerId: editor.providerId, name, homeDir, color: editor.color, quotaSource },
+    account: { id: editor.editingId!, providerId: editor.providerId, name, homeDir, color: editor.color, ...(quotaSource !== undefined ? { quotaSource } : {}) },
     mode: 'edit',
     editingId: editor.editingId,
     convertedFromId: null,

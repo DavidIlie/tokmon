@@ -21,10 +21,13 @@ export function applyAccountForm(config: Config, form: AccountForm): Config {
   const hasQuotaSource = Boolean(form.quotaUrl?.trim() || form.apiKeyEnv?.trim())
   const quotaSource = hasQuotaSource
     ? normalizeQuotaSource({ url: form.quotaUrl, apiKeyEnv: form.apiKeyEnv }, form.providerId)
-    : null
+    : form.hadQuotaSource ? null : undefined
   if (form.mode === 'add') {
     const id = generateAccountId(name, config.accounts)
-    const account: StoredAccount = { id, providerId: form.providerId, name, homeDir, color: form.color, quotaSource }
+    const account: StoredAccount = {
+      id, providerId: form.providerId, name, homeDir, color: form.color,
+      ...(quotaSource !== undefined ? { quotaSource } : {}),
+    }
     return {
       ...config,
       accounts: [...config.accounts, account],
@@ -37,7 +40,7 @@ export function applyAccountForm(config: Config, form: AccountForm): Config {
     ...config,
     accounts: config.accounts.map(a =>
       a.id === form.editingId
-        ? { ...a, providerId: form.providerId, name, homeDir, color: form.color, quotaSource }
+        ? { ...a, providerId: form.providerId, name, homeDir, color: form.color, ...(quotaSource !== undefined ? { quotaSource } : {}) }
         : a),
   }
 }
@@ -67,7 +70,7 @@ export function useAccountForm({ cfg, detected, updateConfig, trackedAccountRows
     const providerId = defaults?.providerId ?? ((detected[0] ?? 'claude') as ProviderId)
     setAccountForm({
       mode: 'add', field: 'provider', providerId,
-      name: defaults?.name ?? '', homeDir: defaults?.homeDir ?? '~', quotaUrl: '', apiKeyEnv: '', color: defaults?.color ?? pickAccentColor(cfg.accounts),
+      name: defaults?.name ?? '', homeDir: defaults?.homeDir ?? '~', quotaUrl: '', apiKeyEnv: '', hadQuotaSource: false, color: defaults?.color ?? pickAccentColor(cfg.accounts),
       caret: defaults?.name?.length ?? 0,
       editingId: null, convertedFromId: defaults?.convertedFromId ?? null, error: null,
     })
@@ -80,7 +83,7 @@ export function useAccountForm({ cfg, detected, updateConfig, trackedAccountRows
   function openEditAccount(acc: StoredAccount): void {
     setAccountForm({
       mode: 'edit', field: 'provider', providerId: acc.providerId,
-      name: acc.name, homeDir: acc.homeDir, quotaUrl: acc.quotaSource?.url ?? '', apiKeyEnv: acc.quotaSource?.apiKeyEnv ?? '', color: acc.color || PROVIDERS[acc.providerId].color,
+      name: acc.name, homeDir: acc.homeDir, quotaUrl: acc.quotaSource?.url ?? '', apiKeyEnv: acc.quotaSource?.apiKeyEnv ?? '', hadQuotaSource: Boolean(acc.quotaSource), color: acc.color || PROVIDERS[acc.providerId].color,
       caret: acc.name.length,
       editingId: acc.id, convertedFromId: null, error: null,
     })

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { LookupAddress } from 'node:dns'
-import { fetchQuotaSource, isPublicQuotaAddress, pinnedLookup, resolveQuotaAddresses } from './quota-source'
+import { fetchQuotaSource, isPublicQuotaAddress, pinnedLookup, quotaHostname, quotaTLSServername, resolveQuotaAddresses } from './quota-source'
 
 test('custom quota fetch authenticates against the pre-resolved public address set', async () => {
   const originalSecret = process.env.TOKMON_TEST_PROXY_KEY
@@ -38,11 +38,23 @@ test('custom quota fetch does not make a request when its secret is missing', as
 })
 
 test('quota address policy rejects private, link-local, metadata, unspecified, and multicast addresses', () => {
-  for (const address of ['0.0.0.0', '10.0.0.1', '100.64.0.1', '127.0.0.1', '169.254.169.254', '172.16.0.1', '192.168.1.1', '224.0.0.1', '::', '::1', 'fd00::1', 'fe80::1', 'ff02::1']) {
+  for (const address of [
+    '0.0.0.0', '10.0.0.1', '100.64.0.1', '127.0.0.1', '169.254.169.254', '172.16.0.1', '192.168.1.1', '224.0.0.1',
+    '::', '::1', '100::1', 'fd00::1', 'fe80::1', 'fec0::1', 'ff02::1',
+    '2001::1', '2001:2::1', '2001:10::1', '2001:20::1', '2001:db8::1', '2002:0808:0808::1',
+  ]) {
     assert.equal(isPublicQuotaAddress(address), false, address)
   }
   assert.equal(isPublicQuotaAddress('8.8.8.8'), true)
   assert.equal(isPublicQuotaAddress('2606:4700:4700::1111'), true)
+})
+
+test('IPv6 URL brackets never reach address checks or TLS SNI', () => {
+  const literal = new URL('https://[2606:4700:4700::1111]/api/oauth/usage')
+  assert.equal(quotaHostname(literal), '2606:4700:4700::1111')
+  assert.equal(quotaTLSServername(literal), undefined)
+  assert.equal(isPublicQuotaAddress('[2606:4700:4700::1111]'), true)
+  assert.equal(quotaTLSServername(new URL('https://proxy.example/api/oauth/usage')), 'proxy.example')
 })
 
 test('public hostnames that resolve to a private address are rejected before request', async () => {

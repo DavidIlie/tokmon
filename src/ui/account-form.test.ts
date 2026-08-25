@@ -73,7 +73,7 @@ test('account form stores and clears a valid custom quota source without storing
 
   const cleared = applyAccountForm(added, {
     ...formFor(autoRow), mode: 'edit', editingId: added.accounts[0]!.id, convertedFromId: null,
-    quotaUrl: '', apiKeyEnv: '',
+    quotaUrl: '', apiKeyEnv: '', hadQuotaSource: true,
   })
   assert.equal(cleared.accounts[0]?.quotaSource, null)
 })

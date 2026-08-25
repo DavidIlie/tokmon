@@ -88,3 +88,19 @@ test('the account editor rejects a quota URL for the wrong provider endpoint', (
   }, [])
   assert.deepEqual(result, { ok: false, error: 'Quota endpoint or API key environment variable is invalid' })
 })
+
+test('ordinary accounts omit the deletion marker sent only when a source is cleared', () => {
+  const cfg: Config = { ...structuredClone(DEFAULTS) }
+  const ordinary = buildAccountFromDraft(newDraft(cfg, { providerId: 'claude', name: 'Ordinary' }), [])
+  assert.ok(ordinary.ok)
+  assert.equal(Object.prototype.hasOwnProperty.call(ordinary.account, 'quotaSource'), false)
+  assert.equal(ordinary.account.quotaSource, undefined)
+
+  const withSource = {
+    id: 'proxy', providerId: 'claude' as const, name: 'Proxy', homeDir: '~', color: 'green',
+    quotaSource: { url: 'https://proxy.example/api/oauth/usage', apiKeyEnv: 'CLIPROXY_KEY' },
+  }
+  const cleared = buildAccountFromDraft({ ...toDraft(withSource), quotaUrl: '', apiKeyEnv: '' }, [withSource])
+  assert.ok(cleared.ok)
+  assert.equal(cleared.account.quotaSource, null)
+})

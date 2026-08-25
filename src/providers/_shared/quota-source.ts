@@ -13,6 +13,8 @@ export type QuotaAddressResolver = (hostname: string) => Promise<LookupAddress[]
 const defaultResolver: QuotaAddressResolver = hostname => dnsLookup(hostname, { all: true, verbatim: true })
 
 const blocked = new BlockList()
+const globalUnicast = new BlockList()
+globalUnicast.addSubnet('2000::', 3, 'ipv6')
 for (const [network, prefix] of [
   ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8],
   ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24],
@@ -20,28 +22,41 @@ for (const [network, prefix] of [
   ['224.0.0.0', 4], ['240.0.0.0', 4],
 ] as const) blocked.addSubnet(network, prefix, 'ipv4')
 for (const [network, prefix] of [
-  ['::', 128], ['::1', 128], ['fc00::', 7], ['fe80::', 10],
-  ['ff00::', 8], ['2001:db8::', 32],
+  ['::', 128], ['::1', 128], ['100::', 64], ['fc00::', 7], ['fe80::', 10], ['fec0::', 10],
+  ['ff00::', 8], ['2001::', 32], ['2001:2::', 48], ['2001:10::', 28], ['2001:20::', 28],
+  ['2001:db8::', 32], ['2002::', 16],
 ] as const) blocked.addSubnet(network, prefix, 'ipv6')
 
+export function quotaHostname(url: URL): string {
+  return url.hostname.replace(/^\[|\]$/g, '')
+}
+
+export function quotaTLSServername(url: URL): string | undefined {
+  const hostname = quotaHostname(url)
+  return url.protocol === 'https:' && isIP(hostname) === 0 ? hostname : undefined
+}
+
 export function isPublicQuotaAddress(address: string): boolean {
-  const family = isIP(address)
-  if (family === 6 && address.toLowerCase().startsWith('::ffff:')) return false
-  return family !== 0 && !blocked.check(address, family === 4 ? 'ipv4' : 'ipv6')
+  const normalized = address.replace(/^\[|\]$/g, '')
+  const family = isIP(normalized)
+  if (family === 6 && normalized.toLowerCase().startsWith('::ffff:')) return false
+  if (family === 6) return globalUnicast.check(normalized, 'ipv6') && !blocked.check(normalized, 'ipv6')
+  return family === 4 && !blocked.check(normalized, 'ipv4')
 }
 
 function isLoopbackAddress(address: string): boolean {
-  const family = isIP(address)
+  const normalized = address.replace(/^\[|\]$/g, '')
+  const family = isIP(normalized)
   return family === 4
-    ? blocked.check(address, 'ipv4') && address.startsWith('127.')
-    : family === 6 && address === '::1'
+    ? blocked.check(normalized, 'ipv4') && normalized.startsWith('127.')
+    : family === 6 && normalized === '::1'
 }
 
 export async function resolveQuotaAddresses(
   url: URL,
   resolve: QuotaAddressResolver = defaultResolver,
 ): Promise<LookupAddress[]> {
-  const addresses = await resolve(url.hostname.replace(/^\[|\]$/g, ''))
+  const addresses = await resolve(quotaHostname(url))
   if (addresses.length === 0) throw new Error('no addresses')
   const allowLoopback = url.protocol === 'http:'
   if (addresses.some(({ address }) => allowLoopback ? !isLoopbackAddress(address) : !isPublicQuotaAddress(address))) {
@@ -76,7 +91,7 @@ async function requestPinned(
       method: 'GET',
       headers,
       lookup: pinnedLookup(addresses),
-      servername: url.protocol === 'https:' && isIP(url.hostname) === 0 ? url.hostname : undefined,
+      servername: quotaTLSServername(url),
       timeout: 10_000,
     }, response => {
       const chunks: Buffer[] = []
