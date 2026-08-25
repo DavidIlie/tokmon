@@ -45,10 +45,10 @@ const AccountSchema = Schema.Struct({
   homeDir: Schema.String,
   color: Schema.optionalKey(Schema.String),
   enabled: Schema.optionalKey(Schema.Boolean),
-  quotaSource: Schema.optionalKey(Schema.Struct({
+  quotaSource: Schema.optionalKey(Schema.NullOr(Schema.Struct({
     url: Schema.String,
     apiKeyEnv: Schema.String,
-  })),
+  }))),
 })
 
 export const TrayConfigSchema = Schema.Struct({

@@ -615,6 +615,30 @@ test('an old full-document CAS update preserves every capability-gated config fi
   }
 })
 
+test('a quota-source-aware client clears a source with an explicit null marker', async () => {
+  const previous = process.env.XDG_CONFIG_HOME
+  const root = await mkdtemp(join(tmpdir(), 'tokmon-config-clear-quota-source-'))
+  const account = {
+    id: 'proxy', providerId: 'claude' as const, name: 'Proxy', homeDir: '~',
+    quotaSource: { url: 'https://proxy.example/api/oauth/usage', apiKeyEnv: 'CLIPROXY_KEY' },
+  }
+  const state = { config: { ...structuredClone(DEFAULTS), accounts: [account] } }
+  const engine = { setConfig: () => {}, broadcastConfig: () => {} } as never
+  try {
+    process.env.XDG_CONFIG_HOME = root
+    const applied = await applyConfigUpdate(engine, state, {
+      expectedRevision: 0,
+      config: { ...state.config, accounts: [{ ...account, quotaSource: null }] },
+    })
+    assert.equal(applied.config.accounts[0]?.quotaSource, undefined)
+    assert.equal((await loadConfig()).accounts[0]?.quotaSource, undefined)
+  } finally {
+    if (previous === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previous
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('full-refresh rediscovery retries instead of applying an older config revision', async () => {
   let releaseFirst!: () => void
   const firstGate = new Promise<void>(resolve => { releaseFirst = resolve })

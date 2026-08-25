@@ -22,7 +22,8 @@ export interface Account {
   /** Manual account intent. Omitted means enabled for backwards compatibility. */
   enabled?: boolean
   /** Optional API-key-authenticated provider quota endpoint. The key itself stays in the environment. */
-  quotaSource?: QuotaSourceConfig
+  /** `null` is a transient RPC deletion marker; normalized persisted config omits it. */
+  quotaSource?: QuotaSourceConfig | null
 }
 
 export interface QuotaSourceConfig {

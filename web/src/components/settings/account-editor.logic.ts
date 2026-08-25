@@ -79,7 +79,7 @@ export function buildAccountFromDraft(editor: AccountDraft, accounts: Account[])
     const id = generateAccountId(name, accounts)
     return {
       ok: true,
-      account: { id, providerId: editor.providerId, name, homeDir, color: editor.color, ...(quotaSource ? { quotaSource } : {}) },
+      account: { id, providerId: editor.providerId, name, homeDir, color: editor.color, quotaSource },
       mode: 'add',
       editingId: null,
       convertedFromId: editor.convertedFromId,
@@ -87,7 +87,7 @@ export function buildAccountFromDraft(editor: AccountDraft, accounts: Account[])
   }
   return {
     ok: true,
-    account: { id: editor.editingId!, providerId: editor.providerId, name, homeDir, color: editor.color, ...(quotaSource ? { quotaSource } : {}) },
+    account: { id: editor.editingId!, providerId: editor.providerId, name, homeDir, color: editor.color, quotaSource },
     mode: 'edit',
     editingId: editor.editingId,
     convertedFromId: null,

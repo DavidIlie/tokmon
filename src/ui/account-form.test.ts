@@ -75,7 +75,7 @@ test('account form stores and clears a valid custom quota source without storing
     ...formFor(autoRow), mode: 'edit', editingId: added.accounts[0]!.id, convertedFromId: null,
     quotaUrl: '', apiKeyEnv: '',
   })
-  assert.equal(cleared.accounts[0]?.quotaSource, undefined)
+  assert.equal(cleared.accounts[0]?.quotaSource, null)
 })
 
 test('the conversion produces exactly one row for the converted home', () => {

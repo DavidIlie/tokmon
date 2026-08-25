@@ -29,7 +29,11 @@ Custom Claude and Codex quota sources read an API key from the daemon's
 environment. Configuration and client RPC messages contain only the endpoint
 URL and environment variable name. Tokmon rejects embedded URL credentials,
 query strings, fragments, non-provider paths, redirects, and non-HTTPS remote
-endpoints. Loopback HTTP remains available for a proxy on the same machine.
+endpoints. Before each request, it resolves the hostname, rejects private,
+link-local, metadata, unspecified, and multicast addresses, then pins the
+connection to the checked address while retaining the original TLS hostname.
+This prevents a second DNS answer from redirecting the API key to another
+host. Loopback HTTP remains available for a proxy on the same machine.
 
 The web server and RPC socket bind to loopback by default. LAN mode expands that
 boundary and should be enabled only on a network you trust. Allowed hosts

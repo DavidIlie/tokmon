@@ -18,7 +18,10 @@ export type AccountFormDefaults =
  */
 export function applyAccountForm(config: Config, form: AccountForm): Config {
   const { name, homeDir } = form
-  const quotaSource = normalizeQuotaSource({ url: form.quotaUrl, apiKeyEnv: form.apiKeyEnv }, form.providerId) ?? undefined
+  const hasQuotaSource = Boolean(form.quotaUrl?.trim() || form.apiKeyEnv?.trim())
+  const quotaSource = hasQuotaSource
+    ? normalizeQuotaSource({ url: form.quotaUrl, apiKeyEnv: form.apiKeyEnv }, form.providerId)
+    : null
   if (form.mode === 'add') {
     const id = generateAccountId(name, config.accounts)
     const account: StoredAccount = { id, providerId: form.providerId, name, homeDir, color: form.color, quotaSource }

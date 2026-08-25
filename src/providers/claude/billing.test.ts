@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
 import { claudeBilling, sharedClaudeCredentialMatches, resetFrom, limitMetric, usageMetric } from './billing'
 
 test('shared Claude credentials require a verified matching alternate account', () => {
@@ -90,28 +91,31 @@ test('Claude percentage metrics remain unclamped above 100', () => {
 })
 
 test('Claude custom quota source uses its API key and native response shape', async () => {
-  const originalFetch = globalThis.fetch
   const originalSecret = process.env.TOKMON_CLAUDE_PROXY_KEY
   process.env.TOKMON_CLAUDE_PROXY_KEY = 'claude-secret'
-  globalThis.fetch = async (_input, init) => {
-    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer claude-secret')
-    return new Response(JSON.stringify({
+  const server = createServer((request, response) => {
+    assert.equal(request.headers.authorization, 'Bearer claude-secret')
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify({
       five_hour: { utilization: 25, resets_at: '2026-08-26T01:00:00Z' },
       seven_day: { utilization: 40, resets_at: '2026-08-30T01:00:00Z' },
-    }), { headers: { 'content-type': 'application/json' } })
-  }
+    }))
+  })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  assert.ok(address && typeof address === 'object')
   try {
     const result = await claudeBilling({
       id: 'proxy', providerId: 'claude', name: 'Proxy', color: 'green',
       quotaSource: {
-        url: 'https://proxy.example/api/oauth/usage',
+        url: `http://127.0.0.1:${address.port}/api/oauth/usage`,
         apiKeyEnv: 'TOKMON_CLAUDE_PROXY_KEY',
       },
     })
     assert.equal(result.error, null)
     assert.deepEqual(result.metrics.map(metric => [metric.label, metric.used]), [['Session', 25], ['Weekly', 40]])
   } finally {
-    globalThis.fetch = originalFetch
+    await new Promise<void>(resolve => server.close(() => resolve()))
     if (originalSecret === undefined) delete process.env.TOKMON_CLAUDE_PROXY_KEY
     else process.env.TOKMON_CLAUDE_PROXY_KEY = originalSecret
   }
