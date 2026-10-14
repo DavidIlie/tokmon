@@ -29,6 +29,9 @@ export interface Account {
 export interface QuotaSourceConfig {
   url: string
   apiKeyEnv: string
+  kind?: 'cliproxy'
+  credentialId?: string
+  keyFile?: string
 }
 
 export type MenuBarMode = 'auto' | 'custom'
@@ -547,6 +550,16 @@ function loopbackHostname(hostname: string): boolean {
 
 export function normalizeQuotaSource(value: unknown, providerId: ProviderId): QuotaSourceConfig | null {
   if ((providerId !== 'claude' && providerId !== 'codex') || !isRecord(value)) return null
+  if (value.kind === 'cliproxy') {
+    if (typeof value.url !== 'string' || typeof value.credentialId !== 'string' || typeof value.keyFile !== 'string') return null
+    try {
+      const url = new URL(value.url.trim())
+      if (url.username || url.password || url.search || url.hash) return null
+      if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopbackHostname(url.hostname))) return null
+      if (!value.credentialId.trim() || !value.keyFile.trim()) return null
+      return { kind: 'cliproxy', url: url.href.replace(/\/$/, ''), apiKeyEnv: '', credentialId: value.credentialId.trim(), keyFile: value.keyFile.trim() }
+    } catch { return null }
+  }
   if (typeof value.url !== 'string' || typeof value.apiKeyEnv !== 'string') return null
   const apiKeyEnv = value.apiKeyEnv.trim()
   if (!API_KEY_ENV_RE.test(apiKeyEnv)) return null

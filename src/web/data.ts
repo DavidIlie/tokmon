@@ -31,7 +31,7 @@ export async function resolveAccounts(config: Config): Promise<ResolvedAccounts>
       const p = PROVIDERS[a.providerId]
       return {
         account: a,
-        hasUsage: p.hasUsage || !!p.fetchTable,
+        hasUsage: a.quotaSource?.kind !== 'cliproxy' && (p.hasUsage || !!p.fetchTable),
         hasBilling: p.hasBilling,
         color: colorHex(a.color, PROVIDERS[a.providerId].color),
       }
@@ -41,12 +41,14 @@ export async function resolveAccounts(config: Config): Promise<ResolvedAccounts>
 }
 
 export async function fetchAccountSummary(account: Account, tz: string): Promise<DashboardData | null> {
+  if (account.quotaSource?.kind === 'cliproxy') return null
   const p = PROVIDERS[account.providerId]
   if (!p.fetchSummary) return null
   return p.fetchSummary(account, tz)
 }
 
 export async function fetchAccountTable(account: Account, tz: string): Promise<TableData | null> {
+  if (account.quotaSource?.kind === 'cliproxy') return null
   const p = PROVIDERS[account.providerId]
   if (!p.fetchTable) return null
   return p.fetchTable(account, tz)

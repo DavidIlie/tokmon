@@ -52,3 +52,13 @@ mode is a display control, not encryption of the local cache.
 Do not attach auth files or unredacted snapshots to a public issue. Describe the
 provider, platform, Tokmon version, and error first so maintainers can request a
 minimal safe diagnostic.
+
+### CLIProxy monitoring
+
+CLIProxy account mode reads the configured private key file in the daemon and
+sends the key only to the configured server's `/v1/usage/limits` endpoint.
+Config and settings contain the file path, never its contents. Requests reject
+redirects and pin the resolved server addresses. This mode allows private HTTPS
+server addresses for home clusters; link-local metadata destinations stay
+blocked. Remote account cards show quota observations without reading local
+provider credentials or multiplying local session usage.

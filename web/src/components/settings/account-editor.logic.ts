@@ -17,6 +17,9 @@ export interface AccountDraft {
   quotaUrl: string
   apiKeyEnv: string
   hadQuotaSource: boolean
+  sourceKind?: 'cliproxy'
+  credentialId?: string
+  keyFile?: string
 }
 
 export interface AccountDraftDefaults {
@@ -46,6 +49,7 @@ export function toDraft(a: Account): AccountDraft {
     providerId: a.providerId,
     name: a.name, homeDir: a.homeDir,
     color: a.color || PROVIDER_META[a.providerId].color,
+    sourceKind: a.quotaSource?.kind, credentialId: a.quotaSource?.credentialId, keyFile: a.quotaSource?.keyFile,
     quotaUrl: a.quotaSource?.url ?? '', apiKeyEnv: a.quotaSource?.apiKeyEnv ?? '', hadQuotaSource: Boolean(a.quotaSource),
   }
 }
@@ -71,9 +75,9 @@ export function buildAccountFromDraft(editor: AccountDraft, accounts: Account[])
   const name = editor.name.trim()
   const homeDir = editor.homeDir.trim() || '~'
   if (!name) return { ok: false, error: 'Name required' }
-  const hasQuotaSource = Boolean(editor.quotaUrl.trim() || editor.apiKeyEnv.trim())
+  const hasQuotaSource = Boolean(editor.sourceKind || editor.quotaUrl.trim() || editor.apiKeyEnv.trim())
   const quotaSource = hasQuotaSource
-    ? normalizeQuotaSource({ url: editor.quotaUrl, apiKeyEnv: editor.apiKeyEnv }, editor.providerId)
+    ? normalizeQuotaSource({ url: editor.quotaUrl, apiKeyEnv: editor.apiKeyEnv, kind: editor.sourceKind, credentialId: editor.credentialId, keyFile: editor.keyFile }, editor.providerId)
     : editor.hadQuotaSource ? null : undefined
   if (hasQuotaSource && !quotaSource) return { ok: false, error: 'Quota endpoint or API key environment variable is invalid' }
   if (editor.mode === 'add') {

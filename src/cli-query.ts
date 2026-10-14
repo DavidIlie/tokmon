@@ -106,7 +106,7 @@ async function cliSource(account: WebAccount): Promise<CliSource> {
     accountId: account.id,
     account: account.identity?.accessibleLabel ?? (account.email || account.displayName || account.name),
     homeDir: account.homeDir,
-    locations: await providerLocations(account.providerId, account.homeDir ?? undefined),
+    locations: account.hasUsage ? await providerLocations(account.providerId, account.homeDir ?? undefined) : [],
   }
 }
 

@@ -19,7 +19,10 @@ export type AccountFormDefaults =
 export function applyAccountForm(config: Config, form: AccountForm): Config {
   const { name, homeDir } = form
   const hasQuotaSource = Boolean(form.quotaUrl?.trim() || form.apiKeyEnv?.trim())
-  const quotaSource = hasQuotaSource
+  const previousSource = config.accounts.find(a => a.id === form.editingId)?.quotaSource
+  const quotaSource = previousSource?.kind === 'cliproxy' && form.quotaUrl === previousSource.url && form.providerId === config.accounts.find(a => a.id === form.editingId)?.providerId
+    ? previousSource
+    : hasQuotaSource
     ? normalizeQuotaSource({ url: form.quotaUrl, apiKeyEnv: form.apiKeyEnv }, form.providerId)
     : form.hadQuotaSource ? null : undefined
   if (form.mode === 'add') {
@@ -93,7 +96,9 @@ export function useAccountForm({ cfg, detected, updateConfig, trackedAccountRows
     const name = accountForm.name.trim()
     const homeDir = accountForm.homeDir.trim() || '~'
     if (!name) { setAccountForm({ ...accountForm, error: 'Name required', field: 'name', caret: accountForm.name.length }); return }
-    if ((accountForm.quotaUrl || accountForm.apiKeyEnv) && !normalizeQuotaSource({ url: accountForm.quotaUrl, apiKeyEnv: accountForm.apiKeyEnv }, accountForm.providerId)) {
+    const previousSource = cfg.accounts.find(a => a.id === accountForm.editingId)?.quotaSource
+    const preservesCLIProxy = previousSource?.kind === 'cliproxy' && previousSource.url === accountForm.quotaUrl && !accountForm.apiKeyEnv && cfg.accounts.find(a => a.id === accountForm.editingId)?.providerId === accountForm.providerId
+    if (!preservesCLIProxy && (accountForm.quotaUrl || accountForm.apiKeyEnv) && !normalizeQuotaSource({ url: accountForm.quotaUrl, apiKeyEnv: accountForm.apiKeyEnv }, accountForm.providerId)) {
       setAccountForm({ ...accountForm, error: 'Quota endpoint or API key environment variable is invalid', field: 'quotaUrl', caret: accountForm.quotaUrl?.length ?? 0 })
       return
     }

@@ -60,7 +60,7 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
                 const meta = PROVIDER_META[pid]
                 return (
                   <button key={pid} type="button"
-                    onClick={() => onChange({ ...editor, providerId: pid })}
+                    onClick={() => onChange({ ...editor, providerId: pid, ...(pid !== 'claude' && pid !== 'codex' ? { sourceKind: undefined, quotaUrl: '', apiKeyEnv: '' } : {}) })}
                     aria-pressed={sel}
                     className={`flex items-center gap-1.5 rounded border px-2 py-1 text-xs transition ${FOCUS_RING} ${
                       sel ? 'border-line-2 bg-bg-3 text-fg-bright' : 'border-line text-fg-dim hover:text-fg'
@@ -89,6 +89,30 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
             />
           </Field>
 
+          {(editor.providerId === 'claude' || editor.providerId === 'codex') && (
+            <Field label="Quota source" hint="Choose a provider-compatible endpoint or a specific CLIProxy subscription">
+              <div className="flex gap-2">
+                <Button variant={!editor.sourceKind ? 'primary' : 'secondary'} onClick={() => onChange({ ...editor, sourceKind: undefined, quotaUrl: '', apiKeyEnv: '' })}>Provider / custom URL</Button>
+                <Button variant={editor.sourceKind ? 'primary' : 'secondary'} onClick={() => onChange({ ...editor, sourceKind: 'cliproxy', quotaUrl: '', apiKeyEnv: '' })}>CLIProxy account</Button>
+              </div>
+            </Field>
+          )}
+          {editor.sourceKind === 'cliproxy' ? (
+            <>
+              {([
+                ['quotaUrl', 'Server URL', 'https://proxy.example.com', 'Your CLIProxy server, without /v1'],
+                ['credentialId', 'Account ID', 'claude-account.json', 'Exact credential ID from CLIProxy. Each account gets its own card.'],
+                ['keyFile', 'API key file', '~/.config/tokmon/cliproxy.key', 'Private local file containing the monitoring API key. Its contents never enter the UI.'],
+              ] as const).map(([key, label, placeholder, hint]) => (
+                <Field key={key} label={label} hint={hint}>
+                  <input aria-label={label} value={editor[key] ?? ''} placeholder={placeholder} autoComplete="off" spellCheck={false}
+                    onChange={e => { setError(null); onChange({ ...editor, [key]: sanitizeTyped(e.target.value) }) }}
+                    className={`w-full rounded border border-line bg-bg-2 px-2.5 py-1.5 text-sm text-fg ${FOCUS_RING}`} />
+                </Field>
+              ))}
+              <p className="text-xs text-fg-faint">Live quota and reset dates from CLIProxy. Session history stays with local accounts.</p>
+            </>
+          ) : (<>
           <Field label="Home directory" hint="path containing the tool's data dir · ~ for default">
             <HomeDirectoryField
               value={editor.homeDir}
@@ -110,6 +134,8 @@ export function AccountEditor({ editor, accounts, onChange, onCancel, onSubmit }
               onChange={e => { setError(null); onChange({ ...editor, apiKeyEnv: sanitizeTyped(e.target.value) }) }}
               className={`w-full rounded border border-line bg-bg-2 px-2.5 py-1.5 font-mono text-sm text-fg ${FOCUS_RING}`} />
           </Field>
+
+          </>)}
 
           <Field label="Accent color" hint="shows on dashboard, account strip, borders">
             <div className="flex flex-wrap gap-1.5">

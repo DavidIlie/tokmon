@@ -1,3 +1,4 @@
+import { cliProxyBilling } from '../cliproxy'
 import { PROVIDER_META } from '../../config-schema'
 import type { Provider } from '../types'
 import { detectCodex, codexDashboard, codexTable } from './usage'
@@ -11,5 +12,5 @@ export const codexProvider: Provider = {
   detect: (homeDir) => detectCodex(homeDir),
   fetchSummary: (account, tz) => codexDashboard(tz, account.homeDir),
   fetchTable: (account, tz) => codexTable(tz, account.homeDir),
-  fetchBilling: (account) => codexBilling(account),
+  fetchBilling: (account) => account.quotaSource?.kind === 'cliproxy' ? cliProxyBilling(account) : codexBilling(account),
 }

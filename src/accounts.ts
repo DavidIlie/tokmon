@@ -22,7 +22,7 @@ function accountHomeKey(providerId: ProviderId, homeDir?: string): string {
 }
 
 function accountKey(providerId: ProviderId, homeDir?: string, quotaSource?: Account['quotaSource']): string {
-  const source = quotaSource ? `${quotaSource.url}\0${quotaSource.apiKeyEnv}` : 'provider'
+  const source = quotaSource ? JSON.stringify(quotaSource) : 'provider'
   return `${accountHomeKey(providerId, homeDir)}:${source}`
 }
 
@@ -209,7 +209,7 @@ export function collectAccounts(config: Config, detected: ProviderId[]): Collect
     if (config.disabledProviders.includes(pid)) continue
     const provider = PROVIDERS[pid]
     const configured = config.accounts.filter(a => a.providerId === pid)
-    const configuredHomes = new Set(configured.map(a => accountHomeKey(a.providerId, a.homeDir)))
+    const configuredHomes = new Set(configured.filter(a => a.quotaSource?.kind !== 'cliproxy').map(a => accountHomeKey(a.providerId, a.homeDir)))
     for (const a of configured) {
       if (a.enabled === false) {
         seenKeys.add(accountKey(a.providerId, a.homeDir, a.quotaSource ?? undefined))

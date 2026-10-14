@@ -52,14 +52,24 @@ function isLoopbackAddress(address: string): boolean {
     : family === 6 && normalized === '::1'
 }
 
+const privateServers = new BlockList()
+for (const [network, prefix] of [['10.0.0.0', 8], ['172.16.0.0', 12], ['192.168.0.0', 16], ['100.64.0.0', 10]] as const) privateServers.addSubnet(network, prefix, 'ipv4')
+privateServers.addSubnet('fc00::', 7, 'ipv6')
+
+function isPrivateQuotaAddress(address: string): boolean {
+  const family = isIP(address)
+  return family === 4 ? privateServers.check(address, 'ipv4') : family === 6 && privateServers.check(address, 'ipv6')
+}
+
 export async function resolveQuotaAddresses(
   url: URL,
   resolve: QuotaAddressResolver = defaultResolver,
+  allowPrivate = false,
 ): Promise<LookupAddress[]> {
   const addresses = await resolve(quotaHostname(url))
   if (addresses.length === 0) throw new Error('no addresses')
   const allowLoopback = url.protocol === 'http:'
-  if (addresses.some(({ address }) => allowLoopback ? !isLoopbackAddress(address) : !isPublicQuotaAddress(address))) {
+  if (addresses.some(({ address }) => allowLoopback ? !isLoopbackAddress(address) : !(isPublicQuotaAddress(address) || (allowPrivate && isPrivateQuotaAddress(address))))) {
     throw new Error('unsafe address')
   }
   return addresses
@@ -80,7 +90,7 @@ export function pinnedLookup(addresses: readonly LookupAddress[]) {
   }
 }
 
-async function requestPinned(
+export async function requestPinned(
   url: URL,
   headers: Record<string, string>,
   addresses: readonly LookupAddress[],

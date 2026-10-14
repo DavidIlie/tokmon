@@ -57,7 +57,7 @@ export function engineConfigKey(next: EngineConfig): string {
     next.installedProviders,
     next.suppressedAccounts ?? [],
     next.resolved.map(r => [
-      r.account.id, r.account.providerId, r.account.homeDir, r.account.name,
+      r.account.id, r.account.providerId, r.account.homeDir, r.account.name, r.account.quotaSource,
       r.hasUsage, r.hasBilling, r.color,
     ]),
   ])
@@ -411,7 +411,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       tz = next.tz
       summaryIntervalMs = next.summaryIntervalMs
       billingIntervalMs = next.billingIntervalMs
-      const sourceKey = (r: ResolvedAccount) => `${r.account.providerId}:${r.account.homeDir ?? ''}`
+      const sourceKey = (r: ResolvedAccount) => `${r.account.providerId}:${JSON.stringify(r.account.quotaSource ?? r.account.homeDir ?? '')}`
       const prevSources = new Map(resolved.map(r => [r.account.id, sourceKey(r)]))
       resolved = next.resolved
       installedProviders = next.installedProviders

@@ -73,3 +73,28 @@ Configure the API key by environment variable name. For example, use
 `CLIPROXY_API_KEY` in the account editor and start Tokmon with that variable in
 its environment. Tokmon never writes the variable's value to `config.json` or
 sends it through its daemon protocol.
+
+## CLIProxy subscription accounts
+
+Choose **CLIProxy account** in the web account editor for Claude or Codex. Enter
+one trusted server URL, the exact credential ID from CLIProxy, and a local API
+key file. Each subscription gets a separate quota card with its session, weekly,
+and model-specific windows and reset dates. The file must contain one key and
+have private permissions, such as `chmod 600 ~/.config/tokmon/cliproxy.key`.
+
+Tokmon reads `GET /v1/usage/limits`. Use a key bound to the accounts you want to
+monitor. For monitoring without model access, restrict every binding to an
+unregistered model name such as `tokmon-quota-only` and verify the key's model
+catalog is empty. Tokmon displays account quota, rather than the key's allocated
+share. The ordinary custom URL mode remains available for pooled key quotas.
+
+The daemon shares one quota request across accounts on the same server and key
+file for 15 seconds. It uses CLIProxy's observation timestamps, omits expired
+windows, and does not refresh upstream credentials or consume saved resets.
+Remote accounts contain quota only. Local accounts continue to own session
+history, token counts, and cost estimates.
+
+Private HTTPS servers and split DNS are supported for this explicitly configured
+source. DNS results are pinned per request; redirects, link-local metadata
+addresses, and URL credentials are rejected. The API key file's contents stay
+in the daemon and never enter the browser, desktop renderer, or config RPC.

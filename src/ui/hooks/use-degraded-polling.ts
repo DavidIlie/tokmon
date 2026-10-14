@@ -17,7 +17,7 @@ function failureMessage(scope: string, failures: PromiseRejectedResult[]): Error
 }
 
 function usageProviders(accounts: Account[]): ProviderId[] {
-  return [...new Set(accounts.filter(account => PROVIDERS[account.providerId].hasUsage).map(account => account.providerId))]
+  return [...new Set(accounts.filter(account => account.quotaSource?.kind !== 'cliproxy' && PROVIDERS[account.providerId].hasUsage).map(account => account.providerId))]
 }
 
 /**
@@ -138,7 +138,7 @@ export function useDegradedPolling({
     const task = (async () => {
       const targets = accountsRef.current.filter(account => {
         const provider = PROVIDERS[account.providerId]
-        return provider.hasUsage && provider.fetchSummary
+        return account.quotaSource?.kind !== 'cliproxy' && provider.hasUsage && provider.fetchSummary
       })
       const settled = await Promise.allSettled(targets.map(async account => {
         const fetchSummary = PROVIDERS[account.providerId].fetchSummary
@@ -201,7 +201,7 @@ export function useDegradedPolling({
     const existing = tableFlightsRef.current.get(providerId)
     if (existing) return existing
     const epoch = epochRef.current
-    const targets = accountsRef.current.filter(account => account.providerId === providerId)
+    const targets = accountsRef.current.filter(account => account.quotaSource?.kind !== 'cliproxy' && account.providerId === providerId)
     if (targets.length === 0 || !PROVIDERS[providerId].hasUsage) return Promise.resolve()
 
     setLoadingTables(prev => new Set(prev).add(providerId))

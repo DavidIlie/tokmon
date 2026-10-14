@@ -78,6 +78,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
             const hex = namedColorHex(acc.color || meta.color)
             const active = acc.enabled && acc.id === draft.activeAccountId
             const configured = acc.source === 'configured'
+            const quotaSource = draft.accounts.find(account => account.id === acc.explicitId)?.quotaSource
             const ignored = acc.source === 'ignored'
             return (
               <li key={`${acc.source}:${acc.id}`} className={`flex items-center gap-2.5 rounded border border-line px-2.5 py-2 ${ignored ? 'bg-bg-1 opacity-75' : 'bg-bg-2/60'}`}>
@@ -106,7 +107,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                       {acc.source === 'auto' ? 'detected' : ignored ? (acc.live === false ? 'source not found' : 'removed') : acc.enabled ? 'manual' : 'manual · disabled'}
                     </span>
                   </div>
-                  <div className="truncate font-mono text-[11px] text-fg-faint">{draft.privacyMode ? 'path hidden' : acc.homeDir}</div>
+                  <div className="truncate font-mono text-[11px] text-fg-faint">{draft.privacyMode ? 'source hidden' : quotaSource?.kind === 'cliproxy' ? `CLIProxy · ${quotaSource.credentialId}` : acc.homeDir}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5">
                   {pendingDeleteId === acc.id ? <span className="mr-1 text-[10px] text-critical" role="alert">Delete?</span> : null}
@@ -114,7 +115,7 @@ export function AccountsSection({ draft, patch, snapshot, onEdit, onConfigure, o
                     <>
                       <IconBtn label="Move up" disabled={acc.explicitIndex === 0} onClick={() => move(acc.explicitIndex!, -1)}><ChevronUp className="size-3.5" /></IconBtn>
                       <IconBtn label="Move down" disabled={acc.explicitIndex === draft.accounts.length - 1} onClick={() => move(acc.explicitIndex!, 1)}><ChevronDown className="size-3.5" /></IconBtn>
-                      <IconBtn label="Edit account" onClick={() => onEdit(acc)}><Pencil className="size-3.5" /></IconBtn>
+                      <IconBtn label="Edit account" onClick={() => onEdit(draft.accounts.find(account => account.id === acc.explicitId) ?? acc)}><Pencil className="size-3.5" /></IconBtn>
                       <Button size="xs" onClick={() => patch(c => ({
                         ...c,
                         activeAccountId: !acc.enabled || c.activeAccountId !== acc.id ? c.activeAccountId : null,
