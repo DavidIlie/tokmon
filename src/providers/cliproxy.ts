@@ -62,14 +62,20 @@ export async function cliProxyBilling(account: Account): Promise<BillingResult> 
     let flight = snapshotFlights.get(cacheKey)
     if (!flight || flight.until <= Date.now()) {
       const promise = (async () => {
-        const response = await requestPinned(url, { Authorization: `Bearer ${key}`, Accept: 'application/json' }, await resolveQuotaAddresses(url, undefined, true))
+        const addresses = await resolveQuotaAddresses(url, undefined, true)
+        const headers = { Authorization: `Bearer ${key}`, Accept: 'application/json' }
+        const response = await requestPinned(url, headers, addresses).catch(() => requestPinned(url, headers, addresses))
         if (!response.ok) throw new Error(`CLIProxy returned HTTP ${response.status}`)
         const rows = record(await response.json()).data
         if (!Array.isArray(rows)) throw new Error('CLIProxy quota response is invalid')
         return rows
       })()
-      flight = { until: Date.now() + 15_000, promise }
-      snapshotFlights.set(cacheKey, flight)
+      flight = { until: Infinity, promise }
+      const pending = flight
+      snapshotFlights.set(cacheKey, pending)
+      void promise.then(() => { pending.until = Date.now() + 60_000 }, () => {
+        if (snapshotFlights.get(cacheKey) === pending) snapshotFlights.delete(cacheKey)
+      })
       if (snapshotFlights.size > 16) snapshotFlights.delete(snapshotFlights.keys().next().value!)
     }
     const snapshot = record((await flight.promise).find(value => {
