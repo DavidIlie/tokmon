@@ -34,6 +34,13 @@ pnpm run build:desktop
 pnpm run build:site
 ```
 
+`pnpm run check` typechecks the CLI and web dashboard and runs every test.
+Tests cover daemon security, the RPC and snapshot-delta contracts, config
+persistence, usage storage and accounting, quota-source SSRF guards, update
+safety and privacy redaction. Add one only when a bug there would leak data,
+lose usage or config, or break a client silently; don't add a test file per
+change, and don't test presentation, copy or formatting.
+
 ## Development commands
 
 ```bash
