@@ -18,45 +18,18 @@ function discover(directory) {
   }
 }
 
-// The core tier is the regression surface for the moving parts that actually
-// break in the field: daemon lifecycle, RPC transport, provider parsing/pricing,
-// and desktop presentation state. Pure formatting/presentation helpers only run
-// on the full tier (`--all`), which CI uses.
-const CORE_PATTERNS = [
-  /^src\/client\//,
-  /^src\/web\//,
-  /^src\/providers\//,
-  /^src\/desktop\/main\//,
-  /^test\//,
-  /^src\/rpc\//,
-  /^src\/config/,
-  /^src\/usage-semantics/,
-  /^src\/provider-tracking/,
-  /^src\/accounts-detection/,
-]
-
-const args = process.argv.slice(2)
-const runAll = args.includes('--all')
-const directories = args.filter(arg => arg !== '--all')
+const directories = process.argv.slice(2)
 for (const directory of directories.length > 0 ? directories : ['src', 'test']) {
   discover(directory)
 }
 testFiles.sort((left, right) => left.localeCompare(right, 'en'))
 
-const selected = runAll || directories.length > 0
-  ? testFiles
-  : testFiles.filter(file => CORE_PATTERNS.some(pattern => pattern.test(file.replaceAll('\\', '/'))))
-
-if (selected.length === 0) {
+if (testFiles.length === 0) {
   console.error('tokmon: no test files found')
   process.exit(1)
 }
 
-if (!runAll && directories.length === 0) {
-  console.error(`tokmon: core tier — ${selected.length}/${testFiles.length} test files (pass --all for the full suite)`)
-}
-
-const result = spawnSync(process.execPath, ['--import', 'tsx', '--test', ...selected], {
+const result = spawnSync(process.execPath, ['--import', 'tsx', '--test', ...testFiles], {
   cwd: process.cwd(),
   stdio: 'inherit',
 })

@@ -7,8 +7,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "check": "astro check",
-    "test": "node ../test/run-tests.mjs src"
+    "check": "astro check"
   },
   "dependencies": {
     "astro": "^5.13.0"

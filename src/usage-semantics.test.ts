@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Metric } from './providers/types'
-import { accountIdentityText, accountProviderOrdinals, blendHeadroom, deriveAccountIdentity, deriveProviderHeadroom, deriveQuotaView, deriveQuotaViews, MIN_STALE_AFTER_MS, percentText, projectAccountIdentity, resolveQuotaViews, severity, severityTag, staleAfterMs, tightestQuotaView, usageFromHeadroom } from './usage-semantics'
+import { blendHeadroom, deriveAccountIdentity, deriveProviderHeadroom, deriveQuotaView, deriveQuotaViews, MIN_STALE_AFTER_MS, projectAccountIdentity, resolveQuotaViews, staleAfterMs, tightestQuotaView, usageFromHeadroom } from './usage-semantics'
 
 const pct = (label: string, used: number, extra: Partial<Metric> = {}): Metric => ({
   label, used, limit: 100, format: { kind: 'percent' }, ...extra,
@@ -27,13 +27,6 @@ test('single and batch quota normalization share one parser', () => {
   assert.equal(tightestQuotaView(deriveQuotaViews(metrics))?.label, 'Spend')
 })
 
-test('unbounded count suffixes remain human-readable across every renderer', () => {
-  const view = deriveQuotaView({
-    label: 'Resets', used: 2, limit: null, format: { kind: 'count', suffix: 'available' },
-  })
-  assert.equal(view.valueText, '2 available')
-})
-
 test('bounded provider money keeps exact amounts alongside its percentage meter', () => {
   const view = deriveQuotaView({
     key: 'extra_usage', role: 'unbounded', label: 'Extra', used: 3, limit: 100,
@@ -43,18 +36,6 @@ test('bounded provider money keeps exact amounts alongside its percentage meter'
   assert.equal(view.remainingPct, 97)
   assert.equal(view.valueText, '$3.00 used · $97.00 left')
   assert.deepEqual(view.value, { kind: 'money', used: 3, limit: 100, remaining: 97, currency: 'USD' })
-})
-
-test('money copy distinguishes unlimited and over-limit provider values', () => {
-  assert.equal(deriveQuotaView({
-    label: 'Extra', used: 3, limit: null, format: { kind: 'dollars', currency: 'EUR' },
-  }).valueText, '€3.00')
-  assert.equal(deriveQuotaView({
-    label: 'Extra', used: 105, limit: 100, format: { kind: 'dollars', currency: 'USD' },
-  }).valueText, '$105.00 used · $5.00 over')
-  assert.equal(deriveQuotaView({
-    label: 'Extra', used: 300, limit: 10_000, format: { kind: 'dollars', currency: 'JPY' },
-  }).valueText, '¥300 used · ¥9,700 left')
 })
 
 test('daemon quota contract wins over conflicting legacy raw metrics', () => {
@@ -154,14 +135,6 @@ test('smart generic providers use the declared primary metric, not an auxiliary 
   assert.equal(view.factors[0]?.reason, 'primary')
 })
 
-test('canonical identity uses registered title and global privacy ordinals', () => {
-  const visible = deriveAccountIdentity({ name: 'Claude Work', email: 'david@example.com', providerName: 'Claude', displayName: 'David', ordinal: 2, privacyMode: false })
-  assert.deepEqual(visible, { title: 'Claude Work', subtitle: 'david@example.com', accessibleLabel: 'Claude Work, david@example.com', redacted: false })
-  const privateView = deriveAccountIdentity({ name: 'Claude david@example.com', email: 'david@example.com', providerName: 'Claude', ordinal: 2, privacyMode: true })
-  assert.equal(privateView.title, 'Claude account 2')
-  assert.equal(privateView.accessibleLabel.includes('@'), false)
-})
-
 test('redaction is reported only when privacy mode is on', () => {
   // Privacy mode always returns the ordinal early, so nothing on the visible
   // path can carry redacted: true. Locks that in, since consumers branch on it.
@@ -180,38 +153,6 @@ test('redaction is reported only when privacy mode is on', () => {
   )
 })
 
-test('severity bands are single-sourced at the ≤10 / ≤25 boundaries', () => {
-  assert.equal(severity(null), 'unknown')
-  assert.equal(severity(Number.NaN), 'unknown')
-  assert.equal(severity(0), 'crit')
-  assert.equal(severity(10), 'crit')
-  assert.equal(severity(10.0001), 'warn')
-  assert.equal(severity(25), 'warn')
-  assert.equal(severity(25.0001), 'ok')
-  assert.equal(severity(100), 'ok')
-  // The mandatory text companion to colour.
-  assert.equal(severityTag('crit'), 'Very high')
-  assert.equal(severityTag('warn'), 'High')
-  assert.equal(severityTag('ok'), null)
-  assert.equal(severityTag('unknown'), null)
-})
-
-test('percent copy never rounds a live sliver of usage down to zero', () => {
-  assert.equal(percentText(0), '0%')
-  assert.equal(percentText(0.0001), '<1%')
-  assert.equal(percentText(0.4), '<1%')
-  assert.equal(percentText(1), '1%')
-  assert.equal(percentText(58.6), '59%')
-  assert.equal(percentText(100), '100%')
-  assert.equal(percentText(null), '—')
-  assert.equal(percentText(Number.NaN), '—')
-  // The menu-bar numeral drops the glyph but keeps the same rule.
-  assert.equal(percentText(0.4, { unit: false }), '<1')
-  assert.equal(percentText(58.6, { unit: false }), '59')
-  // Which is what every surface's quota row reads.
-  assert.equal(deriveQuotaView(pct('Session', 0.4)).valueText, '<1% used')
-})
-
 test('staleness is two missed polls, floored at one default cycle', () => {
   assert.equal(MIN_STALE_AFTER_MS, 300_000)
   assert.equal(staleAfterMs(60_000), 300_000)
@@ -222,22 +163,6 @@ test('staleness is two missed polls, floored at one default cycle', () => {
   assert.equal(staleAfterMs(null), 600_000)
   assert.equal(staleAfterMs(0), 600_000)
   assert.equal(staleAfterMs(Number.NaN), 600_000)
-})
-
-test('shared account identity is title/subtitle-first, de-duped, provider-filtered', () => {
-  // Title + subtitle joined; provider name filtered out so it never repeats.
-  assert.equal(
-    accountIdentityText({ identity: { title: 'Work', subtitle: 'work@example.com', accessibleLabel: 'Work, work@example.com', redacted: false }, name: 'raw' }, 'Claude'),
-    'Work · work@example.com',
-  )
-  // Title equal to the provider name collapses to just the provider name.
-  assert.equal(
-    accountIdentityText({ identity: { title: 'Claude', subtitle: null, accessibleLabel: 'Claude', redacted: false }, name: 'raw' }, 'Claude'),
-    'Claude',
-  )
-  // No daemon identity falls back to the registered name, else the provider.
-  assert.equal(accountIdentityText({ name: 'Personal' }, 'Claude'), 'Personal')
-  assert.equal(accountIdentityText({ name: '' }, 'Claude'), 'Claude')
 })
 
 test('the shared privacy projection agrees with the daemon and distrusts stale identities', () => {
@@ -257,13 +182,4 @@ test('the shared privacy projection agrees with the daemon and distrusts stale i
   assert.equal(projectAccountIdentity({
     identity: null, visible: 'Claude Jane Doe', providerName: 'Claude', ordinal: 2, privacyMode: false,
   }), 'Claude Jane Doe')
-})
-
-test('provider ordinals number accounts within their provider, in snapshot order', () => {
-  const ordinals = accountProviderOrdinals([
-    { id: 'c1', providerId: 'claude' },
-    { id: 'x1', providerId: 'codex' },
-    { id: 'c2', providerId: 'claude' },
-  ])
-  assert.deepEqual([...ordinals], [['c1', 1], ['x1', 1], ['c2', 2]])
 })

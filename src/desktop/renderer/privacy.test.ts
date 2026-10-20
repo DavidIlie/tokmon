@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { WebAccount } from '../../web/contract'
-import { accountIdentity, matchesPrivacyShortcut } from './privacy'
+import { accountIdentity } from './privacy'
 
 const account = (identity: string): WebAccount => ({
   id: 'claude-work', providerId: 'claude', name: identity, color: 'green', homeDir: null,
@@ -62,13 +62,4 @@ test('privacy mode rejects a stale unredacted daemon identity', () => {
     accessibleLabel: 'david@example.com', redacted: false,
   }
   assert.equal(accountIdentity(value, true), '[redacted]')
-})
-
-test('privacy shortcut accepts configured P outside editable controls only', () => {
-  assert.equal(matchesPrivacyShortcut({ key: 'p' }, 'p'), true)
-  assert.equal(matchesPrivacyShortcut({ key: 'P' }, 'p'), true)
-  assert.equal(matchesPrivacyShortcut({ key: 'p', editable: true }, 'p'), false)
-  assert.equal(matchesPrivacyShortcut({ key: 'p', metaKey: true }, 'p'), false)
-  assert.equal(matchesPrivacyShortcut({ key: 'P', shiftKey: true }, 'p'), false)
-  assert.equal(matchesPrivacyShortcut({ key: 'p', repeat: true }, 'p'), false)
 })

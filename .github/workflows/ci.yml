@@ -25,10 +25,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm --prefix web install --frozen-lockfile
-      - run: pnpm run check
-      - run: pnpm run build
-      - run: pnpm run check:desktop
-      - run: pnpm run build:desktop
+      # Checks and both builds are independent, so run them side by side.
+      - run: pnpm run "/^(check|check:desktop|build|build:desktop)$/"
 
   site:
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-24.04' || 'davidapps-ubuntu' }}

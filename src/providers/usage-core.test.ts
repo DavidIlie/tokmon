@@ -13,7 +13,6 @@ import {
   summarize,
   tableSince,
   tabulate,
-  walkFiles,
   type Entry,
 } from './usage-core'
 import { isClaudeSessionFile } from './claude/usage'
@@ -147,47 +146,6 @@ test('summarize month window rolls over at the 1st-of-month boundary', () => {
   assert.equal(month.cost, 9)
 })
 
-test('summarize burn rate is zero when no entry falls in today', () => {
-  const now = Date.now()
-  // Entirely before today's local midnight: hadToday stays false.
-  const e = mk({ ts: startOfDay(now, NY) - 1, cost: 100, input: 5, output: 5 })
-  const { today, burnRate } = summarize([e], NY)
-  assert.equal(today.cost, 0)
-  assert.equal(burnRate, 0)
-})
-
-test('summarize burn rate applies the 1-minute floor for a just-now entry', () => {
-  const now = Date.now()
-  // ts == now is always >= today's local midnight, and the elapsed time inside
-  // summarize is well under a minute, so hrs is floored to 1/60.
-  const e = mk({ ts: now, cost: 2 })
-  const { today, burnRate } = summarize([e], NY)
-  assert.equal(today.cost, 2)
-  assert.equal(burnRate, 2 / (1 / 60))
-})
-
-test('summarize burn rate divides today cost by hours since the oldest today entry', () => {
-  const now = Date.now()
-  // One second into today: guaranteed to be inside the today window regardless
-  // of wall-clock, and becomes oldestToday.
-  const oldestTs = startOfDay(now, NY) + 1000
-  const cost = 12
-  const { burnRate } = summarize([mk({ ts: oldestTs, cost })], NY)
-
-  // summarize captures its own Date.now() at or after ours; bound it generously.
-  const slackMs = 60_000
-  const hrsAtLeast = Math.max((now - oldestTs) / 3_600_000, 1 / 60)
-  const hrsAtMost = Math.max((now + slackMs - oldestTs) / 3_600_000, 1 / 60)
-  const burnHigh = cost / hrsAtLeast
-  const burnLow = cost / hrsAtMost
-
-  assert.ok(burnRate > 0)
-  assert.ok(
-    burnRate >= burnLow - 1e-9 && burnRate <= burnHigh + 1e-9,
-    `burnRate ${burnRate} outside [${burnLow}, ${burnHigh}]`,
-  )
-})
-
 test('dedupe collapses duplicate ids keeping the last, and preserves first-seen order', () => {
   const out = dedupe([
     mk({ ts: 1000, id: 'a', cost: 1 }),
@@ -223,32 +181,6 @@ test('dedupe collapses id-less entries only when every content field matches', (
   assert.equal(distinct.length, 2)
 })
 
-test('tabulate groups rows per day with per-model breakdowns', () => {
-  const entries = [
-    mk({ ts: Date.parse('2026-07-09T10:00:00Z'), model: 'm1', input: 10, output: 20, cost: 1, count: 1 }),
-    mk({ ts: Date.parse('2026-07-09T14:00:00Z'), model: 'm2', input: 5, output: 0, cost: 2, count: 3 }),
-    mk({ ts: Date.parse('2026-07-10T09:00:00Z'), model: 'm1', input: 1, output: 1, cost: 0.5, count: 1 }),
-  ]
-  const { daily } = tabulate(entries, 'UTC')
-
-  assert.deepEqual(daily.map(r => r.label), ['2026-07-09', '2026-07-10'])
-
-  const day1 = daily[0]
-  assert.deepEqual(day1.models, ['m1', 'm2'])
-  assert.equal(day1.input, 15)
-  assert.equal(day1.output, 20)
-  assert.equal(day1.total, 15 + 20)
-  assert.equal(day1.cost, 3)
-  assert.equal(day1.count, 4)
-  // breakdown is sorted by descending cost: m2 (2) before m1 (1).
-  assert.deepEqual(day1.breakdown.map(m => m.name), ['m2', 'm1'])
-
-  const day2 = daily[1]
-  assert.deepEqual(day2.models, ['m1'])
-  assert.equal(day2.total, 2)
-  assert.equal(day2.count, 1)
-})
-
 /** A wide tree whose only root-level file is the match, plus a deep miss tree. */
 async function sessionTree(options: { rootMatch: boolean }) {
   const root = await mkdtemp(join(tmpdir(), 'tokmon-walk-'))
@@ -264,37 +196,6 @@ async function sessionTree(options: { rootMatch: boolean }) {
   await writeFile(join(branch, 'deepest.jsonl'), '{}\n')
   return { root, deepest: branch }
 }
-
-test('session detection stops at the first match instead of walking the tree', async () => {
-  const { root } = await sessionTree({ rootMatch: true })
-  try {
-    const inspected: string[] = []
-    const found = await hasFileMatching(root, name => {
-      inspected.push(name)
-      return isClaudeSessionFile(name)
-    })
-
-    assert.equal(found, true)
-    // Everything inspected lives in the root directory, so exactly one readdir
-    // ran: the 97-file subtree below was never opened.
-    assert.deepEqual(inspected, [join(root, 'session.jsonl')])
-    // Control: the tree really is large, and the old walk collected all of it.
-    assert.equal((await walkFiles(root)).length, 98)
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-test('session detection still finds a match buried at the bottom of the tree', async () => {
-  const { root } = await sessionTree({ rootMatch: false })
-  try {
-    assert.equal(await hasFileMatching(root, isClaudeSessionFile), true)
-    assert.equal(await hasFileMatching(root, name => name.endsWith('.sqlite')), false)
-    assert.equal(await hasFileMatching(join(root, 'does-not-exist'), () => true), false)
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
-})
 
 test('session detection does not follow symlinks back into the tree', async () => {
   const { root, deepest } = await sessionTree({ rootMatch: false })

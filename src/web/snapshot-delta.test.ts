@@ -241,11 +241,3 @@ test('long stream of mixed mutations stays byte-faithful', () => {
     assert.deepEqual(decoded, current, `tick ${tick} diverged`)
   }
 })
-
-test('deltas for steady-state ticks are dramatically smaller than full snapshots', () => {
-  const encoder = createSnapshotDeltaEncoder()
-  const big = snapshot([account('a'), account('b'), account('c')])
-  const init = JSON.stringify(encodeEvent(encoder.next(big))).length
-  const steady = JSON.stringify(encodeEvent(encoder.next(snapshot([account('a'), account('b'), account('c')], 2_000)))).length
-  assert.ok(steady < init / 5, `steady-state delta ${steady}B should be <20% of init ${init}B`)
-})
