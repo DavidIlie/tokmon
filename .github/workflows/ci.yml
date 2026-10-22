@@ -1,16 +1,32 @@
 name: CI
 
+# Docs-only changes skip CI, except README.md: the site job renders it.
 on:
   pull_request:
+    paths:
+      - "**"
+      - "!**/*.md"
+      - "!docs/**"
+      - README.md
   push:
     branches: [master]
+    paths:
+      - "**"
+      - "!**/*.md"
+      - "!docs/**"
+      - README.md
 
 permissions:
   contents: read
 
+# Supersede stale pull request runs; let every master run finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   verify:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-24.04' || 'davidapps-ubuntu' }}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -29,7 +45,7 @@ jobs:
       - run: pnpm run "/^(check|check:desktop|build|build:desktop)$/"
 
   site:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-24.04' || 'davidapps-ubuntu' }}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
