@@ -12,6 +12,10 @@ overrides:
   # Pin one version across every surface so that can never drift again.
   effect: 4.0.0-beta.102
   "@effect/platform-node": 4.0.0-beta.102
+  # effect 4.0.0-beta.102 depends on toml ^4, which has three CPU DoS advisories
+  # (GHSA-4qx8-w7c3-pj3p, GHSA-9j65-hcg3-gc64, GHSA-9qmh-m7c6-f92p) fixed only in
+  # 5.0.1. effect only calls Toml.parse(), which 5.x keeps unchanged.
+  "effect>toml": 5.0.1
 
 allowBuilds:
   esbuild: true

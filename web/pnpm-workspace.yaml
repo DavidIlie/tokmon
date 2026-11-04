@@ -1,6 +1,11 @@
 packages:
   - .
 
+overrides:
+  # effect 4.0.0-beta.102 depends on toml ^4 (CPU DoS advisories fixed only in
+  # 5.0.1). effect only calls Toml.parse(), which 5.x keeps unchanged.
+  "effect>toml": 5.0.1
+
 allowBuilds:
   esbuild: true
   msgpackr-extract: true
