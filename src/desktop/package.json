@@ -34,7 +34,7 @@
     "electron": "45.2.2",
     "electron-builder": "26.18.0",
     "playwright-core": "1.60.0",
-    "tsup": "^8.0.0",
+    "tsup": "^9.0.0",
     "tsx": "^4.0.0",
     "typescript": "5.9.3",
     "vite": "^6.0.0"
