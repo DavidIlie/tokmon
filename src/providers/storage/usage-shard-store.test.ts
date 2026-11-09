@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { appendFile, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -193,3 +193,137 @@ test('prunes stale completed shards in obsolete fingerprint namespaces only', as
     assert.equal((await shardFiles(dir)).length, 1)
   })
 })
+
+test('an appended log costs only its new bytes and loses no rows', async () => {
+  await withDir(async dir => {
+    const log = join(dir, 'session.jsonl')
+    const lines = (from: number, to: number) =>
+      Array.from({ length: to - from }, (_, i) => JSON.stringify({ id: `r${from + i}`, value: from + i }) + '\n').join('')
+    const ranges: [number, number][] = []
+    const parseRange = async (start: number, end: number): Promise<Row[]> => {
+      ranges.push([start, end])
+      const text = (await readFile(log, 'utf8')).slice(start, end)
+      return text.split('\n').filter(Boolean).map(line => JSON.parse(line) as Row)
+    }
+    const load = async (cache: UsageShardStore<Row>, mtimeMs: number) => {
+      const size = (await stat(log)).size
+      return cache.load({ path: log, mtimeMs, size }, () => parseRange(0, size), from => parseRange(from, size))
+    }
+    let now = NOW
+    const cache = store(dir, { now: () => now })
+
+    await writeFile(log, lines(0, 3))
+    const firstSize = (await stat(log)).size
+    assert.deepEqual((await load(cache, 1)).map(row => row.id), ['r0', 'r1', 'r2'])
+
+    await appendFile(log, lines(3, 5))
+    assert.deepEqual((await load(cache, 2)).map(row => row.id), ['r0', 'r1', 'r2', 'r3', 'r4'])
+    assert.deepEqual(ranges.at(-1), [firstSize, (await stat(log)).size])
+
+    // The hot shard is not rewritten on every append, but a quiet poll after
+    // the write interval must leave the newest rows on disk for the next start.
+    now += 60_000
+    await load(cache, 2)
+    const restarted = store(dir, { now: () => now })
+    let reparsed = false
+    const size = (await stat(log)).size
+    const fromDisk = await restarted.load({ path: log, mtimeMs: 2, size }, async () => { reparsed = true; return [] })
+    assert.equal(reparsed, false)
+    assert.equal(fromDisk.length, 5)
+
+    // A rewrite that happens to be larger is not an append: reparse it whole.
+    await writeFile(log, lines(10, 20))
+    const rewritten = await load(cache, 3)
+    assert.deepEqual(ranges.at(-1), [0, (await stat(log)).size])
+    assert.deepEqual(rewritten.map(row => row.id), Array.from({ length: 10 }, (_, i) => `r${10 + i}`))
+  })
+})
+
+test('a slow parser is deferred, then catches up once the log is quiet', async () => {
+  await withDir(async dir => {
+    let now = NOW
+    const cache = store(dir, { now: () => now })
+    const slow = (rows: Row[]) => async () => { now += 1_000; return rows }
+
+    await cache.load(source('/logs/big.jsonl', 1, 100), slow([{ id: 'a', value: 1 }]))
+    const deferred = await cache.loadTracked(source('/logs/big.jsonl', 2, 200), slow([{ id: 'b', value: 2 }]))
+    assert.deepEqual(deferred, { entries: [{ id: 'a', value: 1 }], settled: false })
+
+    now += 60_000
+    const caughtUp = await cache.loadTracked(source('/logs/big.jsonl', 2, 200), slow([{ id: 'b', value: 2 }]))
+    assert.deepEqual(caughtUp.entries, [{ id: 'b', value: 2 }])
+  })
+})
+
+test('resumable state stays in memory, advances on appends, and is rebuilt after restart', async () => {
+  await withDir(async dir => {
+    const log = join(dir, 'stateful.jsonl')
+    let now = NOW
+    let cache = store(dir, { now: () => now })
+    const calls: { from: number; previous?: number }[] = []
+    const load = async (mtimeMs: number) => {
+      const size = (await stat(log)).size
+      const parse = async (from = 0, state?: { total: number }) => {
+        calls.push({ from, previous: state?.total })
+        const values = (await readFile(log)).subarray(from, size).toString().trim().split('\n').map(Number)
+        let total = state?.total ?? 0
+        const entries = values.map(value => ({ id: String(value), value: total += value }))
+        return { entries, state: { total } }
+      }
+      return cache.load({ path: log, mtimeMs, size }, () => parse(), parse)
+    }
+    await writeFile(log, '2\n')
+    assert.deepEqual(await load(1), [{ id: '2', value: 2 }])
+    await appendFile(log, '3\n')
+    assert.deepEqual(await load(2), [{ id: '2', value: 2 }, { id: '3', value: 5 }])
+    await appendFile(log, '4\n')
+    assert.deepEqual(await load(3), [{ id: '2', value: 2 }, { id: '3', value: 5 }, { id: '4', value: 9 }])
+    assert.deepEqual(calls, [{ from: 0, previous: undefined }, { from: 2, previous: 2 }, { from: 4, previous: 5 }])
+
+    now += 60_000
+    await load(3)
+    cache = store(dir, { now: () => now })
+    assert.deepEqual(await load(3), [{ id: '2', value: 2 }, { id: '3', value: 5 }, { id: '4', value: 9 }])
+    assert.equal(calls.length, 3)
+    const root = join(dir, 'usage-shards')
+    const namespace = join(root, (await readdir(root))[0])
+    const disk = JSON.parse(await readFile(join(namespace, (await readdir(namespace)).find(name => name.endsWith('.json'))!), 'utf8'))
+    assert.equal('state' in disk, false)
+    await appendFile(log, '5\n')
+    assert.deepEqual(await load(4), [
+      { id: '2', value: 2 }, { id: '3', value: 5 }, { id: '4', value: 9 }, { id: '5', value: 14 },
+    ])
+    assert.deepEqual(calls.at(-1), { from: 0, previous: undefined })
+  })
+})
+
+for (const scenario of ['rewrite', 'shrink', 'backwards mtime', 'partial line', 'missing carry'] as const) {
+  test(`resumable parsing falls back to a full parse after ${scenario}`, async () => {
+    await withDir(async dir => {
+      const cache = store(dir)
+      const log = join(dir, 'unsafe.jsonl')
+      const initial = scenario === 'partial line' ? '10' : '10\n'
+      await writeFile(log, initial)
+      let fullParses = 0
+      let tailParses = 0
+      const load = async (mtimeMs: number) => {
+        const size = (await stat(log)).size
+        return cache.load({ path: log, mtimeMs, size }, async () => {
+          fullParses++
+          return { entries: [{ id: 'full', value: size }], state: scenario === 'missing carry' ? undefined : { size } }
+        }, async () => {
+          tailParses++
+          return { entries: [], state: { size } }
+        })
+      }
+      await load(2)
+      if (scenario === 'rewrite') await writeFile(log, '20\n30\n')
+      else if (scenario === 'shrink') await writeFile(log, '1\n')
+      else await appendFile(log, '\n30\n')
+      const size = (await stat(log)).size
+      assert.deepEqual(await load(scenario === 'backwards mtime' ? 1 : 3), [{ id: 'full', value: size }])
+      assert.equal(fullParses, 2)
+      assert.equal(tailParses, 0)
+    })
+  })
+}

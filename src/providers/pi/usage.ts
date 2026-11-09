@@ -1,13 +1,30 @@
 import { access } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import type { DashboardData, TableData } from '../../types'
 import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, finitePositive, dashboardSince, tableSince, collectSessionFiles } from '../usage-core'
 import { readJsonLines } from '../_shared/jsonl'
 import { timestampMs } from '../_shared/time'
 
+// Checked 2026-11-09: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/config.ts
+// Session override precedence: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/main.ts
+// Path normalization: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/utils/paths.ts
+function expandPiPath(path: string): string {
+  if (process.platform === 'win32' && path.startsWith('/') && !path.startsWith('//') && !path.includes('\\')) {
+    const drive = path.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i)
+    if (drive) path = `${drive[1].toUpperCase()}:\\${(drive[2] ?? '').replaceAll('/', '\\')}`
+  }
+  if (path === '~') return homedir()
+  if (path.startsWith('~/') || (process.platform === 'win32' && path.startsWith('~\\'))) return join(homedir(), path.slice(2))
+  return path.startsWith('file://') ? fileURLToPath(path) : path
+}
+
 export function piSessionsDir(homeDir?: string): string {
-  return join(homeDir ?? homedir(), '.pi', 'agent', 'sessions')
+  if (homeDir !== undefined) return join(homeDir, '.pi', 'agent', 'sessions')
+  if (process.env.PI_CODING_AGENT_SESSION_DIR) return expandPiPath(process.env.PI_CODING_AGENT_SESSION_DIR)
+  const agent = process.env.PI_CODING_AGENT_DIR
+  return join(agent ? expandPiPath(agent) : join(homedir(), '.pi', 'agent'), 'sessions')
 }
 
 export async function detectPi(homeDir?: string): Promise<boolean> {

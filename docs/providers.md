@@ -10,8 +10,9 @@ offer both; others expose only one side.
 | Claude | `~/.claude/projects/**/*.jsonl` | Token/cost history plus session, weekly, and model limits |
 | Codex | `~/.codex/sessions/**/rollout-*.jsonl` | Token/cost history, plan, limits, and credits |
 | Cursor | Cursor API events and local composer data | Token/cost history, spend, and caps |
-| opencode | `~/.local/share/opencode/opencode.db` | Uses the cost recorded by opencode |
-| pi | `~/.pi/agent/sessions/**/*.jsonl` | Uses the cost recorded by pi |
+| opencode | `~/.local/share/opencode/opencode.db` | Reads legacy `message` and current `session_message` tables, deduplicates migrated message IDs, and uses recorded costs |
+| pi | `~/.pi/agent/sessions/**/*.jsonl` | Uses recorded costs; supports `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR` |
+| Gemini | `~/.gemini/tmp/**/chats/session-*.json{,l}` | Token history with dated promotional prices and published long-context tiers |
 | Grok | `~/.grok/logs/unified.jsonl` plus session metadata | Joins turns to models and reads SuperGrok billing when available |
 
 ## Quota and billing providers
@@ -24,11 +25,26 @@ offer both; others expose only one side.
 
 An expired Gemini token can usually be refreshed by running `gemini` again.
 
+`GEMINI_CLI_HOME` replaces the home directory for Gemini credentials, settings,
+and sessions: Tokmon appends `.gemini` to its value, just as Gemini CLI does.
+It does not expand a literal `~` in this variable.
+
+`PI_CODING_AGENT_DIR` replaces `~/.pi/agent`; sessions are read from its
+`sessions` directory. `PI_CODING_AGENT_SESSION_DIR` selects the session directory
+directly and takes precedence over the agent directory. Pi path overrides support
+`~` expansion and file URLs.
+
+An explicitly configured account home takes precedence over these environment
+variables. Gemini then uses `<home>/.gemini`, and pi uses
+`<home>/.pi/agent/sessions`.
+
 ## Cost calculation
 
 Where a tool records its own cost, Tokmon uses that value. Otherwise it applies
 the published model price to input, output, cache-create, and cache-read tokens.
-Cache reads use the discounted cache rate.
+Cache reads use the discounted cache rate. Gemini promotional prices use each
+entry's timestamp. Gemini and Grok apply published long-context rates per request,
+including cached prompt tokens when checking the 200,000-token threshold.
 
 These totals are API-equivalent estimates. Subscription plans do not turn a
 local estimate into an invoice.
@@ -89,7 +105,7 @@ catalog is empty. Tokmon displays account quota, rather than the key's allocated
 share. The ordinary custom URL mode remains available for pooled key quotas.
 
 The daemon shares one quota request across accounts on the same server and key
-file for 15 seconds. It uses CLIProxy's observation timestamps, omits expired
+file for 60 seconds, and a failed request for 30. It uses CLIProxy's observation timestamps, omits expired
 windows, and does not refresh upstream credentials or consume saved resets.
 Remote accounts contain quota only. Local accounts continue to own session
 history, token counts, and cost estimates.

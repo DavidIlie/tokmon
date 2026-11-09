@@ -35,7 +35,10 @@ export function isAllowedHostHeader(
 
 export function isSameOriginRequest(req: IncomingMessage): boolean {
   const origin = header(req, 'origin')
-  if (!origin || origin === 'null') return true
+  // Native clients send no Origin. A browser sends the literal "null" for an
+  // opaque origin (sandboxed frame, data: or file: page), which is exactly the
+  // caller that must not reach a loopback daemon holding quota credentials.
+  if (!origin) return true
   const host = header(req, 'host')?.trim().toLowerCase()
   if (!host) return false
   try {

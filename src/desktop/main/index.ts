@@ -16,25 +16,12 @@ import { readDesktopLoginItem, setDesktopLoginItem } from './desktop-login-item'
 import { registerDesktopIpc } from './ipc-bridge'
 import { createPopoverWindow } from './popover-window'
 import { effectiveSystemMode, electronThemeSource } from './native-theme'
-import { activeAccountIds, promotionAccounts, tightestQuota } from './presentation'
+import { activeAccountIds, promotionAccounts, providerTooltipLine, tightestQuota } from './presentation'
 import { selectPromotedAccounts, type PromotionState } from './promotion'
 import { createTrayIcon } from './tray-icon'
 import { TrayStripLifecycle } from './tray-strip-lifecycle'
 import { disconnectedMenuBarTitle, menuBarTitle } from './tray-presentation'
-import { accountIdentity } from '../shared/privacy'
-import {
-  percentText,
-  billingObservedAt,
-  billingStaleAfterMs,
-  providerRepresentative,
-  providerTodayTokens,
-  resetLabel,
-  resolveProviderPins,
-  severity,
-  severityTag,
-  staleAgeLabel,
-} from '../shared/presentation'
-import type { HeadroomView, WebAccount, WebSnapshot } from '../../web/contract'
+import { providerTodayTokens, resolveProviderPins, severity } from '../shared/presentation'
 import { DESKTOP_DOWNLOAD_URL, type DesktopUpdateState } from '../shared/desktop-contract'
 
 /** Unified critical band (≤10%), shared by strip, gauge, tooltip and popover. */
@@ -57,41 +44,6 @@ function updateTooltipLine(appName: string, update: DesktopUpdateState): string 
 }
 
 /** Honest per-provider tooltip line: one real window of one real account, in words. */
-function providerTooltipLine(
-  providerName: string,
-  accounts: readonly WebAccount[],
-  privacy: boolean,
-  snapshot: WebSnapshot,
-  activeTimeoutMin: number,
-  now: number,
-  headroom?: HeadroomView,
-): string {
-  if (headroom) {
-    if (headroom.value === null) return `${providerName} — no usage data yet`
-    const usage = usageFromHeadroom(headroom.value)!
-    const account = accounts.find(candidate => candidate.id === headroom.representativeAccountId)
-    const identity = account && accounts.length > 1 ? ` · ${accountIdentity(account, privacy)}` : ''
-    return `${providerName} — Usage ${percentText(usage)}${identity}`
-  }
-  const rep = providerRepresentative(accounts, activeTimeoutMin, now)
-  if (rep.noData || !rep.quota || rep.account === null) return `${providerName} — no usage data yet`
-  const multi = accounts.length > 1
-  const identity = accountIdentity(rep.account, privacy)
-  const value = percentText(rep.quota.used!)
-  const word = severityTag(severity(rep.quota.remaining))
-  const reset = resetLabel(rep.quota.resetsAt, now)
-  const observedAt = billingObservedAt(rep.account)
-  const stale = observedAt !== null && now - observedAt > billingStaleAfterMs(snapshot)
-  let line = `${providerName} — ${multi ? `${identity} · ` : ''}${rep.quota.label} ${value} used`
-  if (word) line += `, ${word}`
-  if (reset) line += `, ${reset}`
-  if (multi && rep.dataCount > 1 && rep.runwayPct !== null) {
-    line += ` · ${rep.dataCount} accounts, lowest account usage ${percentText(100 - rep.runwayPct)}`
-  }
-  if (stale) line += ` · ${staleAgeLabel(rep.account, now).toLowerCase()}`
-  return line
-}
-
 let daemon: DaemonController | null = null
 let rpc: DaemonRpcClient | null = null
 let closing = false
@@ -183,8 +135,29 @@ async function bootstrap(): Promise<void> {
   // identities prevent macOS from assigning both processes the same saved slot.
   const tray = new Tray(createTrayIcon(null, false), channel === 'dev' ? DEV_TRAY_GUID : RELEASE_TRAY_GUID)
   trayRef = tray
-  tray.setToolTip(`${identity.appName} — connecting to daemon`)
-  if (process.platform === 'darwin') tray.setTitle('')
+  // The presentation is recomputed for every snapshot, but its outputs rarely
+  // move. Native status-item calls are skipped unless the value really changed.
+  let lastToolTip: string | null = null
+  const setToolTip = (value: string) => {
+    if (value === lastToolTip) return
+    lastToolTip = value
+    tray.setToolTip(value)
+  }
+  let lastTitle: string | null = null
+  const setTitle = (value: string) => {
+    if (value === lastTitle) return
+    lastTitle = value
+    tray.setTitle(value)
+  }
+  let lastFallbackIcon: string | null = null
+  const setFallbackIcon = (usage: number | null, critical: boolean, ready: boolean) => {
+    const key = `${usage}:${critical}:${ready}`
+    if (key === lastFallbackIcon) return
+    lastFallbackIcon = key
+    tray.setImage(createTrayIcon(usage, critical, ready))
+  }
+  setToolTip(`${identity.appName} — connecting to daemon`)
+  if (process.platform === 'darwin') setTitle('')
   const popover = createPopoverWindow(tray, rendererUrl, initialTheme.tokens.chrome)
   state.addTarget(popover.window.webContents)
 
@@ -254,14 +227,14 @@ async function bootstrap(): Promise<void> {
   const showDisconnectedPresentation = (error: unknown = null) => {
     const failed = error !== null
     const ready = updateReady(state.get().update)
-    if (!trayStrip.hasComposedImage) tray.setImage(createTrayIcon(null, failed, ready))
+    if (!trayStrip.hasComposedImage) setFallbackIcon(null, failed, ready)
     const updateLine = updateTooltipLine(identity.appName, state.get().update)
     const connectionLine = failed
       ? `${identity.appName} — daemon unavailable\n${error instanceof Error ? error.message : String(error)}`
       : `${identity.appName} — connecting to daemon`
-    tray.setToolTip(updateLine ? `${updateLine}\n${connectionLine}` : connectionLine)
+    setToolTip(updateLine ? `${updateLine}\n${connectionLine}` : connectionLine)
     if (process.platform === 'darwin') {
-      tray.setTitle(trayStrip.hasComposedImage ? '' : disconnectedMenuBarTitle(failed, ready))
+      setTitle(trayStrip.hasComposedImage ? '' : disconnectedMenuBarTitle(failed, ready))
     }
   }
 
@@ -289,7 +262,7 @@ async function bootstrap(): Promise<void> {
     const ready = updateReady(current.update)
     const pinSignature = currentPinSignature()
     trayStrip.observePinSignature(pinSignature)
-    if (!trayStrip.hasComposedImage) tray.setImage(createTrayIcon(usage, critical, ready))
+    if (!trayStrip.hasComposedImage) setFallbackIcon(usage, critical, ready)
 
     // Tooltip: one honest line per described provider (pinned first, else the promoted
     // providers), each naming its representative account/window/severity/reset in words.
@@ -310,7 +283,7 @@ async function bootstrap(): Promise<void> {
     const usageTooltip = tooltipRows.length
       ? `${identity.appName}\n${tooltipRows.join('\n')}`
       : `${identity.appName} is waiting for usage data.`
-    tray.setToolTip(updateLine ? `${updateLine}\n${usageTooltip}` : usageTooltip)
+    setToolTip(updateLine ? `${updateLine}\n${usageTooltip}` : usageTooltip)
     if (process.platform === 'darwin') {
       const fallbackAccounts = fallbackProvider
         ? snapshot.accounts.filter(candidate => candidate.providerId === fallbackProvider)
@@ -318,7 +291,7 @@ async function bootstrap(): Promise<void> {
       const alternate = config.tray.menuBarValue === 'todayTokens'
         ? formatCompactTokens(providerTodayTokens(fallbackAccounts))
         : undefined
-      tray.setTitle(trayStrip.hasComposedImage ? '' : menuBarTitle(config.tray.showMenuBarText, usage, critical, alternate, ready))
+      setTitle(trayStrip.hasComposedImage ? '' : menuBarTitle(config.tray.showMenuBarText, usage, critical, alternate, ready))
     }
   }
 
@@ -486,8 +459,12 @@ async function bootstrap(): Promise<void> {
     },
     onTrayStrip: payload => {
       if (process.platform !== 'darwin') return
-      const current = state.get()
-      const pinSignature = currentPinSignature()
+      // The renderer painted from the state it was last sent, which trails
+      // state.get() while closed-popover snapshot pushes are coalesced.
+      const current = state.delivered()
+      const pinSignature = current.snapshot && current.config
+        ? resolveProviderPins(current.config, current.snapshot).join(String.fromCharCode(0))
+        : ''
       if (!trayStripPayloadMatchesState(payload, current, pinSignature)) return
       const decode = (dataUrl: string) => Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64')
       // Both representations so non-Retina externals get a crisp 1× rather than a downscale.
@@ -500,10 +477,14 @@ async function bootstrap(): Promise<void> {
       if (size.width === 0 || Math.abs(size.width - payload.logicalWidth) > 2) return
       image.setTemplateImage(true)
       tray.setImage(image)
-      tray.setTitle('')
+      lastFallbackIcon = null
+      setTitle('')
       trayStrip.accept()
     },
   })
+
+  popover.window.on('show', () => state.setVisible(true))
+  popover.window.on('hide', () => state.setVisible(false))
 
   tray.on('click', (_event, bounds) => {
     const requested = state.get().config?.tray.launchAtLogin

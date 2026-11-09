@@ -5,7 +5,9 @@ All clients write the same daemon-owned configuration.
 
 ## General
 
-- Refresh interval controls local usage polling (default 2 seconds).
+- Refresh interval controls local usage polling. The daemon never polls more
+  often than every 8 seconds, and slows to 10 seconds once logs have been
+  quiet for a minute.
 - Billing poll controls provider API refresh (default 5 minutes, minimum 1).
 - Privacy mode and its shortcut apply across clients.
 - Timezone accepts an IANA name or `System`.

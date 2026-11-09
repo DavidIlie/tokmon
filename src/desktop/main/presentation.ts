@@ -1,7 +1,8 @@
 import type { Metric, WebAccount, WebSnapshot } from '../../web/contract'
 import type { PromotionAccount } from './promotion'
-import { resolveQuotaViews, tightestQuotaView } from '../../usage-semantics'
-import { billingObservedAt, billingStaleAfterMs } from '../shared/presentation'
+import { resolveQuotaViews, tightestQuotaView, usageFromHeadroom, type HeadroomView } from '../../usage-semantics'
+import { percentText, providerFreshness, providerRepresentative, resetLabel, severity, severityTag } from '../shared/presentation'
+import { accountIdentity } from '../shared/privacy'
 
 export interface TightestQuota {
   label: string
@@ -52,8 +53,37 @@ export function activeAccountIds(snapshot: WebSnapshot, activeTimeoutMin: number
     .map(account => account.id)
 }
 
-export function quotaIsStale(account: WebAccount, snapshot: WebSnapshot, now = Date.now()): boolean {
-  const observedAt = billingObservedAt(account)
-  if (observedAt === null) return account.billingState !== 'pending'
-  return now - observedAt > billingStaleAfterMs(snapshot)
+/** Provider tooltip copy uses the same quota contributors and ages as the popover. */
+export function providerTooltipLine(
+  providerName: string,
+  accounts: readonly WebAccount[],
+  privacy: boolean,
+  snapshot: WebSnapshot,
+  activeTimeoutMin: number,
+  now: number,
+  headroom?: HeadroomView,
+): string {
+  const rep = providerRepresentative(accounts, activeTimeoutMin, now)
+  let line: string
+  if (headroom) {
+    if (headroom.value === null) return `${providerName} — no usage data yet`
+    const account = accounts.find(candidate => candidate.id === headroom.representativeAccountId)
+    const identity = account && accounts.length > 1 ? ` · ${accountIdentity(account, privacy)}` : ''
+    line = `${providerName} — Usage ${percentText(usageFromHeadroom(headroom.value))}${identity}`
+  } else {
+    if (rep.noData || !rep.quota || !rep.account) return `${providerName} — no usage data yet`
+    const multi = accounts.length > 1
+    const identity = multi ? `${accountIdentity(rep.account, privacy)} · ` : ''
+    line = `${providerName} — ${identity}${rep.quota.label} ${percentText(rep.quota.used)} used`
+    const word = severityTag(severity(rep.quota.remaining))
+    const reset = resetLabel(rep.quota.resetsAt, now)
+    if (word) line += `, ${word}`
+    if (reset) line += `, ${reset}`
+    if (multi && rep.dataCount > 1 && rep.runwayPct !== null) {
+      line += ` · ${rep.dataCount} accounts, lowest account usage ${percentText(100 - rep.runwayPct)}`
+    }
+  }
+  const status = providerFreshness(accounts, snapshot, now, headroom, rep.account)
+  if (status.label) line += ` · ${status.label} · ${status.title}`
+  return line
 }

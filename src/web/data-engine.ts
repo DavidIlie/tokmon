@@ -14,12 +14,32 @@ import type { Config, DetectedAccountRef } from '../config-schema'
 import { MIN_STALE_AFTER_MS } from '../usage-semantics'
 import { createRefreshQueue, settleRefreshTasks, type RefreshQueue } from './refresh-queue'
 import { decodeWebSnapshot } from './snapshot-schema'
+import { invalidateUsageScans } from './usage-runner'
 
 const TABLE_INTERVAL_MS = 300_000
 const PEAK_INTERVAL_MS = 300_000
 const IDLE_PAUSE_MS = 60_000
 const SNAPSHOT_CACHE_THROTTLE_MS = 20_000
 const REVEAL_THROTTLE_MS = 500
+// A usage poll that finds nothing new publishes no snapshot: every snapshot
+// costs each client a decode, a render and (on macOS) a menu-bar repaint. The
+// heartbeat keeps clients' liveness watchdogs and "updated" labels honest; it
+// must stay well under the RPC client's 90s stale floor.
+const UNCHANGED_HEARTBEAT_MS = 30_000
+// Once the logs have been quiet this long, poll them less often. The first
+// change snaps the loop back to the configured interval.
+const QUIET_AFTER_MS = 60_000
+const QUIET_POLL_MS = 10_000
+// A usage pass over a very large history may burn at most 1/POLL_DUTY of a core;
+// the loop stretches its own interval rather than the user's machine. Measured
+// in CPU time, since a pass mostly waits on the filesystem.
+const POLL_DUTY = 50
+const POLL_STRETCH_MAX_MS = 30_000
+
+/** Identity of a usage summary, ignoring the burn rate that decays with the clock. */
+function summaryKey(dashboard: DashboardData | null): string {
+  return dashboard ? JSON.stringify({ ...dashboard, burnRate: 0 }) : ''
+}
 const FETCH_TIMEOUT_MS = 30_000
 
 export function billingNeedsCatchUp(
@@ -156,6 +176,11 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
 
   let lastPersist = 0
   let lastReveal = 0
+  let lastPublish = 0
+  let lastUsageChange = Date.now()
+  let lastSummaryPassCpuMs = 0
+  /** Applied results that no published snapshot carries yet. */
+  let unpublished = false
 
   // Bumped on setConfig(); in-flight loops bail if epoch changed to avoid clobbering reconciled maps.
   let configEpoch = 0
@@ -220,6 +245,8 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   const rebuild = () => {
     if (stopped) return
     seeded = false
+    lastPublish = Date.now()
+    unpublished = false
     current = buildSnapshot()
     persist()
     for (const onSnapshot of snapshotSubscribers) {
@@ -243,11 +270,13 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     scope: string
     accounts: () => ResolvedAccount[]
     fetch: (r: ResolvedAccount) => Promise<T>
-    apply: (id: string, value: T) => void
+    /** Returns false when the value is equivalent to what is already published. */
+    apply: (id: string, value: T) => boolean | void
     state: Map<string, AccountFetchState>
     updatedAt: Map<string, number>
     concurrent?: boolean | 'provider'
     forceWhileActive?: 'queue' | 'join'
+    onChange?: () => void
   }): RefreshQueue => createRefreshQueue(
     async () => {
       if (stopped) return
@@ -260,16 +289,21 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
         }
       }
       const failures: unknown[] = []
+      let changed = false
       const applyResult = (result: Awaited<ReturnType<typeof fetchOne>>) => {
         const id = result.r.account.id
+        const nextState = result.ok ? 'ready' : 'error'
+        let dirty = opts.state.get(id) !== nextState
         if (result.ok) {
-          opts.apply(id, result.value)
-          opts.state.set(id, 'ready')
+          if (opts.apply(id, result.value) !== false) dirty = true
           opts.updatedAt.set(id, Date.now())
         } else {
-          opts.state.set(id, 'error')
           failures.push(result.cause)
         }
+        opts.state.set(id, nextState)
+        if (!dirty) return
+        changed = true
+        unpublished = true
         reveal()
       }
 
@@ -295,7 +329,8 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
           applyResult(result)
         }
       }
-      rebuild()
+      if (changed) opts.onChange?.()
+      if (unpublished || Date.now() - lastPublish >= UNCHANGED_HEARTBEAT_MS) rebuild()
       throwIfRefreshFailures(opts.scope, failures)
     },
     idle,
@@ -306,9 +341,15 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
     scope: 'summary',
     accounts: () => usageAccounts,
     fetch: r => fetchAccountSummary(r.account, tz),
-    apply: (id, dashboard) => { usageEntry(id).dashboard = dashboard },
+    apply: (id, dashboard) => {
+      const entry = usageEntry(id)
+      const same = summaryKey(entry.dashboard) === summaryKey(dashboard)
+      entry.dashboard = dashboard
+      return !same
+    },
     state: summaryState,
     updatedAt: summaryUpdatedAt,
+    onChange: () => { lastUsageChange = Date.now() },
   })
 
   const refreshTable = makeRefreshLoop({
@@ -350,9 +391,9 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
   // Loop period is interval + tick duration rather than setInterval's fixed
   // rate; the refresh queues coalesce passes, so back-to-back ticks were
   // already collapsing — this just stops scheduling them at all.
-  const loopFiber = (everyMs: number, tick: () => Promise<void>) =>
+  const loopFiber = (everyMs: number | (() => number), tick: () => Promise<void>) =>
     Effect.runFork(
-      Effect.sleep(Duration.millis(everyMs)).pipe(
+      Effect.suspend(() => Effect.sleep(Duration.millis(typeof everyMs === 'function' ? everyMs() : everyMs))).pipe(
         Effect.andThen(Effect.tryPromise({ try: tick, catch: (error) => error })),
         Effect.catch((error) => Effect.sync(() => reportBackgroundFailure(error))),
         Effect.forever,
@@ -366,7 +407,23 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
 
   const startLoops = () => {
     loopFibers = [
-      loopFiber(summaryIntervalMs, () => refreshSummary.run()),
+      loopFiber(
+        () => Math.max(
+          Date.now() - lastUsageChange >= QUIET_AFTER_MS
+            ? Math.max(summaryIntervalMs, QUIET_POLL_MS)
+            : summaryIntervalMs,
+          Math.min(POLL_STRETCH_MAX_MS, lastSummaryPassCpuMs * POLL_DUTY),
+        ),
+        async () => {
+          const started = process.cpuUsage()
+          try {
+            await refreshSummary.run()
+          } finally {
+            const spent = process.cpuUsage(started)
+            lastSummaryPassCpuMs = (spent.user + spent.system) / 1000
+          }
+        },
+      ),
       loopFiber(TABLE_INTERVAL_MS, () => refreshTable.run()),
       loopFiber(billingIntervalMs, () => refreshBilling.run()),
     ]
@@ -390,6 +447,10 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
 
     refresh(scope = 'all') {
       if (stopped) return Promise.resolve()
+      // An explicit refresh always answers with a snapshot, changed or not, and
+      // looks at every log again rather than only the recently written ones.
+      lastPublish = 0
+      invalidateUsageScans()
       const tasks: Promise<void>[] = []
       if (scope === 'all' || scope === 'summary') tasks.push(refreshSummary.run(true))
       if (scope === 'all' || scope === 'table') tasks.push(refreshTable.run(true))
@@ -411,7 +472,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       tz = next.tz
       summaryIntervalMs = next.summaryIntervalMs
       billingIntervalMs = next.billingIntervalMs
-      const sourceKey = (r: ResolvedAccount) => `${r.account.providerId}:${JSON.stringify(r.account.quotaSource ?? r.account.homeDir ?? '')}`
+      const sourceKey = (r: ResolvedAccount) => `${r.account.providerId}:${JSON.stringify([r.account.homeDir ?? '', r.account.quotaSource ?? null])}`
       const prevSources = new Map(resolved.map(r => [r.account.id, sourceKey(r)]))
       resolved = next.resolved
       installedProviders = next.installedProviders

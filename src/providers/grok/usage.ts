@@ -8,17 +8,23 @@ import { modelKeyMatches } from '../_shared/metric'
 import { makePriceResolver } from '../_shared/pricing'
 import { grokHomes } from './identity'
 
-// Per-token USD. Source: https://docs.x.ai/docs/models + per-model cached rates.
-// `grok-build-latest` is an alias of grok-4.5 ($2/$6), NOT grok-build-0.1 ($1/$2).
-const PRICING: Record<string, { in: number; cr: number; out: number }> = {
-  'grok-build-latest': { in: 2e-6, cr: 0.5e-6, out: 6e-6 },
-  'grok-4.5': { in: 2e-6, cr: 0.5e-6, out: 6e-6 },
+type Price = { in: number; cr: number; out: number }
+// Checked 2026-11-09: https://docs.x.ai/developers/models/grok-4.7,
+// https://docs.x.ai/developers/models/grok-4.6, https://docs.x.ai/developers/models/grok-4.5
+// https://docs.x.ai/developers/models publishes the per-model >200k rates too.
+const PRICING: Record<string, Price & { long?: Price }> = {
+  'grok-4.7': { in: 2e-6, cr: 0.5e-6, out: 6e-6, long: { in: 4e-6, cr: 1e-6, out: 12e-6 } },
+  'grok-4.6': { in: 2e-6, cr: 0.5e-6, out: 6e-6, long: { in: 4e-6, cr: 1e-6, out: 12e-6 } },
+  'grok-build-latest': { in: 2e-6, cr: 0.3e-6, out: 6e-6, long: { in: 4e-6, cr: 0.6e-6, out: 12e-6 } },
+  'grok-4.5': { in: 2e-6, cr: 0.3e-6, out: 6e-6, long: { in: 4e-6, cr: 0.6e-6, out: 12e-6 } },
+  // No current primary-source listing for this historical alias; retain its rate.
   'grok-composer-2.5-fast': { in: 2e-6, cr: 0.5e-6, out: 6e-6 },
-  'grok-4.3': { in: 1.25e-6, cr: 0.2e-6, out: 2.5e-6 },
-  'grok-4.20': { in: 1.25e-6, cr: 0.2e-6, out: 2.5e-6 },
-  'grok-build-0.1': { in: 1e-6, cr: 0.2e-6, out: 2e-6 },
-  'grok-code-fast-1': { in: 1e-6, cr: 0.2e-6, out: 2e-6 },
-  'grok-code-fast': { in: 1e-6, cr: 0.2e-6, out: 2e-6 },
+  'grok-4.3': { in: 1.25e-6, cr: 0.2e-6, out: 2.5e-6, long: { in: 2.5e-6, cr: 0.4e-6, out: 5e-6 } },
+  'grok-4.20': { in: 1.25e-6, cr: 0.2e-6, out: 2.5e-6, long: { in: 2.5e-6, cr: 0.4e-6, out: 5e-6 } },
+  'grok-build-0.1': { in: 1e-6, cr: 0.2e-6, out: 2e-6, long: { in: 2e-6, cr: 0.4e-6, out: 4e-6 } },
+  'grok-code-fast-1': { in: 1e-6, cr: 0.2e-6, out: 2e-6, long: { in: 2e-6, cr: 0.4e-6, out: 4e-6 } },
+  'grok-code-fast': { in: 1e-6, cr: 0.2e-6, out: 2e-6, long: { in: 2e-6, cr: 0.4e-6, out: 4e-6 } },
+  // Preserve the unlisted bare alias without inferring a long-context rate.
   'grok-build': { in: 1e-6, cr: 0.2e-6, out: 2e-6 },
 }
 const FALLBACK_PRICE = PRICING['grok-4.5']
@@ -27,8 +33,9 @@ const MAX_SESSION_GROUPS = 128
 const MAX_SESSIONS_PER_GROUP = 512
 const MAX_MODEL_FINGERPRINT_ENTRIES = MAX_SESSION_GROUPS * MAX_SESSIONS_PER_GROUP * 2
 
-function priceFor(model: string) {
-  return resolvePrice(model)
+function priceFor(model: string, promptTokens: number): Price {
+  const price = resolvePrice(model)
+  return promptTokens > 200_000 && price.long ? price.long : price
 }
 
 export async function detectGrok(homeDir?: string): Promise<boolean> {
@@ -98,7 +105,7 @@ export function grokModelMapFingerprint(
 }
 
 function costOf(model: string, input: number, cacheRead: number, output: number): { cost: number; cacheSavings: number } {
-  const p = priceFor(model)
+  const p = priceFor(model, input + cacheRead)
   const cost = input * p.in + cacheRead * p.cr + output * p.out
   const cacheSavings = cacheRead * Math.max(0, p.in - p.cr)
   return { cost, cacheSavings }

@@ -12,7 +12,8 @@ const shared = {
 export default defineConfig([
   {
     ...shared,
-    entry: { main: 'main/index.ts' },
+    // The in-process daemon loads usage-worker by path, beside main.js.
+    entry: { main: 'main/index.ts', 'usage-worker': '../web/usage-worker.ts' },
     format: ['esm'],
     clean: true,
   },

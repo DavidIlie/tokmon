@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { loadConfig, type Config } from '../config'
-import { flushDisk } from '../providers/usage-core'
+import { stopUsageCollection } from './usage-runner'
 import { TOKMON_CAPABILITIES, TOKMON_PROTOCOL_VERSION } from '../rpc/contract'
 import { startWebServer, type WebServerController } from './server'
 import { appVersion } from './static'
@@ -309,7 +309,7 @@ function owned(
       stopPromise ??= (async () => {
         owner.stopping = true
         try { await server.stop() } catch {}
-        await flushDisk().catch(() => {})
+        await stopUsageCollection()
         unlinkLock(lock.ownerId, opts)
         if (localOwners.get(ownerKey) === owner) localOwners.delete(ownerKey)
       })()

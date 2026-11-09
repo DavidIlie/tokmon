@@ -9,6 +9,7 @@ import { detectInstalledProviders } from '../providers'
 import { resolveAccounts, tzFor } from './data'
 import { engineConfigKey, type DataEngine, type EngineConfig } from './data-engine'
 
+// Limit local usage scans to at most once every 8s, even when interval is lower.
 const MIN_SUMMARY_INTERVAL_MS = 8000
 const BILLING_INTERVAL_FALLBACK_MIN = 5
 

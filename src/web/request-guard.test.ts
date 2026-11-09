@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { IncomingMessage } from 'node:http'
-import { isAllowedHostHeader, isAllowedLocalRequest } from './request-guard'
+import { isAllowedHostHeader, isAllowedLocalRequest, isSameOriginRequest } from './request-guard'
 
 const request = (host: string, origin?: string) => ({
   headers: { host, ...(origin ? { origin } : {}) },
@@ -38,4 +38,11 @@ test('explicit network access allows configured DNS hosts only', () => {
     ),
     true,
   )
+})
+
+test('an opaque browser origin is not treated as a native client', () => {
+  const request = (origin?: string) => ({ headers: { host: '127.0.0.1:4317', ...(origin === undefined ? {} : { origin }) } }) as never
+  assert.equal(isSameOriginRequest(request()), true)
+  assert.equal(isSameOriginRequest(request('http://127.0.0.1:4317')), true)
+  assert.equal(isSameOriginRequest(request('null')), false)
 })

@@ -32,6 +32,26 @@ Windows installer. Linux packages are unsigned.
    verification.
 7. Only then does the reusable publish workflow release `tokmon` to npm and
    `@davidilie/tokmon` to GitHub Packages.
+8. Last, the Homebrew tap is updated to the new version.
+
+## Homebrew
+
+`brew install --cask davidilie/tap/tokmon` installs the desktop app and
+`brew install davidilie/tap/tokmon-cli` the terminal CLI, both from the
+`DavidIlie/homebrew-tap` repository. After a tag has published its installers
+and npm package, the `homebrew` job renders `Casks/tokmon.rb` and
+`Formula/tokmon-cli.rb` with `scripts/render-homebrew.mjs` and pushes them to
+the tap. The job does nothing until the `HOMEBREW_TAP_TOKEN` secret exists: a
+fine-grained token with contents write access to the tap repository only.
+
+To repair or seed the tap by hand from any published version:
+
+```bash
+node scripts/render-homebrew.mjs --version 0.32.2 --tap ../homebrew-tap
+```
+
+The official `homebrew/cask` repository only accepts apps that meet its
+notability bar, so the tap is the supported channel until Tokmon does.
 
 ## Artifacts
 

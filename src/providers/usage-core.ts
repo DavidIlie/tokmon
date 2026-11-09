@@ -8,7 +8,7 @@ import type { UsageSummary, TableRow, ModelDetail, DashboardData, TableData } fr
 import { dayKey, monthKey, weekKey, startOfDay, startOfMonth, startOfWeek } from '../tz'
 import { cacheDir } from '../config'
 import { finitePositive, safeNum } from './_shared/metric'
-import { UsageShardStore, type UsageCacheFingerprint } from './storage/usage-shard-store'
+import { UsageShardStore, type UsageCacheFingerprint, type UsageParseResult } from './storage/usage-shard-store'
 
 export { finitePositive, safeNum } from './_shared/metric'
 
@@ -37,16 +37,29 @@ const PRUNE_AGE_MS = 230 * DAY_MS
 type Shard = { mods: string[]; rows: (number | string)[][] }
 const stores = new Map<string, UsageShardStore<Entry>>()
 const MAX_STORES = 6
+// Results of the last few dashboard loads, keyed by the exact set of source
+// revisions. A poll that finds no log changed returns the same rows without
+// touching the shard store.
+const loadMemo = new Map<string, Entry[]>()
+const MAX_LOAD_MEMO = 16
 
 /**
  * Parser and pricing fingerprints are part of a shard's identity.  Callers
  * with an externally configurable parser/pricing table can supply stable,
  * explicit versions; existing providers get a source-derived default.
  */
-export interface UsageCacheOptions {
+export interface UsageCacheOptions<State = unknown> {
   fingerprint?: Partial<UsageCacheFingerprint>
   /** Primarily useful for isolated embedders; normal providers use cacheDir(). */
   storageDir?: string
+  /**
+   * For append-only logs whose rows parse independently of earlier lines:
+   * parses the bytes in [start, end). A grown file then costs only its new
+   * bytes instead of a full reparse.
+   */
+  parseRange?: (path: string, start: number, end: number) => Promise<Entry[]>
+  /** Reads [start, end), restoring and returning carry state for stateful logs. */
+  parseResume?: (path: string, start: number, end: number, state?: State) => Promise<UsageParseResult<Entry, State>>
 }
 
 function hash(value: string): string {
@@ -89,11 +102,12 @@ function runningBuildFingerprint(): string {
 
 const RUNNING_BUILD_FINGERPRINT = runningBuildFingerprint()
 
-function fingerprintFor(parse: (path: string) => Promise<Entry[]>, options?: UsageCacheOptions): UsageCacheFingerprint {
+function fingerprintFor<State>(parse: (path: string) => Promise<Entry[]>, options?: UsageCacheOptions<State>): UsageCacheFingerprint {
   // This is deliberately a fingerprint rather than a manually bumped global
   // cache number.  A provider can override either dimension when its parser or
   // pricing data is generated/configured outside this function's source.
-  const sourceVersion = `source-${hash(Function.prototype.toString.call(parse))}`
+  const sourceVersion = `source-${hash([parse, options?.parseRange, options?.parseResume]
+    .filter(fn => fn !== undefined).map(fn => Function.prototype.toString.call(fn)).join('\0'))}`
   return {
     format: options?.fingerprint?.format ?? 'usage-shard-v2',
     parser: options?.fingerprint?.parser ?? `${sourceVersion}.${RUNNING_BUILD_FINGERPRINT}`,
@@ -134,7 +148,7 @@ function decode(value: unknown): Entry[] | null {
   return out
 }
 
-function storeFor(parse: (path: string) => Promise<Entry[]>, options?: UsageCacheOptions): UsageShardStore<Entry> {
+function storeFor<State>(parse: (path: string) => Promise<Entry[]>, options?: UsageCacheOptions<State>): { store: UsageShardStore<Entry>; key: string } {
   const dir = options?.storageDir ?? cacheDir()
   const fingerprint = fingerprintFor(parse, options)
   const key = `${dir}\0${fingerprint.format}\0${fingerprint.parser}\0${fingerprint.pricing}`
@@ -150,15 +164,17 @@ function storeFor(parse: (path: string) => Promise<Entry[]>, options?: UsageCach
       fingerprint,
       // Several providers can be active at once; each gets a bounded small LRU
       // instead of retaining every decoded log in one process-global map.
-      maxMemoryBytes: 8 * 1024 * 1024,
-      maxMemoryShards: 128,
+      // The limits must cover a provider's whole active window: a smaller LRU
+      // evicts shards that the very next poll reads back from disk.
+      maxMemoryBytes: 24 * 1024 * 1024,
+      maxMemoryShards: 8192,
       staleAfterMs: PRUNE_AGE_MS,
       encode,
       decode,
     })
     stores.set(key, store)
   }
-  return store
+  return { store, key }
 }
 
 export async function flushDisk(): Promise<void> {
@@ -219,33 +235,75 @@ export async function hasFileMatching(
   return false
 }
 
-export async function collectSessionFiles(
+type SessionFile = { path: string; mtimeMs: number; size: number }
+
+// Walking and stat-ing a whole history every poll scales with how long someone
+// has used a tool, not with what changed. Between full walks only files written
+// recently are re-checked: that is where an append lands. A log that resumes
+// after a long pause, or a brand-new one, is picked up by the next full walk.
+const FULL_SCAN_EVERY_MS = 15_000
+const HOT_FILE_WINDOW_MS = 10 * 60_000
+const MAX_SCANS = 16
+const scans = new Map<string, { fullAt: number; files: Map<string, SessionFile> }>()
+
+/** Makes the next collectSessionFiles call for every root walk the tree again. */
+export function invalidateSessionScans(): void {
+  scans.clear()
+}
+
+async function scanSessionFiles(
   roots: readonly string[],
   predicate: (path: string) => boolean,
-  since: number,
-): Promise<{ path: string; mtimeMs: number; size: number }[]> {
-  const files: { path: string; mtimeMs: number; size: number }[] = []
-  const seen = new Set<string>()
+): Promise<Map<string, SessionFile>> {
+  const files = new Map<string, SessionFile>()
   const seenIno = new Set<string>()
   for (const root of roots) {
     for (const relativePath of await walkFiles(root)) {
       if (!predicate(relativePath)) continue
       const path = join(root, relativePath)
-      if (seen.has(path)) continue
-      seen.add(path)
+      if (files.has(path)) continue
       try {
         const stat = await fsStat(path)
-        if (stat.mtimeMs < since) continue
         if (stat.ino && process.platform !== 'win32') {
           const inode = `${stat.dev}:${stat.ino}`
           if (seenIno.has(inode)) continue
           seenIno.add(inode)
         }
-        files.push({ path, mtimeMs: stat.mtimeMs, size: stat.size })
+        files.set(path, { path, mtimeMs: stat.mtimeMs, size: stat.size })
       } catch {}
     }
   }
   return files
+}
+
+export async function collectSessionFiles(
+  roots: readonly string[],
+  predicate: (path: string) => boolean,
+  since: number,
+): Promise<SessionFile[]> {
+  // Call sites pass the same predicate source for the same roots on every poll.
+  const key = `${roots.join('\0')}\0${Function.prototype.toString.call(predicate)}`
+  const now = Date.now()
+  let scan = scans.get(key)
+  if (scan && now - scan.fullAt < FULL_SCAN_EVERY_MS) {
+    const hot = [...scan.files.values()].filter(file => now - file.mtimeMs < HOT_FILE_WINDOW_MS)
+    await mapLimit(hot, 8, async (file) => {
+      try {
+        const stat = await fsStat(file.path)
+        if (stat.mtimeMs !== file.mtimeMs || stat.size !== file.size) {
+          scan!.files.set(file.path, { path: file.path, mtimeMs: stat.mtimeMs, size: stat.size })
+        }
+      } catch {
+        scan!.files.delete(file.path)
+      }
+    })
+  } else {
+    scan = { fullAt: now, files: await scanSessionFiles(roots, predicate) }
+    scans.delete(key)
+    if (scans.size >= MAX_SCANS) scans.delete(scans.keys().next().value as string)
+    scans.set(key, scan)
+  }
+  return [...scan.files.values()].filter(file => file.mtimeMs >= since)
 }
 
 async function mapLimit<T>(items: T[], limit: number, fn: (t: T) => Promise<void>): Promise<void> {
@@ -254,22 +312,51 @@ async function mapLimit<T>(items: T[], limit: number, fn: (t: T) => Promise<void
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
 }
 
-export async function loadCachedEntries(
-  files: { path: string; mtimeMs: number; size: number }[],
+export async function loadCachedEntries<State = unknown>(
+  files: SessionFile[],
   parse: (path: string) => Promise<Entry[]>,
   since: number,
-  options?: UsageCacheOptions,
+  options?: UsageCacheOptions<State>,
 ): Promise<Entry[]> {
-  const store = storeFor(parse, options)
+  const { store, key } = storeFor(parse, options)
+  // All-time loads (since 0) run every few minutes and are large; only the
+  // bounded dashboard window is worth holding between polls.
+  const memoKey = since > 0
+    ? hash(`${key}\0${Math.floor(since / DAY_MS)}\0${files.map(f => `${f.path}\0${f.mtimeMs}\0${f.size}`).sort().join('\n')}`)
+    : null
+  if (memoKey) {
+    const memoized = loadMemo.get(memoKey)
+    if (memoized) {
+      loadMemo.delete(memoKey)
+      loadMemo.set(memoKey, memoized)
+      return memoized
+    }
+  }
+  const parseRange = options?.parseRange
+  const parseResume = options?.parseResume
   const chunks: Entry[][] = []
+  let settled = true
   await mapLimit(files, 8, async (f) => {
     try {
+      const loaded = parseResume
+        ? await store.loadTracked(f, () => parseResume(f.path, 0, f.size), (from, state) => parseResume(f.path, from, f.size, state))
+        : parseRange
+        ? await store.loadTracked(f, () => parseRange(f.path, 0, f.size), from => parseRange(f.path, from, f.size))
+        : await store.loadTracked(f, () => parse(f.path))
+      if (!loaded.settled) settled = false
       // Do not keep stale rows alive in the request accumulator just because
       // they share a recently modified source log with useful rows.
-      chunks.push((await store.load(f, () => parse(f.path))).filter(e => e.ts >= since))
-    } catch {}
+      chunks.push(loaded.entries.filter(e => e.ts >= since))
+    } catch {
+      settled = false
+    }
   })
-  return dedupe(chunks.flat())
+  const entries = dedupe(chunks.flat())
+  if (memoKey && settled) {
+    if (loadMemo.size >= MAX_LOAD_MEMO) loadMemo.delete(loadMemo.keys().next().value as string)
+    loadMemo.set(memoKey, entries)
+  }
+  return entries
 }
 
 // Walk calendar days via each day's start (not fixed 24h steps, which skip the
@@ -293,7 +380,13 @@ export function tableSince(_tz: string): number {
   return 0
 }
 
+const isClean = (x: number) => Number.isFinite(x) && x >= 0
+
 function cleanEntry(e: Entry): Entry {
+  // Rows that came through dedupe are already clean; copying each one again on
+  // every aggregation pass is the bulk of a poll's garbage.
+  if (isClean(e.ts) && isClean(e.cost) && isClean(e.input) && isClean(e.output)
+    && isClean(e.cacheCreate) && isClean(e.cacheRead) && isClean(e.cacheSavings)) return e
   return {
     ...e,
     ts: finitePositive(e.ts),

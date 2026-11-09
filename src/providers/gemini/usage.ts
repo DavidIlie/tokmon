@@ -1,15 +1,22 @@
 import { readFile, stat as fsStat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
 import type { DashboardData, TableData } from '../../types'
 import { type Entry, summarize, tabulate, loadCachedEntries, safeNum, dashboardSince, tableSince, collectSessionFiles } from '../usage-core'
 import { readJsonLines, stripBom } from '../_shared/jsonl'
 import { makePriceResolver } from '../_shared/pricing'
+import { geminiDir } from './paths'
 
 type Price = { in: number; out: number; cr: number }
+type ModelPrice = Price & { long?: Price; promotion?: { until: number; price: Price } }
 // `long` is the >200k-prompt-token tier for models that publish long-context
 // pricing; it is selected uniformly in geminiPriceFor when promptTokens > 200_000.
-const PRICING: Record<string, Price & { long?: Price }> = {
+// Promotional end dates use midnight UTC on the first full-price day.
+// Standard text rates, checked 2026-11-09: https://ai.google.dev/gemini-api/docs/pricing
+const PRICING: Record<string, ModelPrice> = {
+  'gemini-4-argon': { in: 4e-6, out: 20e-6, cr: 0.2e-6, promotion: { until: Date.parse('2026-12-01T00:00:00Z'), price: { in: 2e-6, out: 10e-6, cr: 0.1e-6 } } },
+  'gemini-3.8-flash': { in: 1.5e-6, out: 7.5e-6, cr: 0.15e-6, promotion: { until: Date.parse('2027-01-01T00:00:00Z'), price: { in: 0.75e-6, out: 3.75e-6, cr: 0.075e-6 } } },
+  'gemini-3.6-flash': { in: 1.5e-6, out: 7.5e-6, cr: 0.15e-6, promotion: { until: Date.parse('2027-01-01T00:00:00Z'), price: { in: 0.75e-6, out: 3.75e-6, cr: 0.075e-6 } } },
+  'gemini-3.5-flash-lite': { in: 0.3e-6, out: 2.5e-6, cr: 0.03e-6 },
   'gemini-3.1-pro-preview': { in: 2e-6, out: 12e-6, cr: 0.2e-6, long: { in: 4e-6, out: 18e-6, cr: 0.4e-6 } },
   'gemini-3.1-pro': { in: 2e-6, out: 12e-6, cr: 0.2e-6, long: { in: 4e-6, out: 18e-6, cr: 0.4e-6 } },
   'gemini-3-pro-preview': { in: 2e-6, out: 12e-6, cr: 0.2e-6, long: { in: 4e-6, out: 18e-6, cr: 0.4e-6 } },
@@ -32,11 +39,12 @@ const MAX_SESSION_FILE_BYTES = 16 * 1024 * 1024
 const MAX_JSON_ENTRIES = 100_000
 
 export function geminiTmpDir(homeDir?: string): string {
-  return join(homeDir ?? homedir(), '.gemini', 'tmp')
+  return join(geminiDir(homeDir), 'tmp')
 }
 
-export function geminiPriceFor(model: string, promptTokens = 0): Price {
+export function geminiPriceFor(model: string, promptTokens = 0, timestamp = Date.now()): Price {
   const p = resolvePrice(model)
+  if (p.promotion && timestamp < p.promotion.until) return p.promotion.price
   if (promptTokens > 200_000 && p.long) return p.long
   return { in: p.in, out: p.out, cr: p.cr }
 }
@@ -65,7 +73,7 @@ function entryFromObject(obj: any): Entry | null {
   if (input + output + cacheRead === 0) return null
 
   const model = typeof obj.model === 'string' && obj.model ? obj.model : 'unknown'
-  const p = geminiPriceFor(model, promptTokens)
+  const p = geminiPriceFor(model, promptTokens, ts)
   return {
     id: typeof obj.id === 'string' ? obj.id : undefined,
     ts,

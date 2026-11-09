@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -16,7 +16,8 @@ import {
   type Entry,
 } from './usage-core'
 import { isClaudeSessionFile } from './claude/usage'
-import { startOfDay, startOfMonth, startOfWeek } from '../tz'
+import { dayKey, startOfDay, startOfMonth, startOfWeek, weekKey } from '../tz'
+import { readJsonLines } from './_shared/jsonl'
 
 // Build a fully populated Entry, overriding only the fields a test cares about.
 // Every numeric field defaults to a distinct value so accidental cross-field
@@ -76,6 +77,42 @@ test('request counts survive aggregation and the persisted row codec', async () 
       entries: { rows: unknown[][] }
     }
     assert.equal(disk.entries.rows[0]?.[9], 7)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('resumable loads preserve state from rows outside the requested window and bound reads', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokmon-usage-resume-'))
+  try {
+    const path = join(dir, 'source.jsonl')
+    const first = JSON.stringify({ ts: 1, total: 10, note: 'first µ' }) + '\n'
+    const second = JSON.stringify({ ts: 20, total: 17 }) + '\n'
+    const ranges: [number, number][] = []
+    const parseResume = async (file: string, start: number, end: number, state?: { total: number }) => {
+      ranges.push([start, end])
+      let total = state?.total ?? 0
+      const entries: Entry[] = []
+      for await (const row of readJsonLines<{ ts: number; total: number }>(file, undefined, { start, end })) {
+        entries.push(mk({ ts: row.ts, input: row.total - total }))
+        total = row.total
+      }
+      return { entries, state: { total } }
+    }
+    const load = async (size: number) => loadCachedEntries(
+      [{ path, size, mtimeMs: Date.now() + size }],
+      async () => assert.fail('must use the bounded resumable parser'), 10,
+      { storageDir: join(dir, 'cache'), parseResume },
+    )
+    await writeFile(path, first)
+    const firstSize = (await stat(path)).size
+    assert.deepEqual(await load(firstSize), [])
+    await appendFile(path, second)
+    const secondSize = (await stat(path)).size
+    // A later physical row is outside the observed source revision.
+    await appendFile(path, JSON.stringify({ ts: 30, total: 100 }) + '\n')
+    assert.deepEqual(await load(secondSize), [mk({ ts: 20, input: 7 })])
+    assert.deepEqual(ranges, [[0, firstSize], [firstSize, secondSize]])
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -209,5 +246,31 @@ test('session detection does not follow symlinks back into the tree', async () =
     assert.equal(await hasFileMatching(root, isClaudeSessionFile), true)
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('memoized day and week keys match the formatter in awkward zones and across DST', () => {
+  const formatters = new Map<string, Intl.DateTimeFormat>()
+  const reference = (ts: number, tz: string) => {
+    let formatter = formatters.get(tz)
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
+      formatters.set(tz, formatter)
+    }
+    return formatter.format(new Date(ts))
+  }
+  const zones = ['UTC', 'America/New_York', 'Europe/London', 'Asia/Kathmandu', 'Pacific/Chatham', 'Australia/Lord_Howe', 'Pacific/Kiritimati']
+  const starts = ['2026-03-07T00:00:00Z', '2026-10-24T00:00:00Z', '2026-11-08T00:00:00Z', '2026-12-30T00:00:00Z'].map(Date.parse)
+  for (const tz of zones) {
+    for (const start of starts) {
+      // 7-minute steps over two days land on both sides of every local midnight.
+      for (let ts = start, step = 0; ts < start + 2 * 86_400_000; ts += 7 * 60_000 + 1, step++) {
+        assert.equal(dayKey(ts, tz), reference(ts, tz), `${tz} ${new Date(ts).toISOString()}`)
+        // The week reference costs two formatter round trips, so sample it.
+        if (step % 16 === 0) {
+          assert.equal(weekKey(ts, tz), reference(startOfWeek(ts, tz), tz), `${tz} week of ${new Date(ts).toISOString()}`)
+        }
+      }
+    }
   }
 })

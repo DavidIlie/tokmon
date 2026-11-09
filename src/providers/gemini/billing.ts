@@ -1,18 +1,16 @@
 import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
 import type { Account, BillingResult } from '../types'
 import { decodeBase64UrlJson } from '../_shared/jwt'
 import { hasFileMatching } from '../usage-core'
 import { cloudCodeBucketsToMetrics, fetchCloudCodeQuota } from '../cloud-code'
 import { geminiTmpDir, isGeminiSessionFile } from './usage'
+import { geminiDir } from './paths'
+
+export { geminiDir } from './paths'
 
 export function geminiCredsPath(homeDir?: string): string {
-  return join(homeDir ?? homedir(), '.gemini', 'oauth_creds.json')
-}
-
-export function geminiDir(homeDir?: string): string {
-  return join(homeDir ?? homedir(), '.gemini')
+  return join(geminiDir(homeDir), 'oauth_creds.json')
 }
 
 type GeminiAuthMethod = 'api-key' | 'vertex' | 'none'
