@@ -9,22 +9,30 @@ import { modelKeyMatches } from '../_shared/metric'
 import { makePriceResolver } from '../_shared/pricing'
 import { timestampMs } from '../_shared/time'
 
-const PRICING: Record<string, { in: number; cr: number; out: number }> = {
+// USD per token, from https://developers.openai.com/api/docs/pricing (checked
+// 2026-11-09). `long` models bill a request whose input exceeds 272K tokens at
+// 2x input and cached input and 1.5x output.
+const PRICING: Record<string, { in: number; cr: number; out: number; long?: true }> = {
+  'gpt-6-astra': { in: 10e-6, cr: 1e-6, out: 50e-6, long: true },
+  'gpt-6.1-sol': { in: 2e-6, cr: 0.1e-6, out: 10e-6, long: true },
+  'gpt-6.1-terra': { in: 1e-6, cr: 0.05e-6, out: 5e-6, long: true },
+  'gpt-6-luna': { in: 0.1e-6, cr: 0.01e-6, out: 0.5e-6, long: true },
+  'gpt-6-sol': { in: 2e-6, cr: 0.2e-6, out: 10e-6, long: true },
   // Bare 'gpt-5.6' (no tier suffix) appears in real session logs; without an
-  // explicit key it drifted to the flagship fallback, which happened to match
-  // today but silently breaks the moment either price moves.
-  'gpt-5.6': { in: 5e-6, cr: 0.5e-6, out: 30e-6 },
-  'gpt-5.6-terra': { in: 2.5e-6, cr: 0.25e-6, out: 15e-6 },
-  'gpt-5.6-luna': { in: 1e-6, cr: 0.1e-6, out: 6e-6 },
-  'gpt-5.6-sol': { in: 5e-6, cr: 0.5e-6, out: 30e-6 },
-  'gpt-5.5-pro': { in: 30e-6, cr: 30e-6, out: 180e-6 },
-  'gpt-5.5-codex': { in: 5e-6, cr: 0.5e-6, out: 30e-6 },
-  'gpt-5.5': { in: 5e-6, cr: 0.5e-6, out: 30e-6 },
+  // explicit key it drifted to the flagship fallback.
+  'gpt-5.6': { in: 4e-6, cr: 0.4e-6, out: 20e-6, long: true },
+  // Promotional through 2026-11-30; OpenAI has not published the rate after it.
+  'gpt-5.6-sol': { in: 4e-6, cr: 0.4e-6, out: 20e-6, long: true },
+  'gpt-5.6-terra': { in: 2e-6, cr: 0.2e-6, out: 12e-6, long: true },
+  'gpt-5.6-luna': { in: 0.2e-6, cr: 0.02e-6, out: 1.2e-6, long: true },
+  'gpt-5.5-pro': { in: 30e-6, cr: 30e-6, out: 180e-6, long: true },
+  'gpt-5.5-codex': { in: 5e-6, cr: 0.5e-6, out: 30e-6, long: true },
+  'gpt-5.5': { in: 5e-6, cr: 0.5e-6, out: 30e-6, long: true },
   'gpt-5.4-mini': { in: 0.75e-6, cr: 0.075e-6, out: 4.5e-6 },
   'gpt-5.4-nano': { in: 0.2e-6, cr: 0.02e-6, out: 1.25e-6 },
-  'gpt-5.4-pro': { in: 30e-6, cr: 30e-6, out: 180e-6 },
-  'gpt-5.4-codex': { in: 2.5e-6, cr: 0.25e-6, out: 15e-6 },
-  'gpt-5.4': { in: 2.5e-6, cr: 0.25e-6, out: 15e-6 },
+  'gpt-5.4-pro': { in: 30e-6, cr: 30e-6, out: 180e-6, long: true },
+  'gpt-5.4-codex': { in: 2.5e-6, cr: 0.25e-6, out: 15e-6, long: true },
+  'gpt-5.4': { in: 2.5e-6, cr: 0.25e-6, out: 15e-6, long: true },
   'gpt-5.3-codex': { in: 1.75e-6, cr: 0.175e-6, out: 14e-6 },
   'gpt-5.3': { in: 1.75e-6, cr: 0.175e-6, out: 14e-6 },
   'gpt-5.2-codex': { in: 1.75e-6, cr: 0.175e-6, out: 14e-6 },
@@ -60,15 +68,26 @@ export async function detectCodex(homeDir?: string): Promise<boolean> {
   return false
 }
 
-// Priority processing (`service_tier: "priority"`, Codex's fast lane) bills at
-// a flat multiplier over standard rates for the gpt-5 family. Sessions record
-// tier changes in thread_settings_applied events, not per token_count.
-const PRIORITY_TIER_MULTIPLIER = 2
+// The service tier applies to a whole thread and changes in
+// thread_settings_applied events, not per token_count. Fast mode (called
+// priority until 2026-07-30) bills at 2x and Ultrafast at 6x the standard rate.
+const TIER_MULTIPLIER: Record<string, number> = { priority: 2, fast: 2, ultrafast: 6 }
+const LONG_CONTEXT_INPUT = 272_000
 
-export function codexPriceFor(model: string, serviceTier?: string) {
+/** The tier suffix for a model row, so tiers stay separate lines that reconcile with the invoice. */
+export function codexTierLabel(serviceTier?: string): string {
+  return serviceTier && TIER_MULTIPLIER[serviceTier] ? ` (${serviceTier})` : ''
+}
+
+export function codexPriceFor(model: string, serviceTier?: string, inputTokens = 0) {
   const base = resolvePrice(model)
-  if (serviceTier !== 'priority') return base
-  return { in: base.in * PRIORITY_TIER_MULTIPLIER, cr: base.cr * PRIORITY_TIER_MULTIPLIER, out: base.out * PRIORITY_TIER_MULTIPLIER }
+  const tier = (serviceTier && TIER_MULTIPLIER[serviceTier]) || 1
+  const long = base.long && inputTokens > LONG_CONTEXT_INPUT
+  return {
+    in: base.in * tier * (long ? 2 : 1),
+    cr: base.cr * tier * (long ? 2 : 1),
+    out: base.out * tier * (long ? 1.5 : 1),
+  }
 }
 
 function extractModel(obj: any): string | null {
@@ -226,11 +245,11 @@ async function parseFile(path: string): Promise<Entry[]> {
         const inputTokens = inputTotal - cached
         const output = safeNum(usage.output_tokens)
         if (inputTokens + output + cached === 0) continue
-        const p = codexPriceFor(model, serviceTier)
+        const p = codexPriceFor(model, serviceTier, inputTotal)
         entries.push({
           id: `${ts}|${model}|${inputTotal}|${cached}|${output}|${safeNum(usage.reasoning_output_tokens)}|${safeNum(usage.total_tokens)}`,
           ts,
-          model: serviceTier === 'priority' ? `${model} (priority)` : model,
+          model: `${model}${codexTierLabel(serviceTier)}`,
           cost: inputTokens * p.in + cached * p.cr + output * p.out,
           input: inputTokens,
           output,
@@ -269,11 +288,11 @@ async function parseFile(path: string): Promise<Entry[]> {
       const output = safeNum(d.output_tokens)
       if (inputTokens + output + cached === 0) continue
 
-      const p = codexPriceFor(model, serviceTier)
+      const p = codexPriceFor(model, serviceTier, inputTotal)
       entries.push({
         id: `${ts}|${model}|${inputTotal}|${cached}|${output}|${safeNum(d.reasoning_output_tokens)}|${safeNum(d.total_tokens)}`,
         ts,
-        model: serviceTier === 'priority' ? `${model} (priority)` : model,
+        model: `${model}${codexTierLabel(serviceTier)}`,
         cost: inputTokens * p.in + cached * p.cr + output * p.out,
         input: inputTokens,
         output,
