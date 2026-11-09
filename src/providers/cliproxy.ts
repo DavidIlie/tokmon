@@ -5,6 +5,10 @@ import { requestPinned, resolveQuotaAddresses } from './_shared/quota-source'
 import type { Account, BillingResult, Metric } from './types'
 
 const snapshotFlights = new Map<string, { until: number; promise: Promise<unknown[]> }>()
+const SNAPSHOT_TTL_MS = 60_000
+// Accounts on one server and key are read one after another. Without a shared
+// failure, a server that is down gets a request (and a retry) per account.
+const FAILURE_COOLDOWN_MS = 30_000
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
@@ -73,9 +77,10 @@ export async function cliProxyBilling(account: Account): Promise<BillingResult> 
       flight = { until: Infinity, promise }
       const pending = flight
       snapshotFlights.set(cacheKey, pending)
-      void promise.then(() => { pending.until = Date.now() + 60_000 }, () => {
-        if (snapshotFlights.get(cacheKey) === pending) snapshotFlights.delete(cacheKey)
-      })
+      void promise.then(
+        () => { pending.until = Date.now() + SNAPSHOT_TTL_MS },
+        () => { pending.until = Date.now() + FAILURE_COOLDOWN_MS },
+      )
       if (snapshotFlights.size > 16) snapshotFlights.delete(snapshotFlights.keys().next().value!)
     }
     const snapshot = record((await flight.promise).find(value => {

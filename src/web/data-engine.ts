@@ -472,7 +472,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       tz = next.tz
       summaryIntervalMs = next.summaryIntervalMs
       billingIntervalMs = next.billingIntervalMs
-      const sourceKey = (r: ResolvedAccount) => `${r.account.providerId}:${JSON.stringify(r.account.quotaSource ?? r.account.homeDir ?? '')}`
+      const sourceKey = (r: ResolvedAccount) => `${r.account.providerId}:${JSON.stringify([r.account.homeDir ?? '', r.account.quotaSource ?? null])}`
       const prevSources = new Map(resolved.map(r => [r.account.id, sourceKey(r)]))
       resolved = next.resolved
       installedProviders = next.installedProviders

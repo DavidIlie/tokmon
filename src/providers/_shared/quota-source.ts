@@ -90,6 +90,14 @@ export function pinnedLookup(addresses: readonly LookupAddress[]) {
   }
 }
 
+// The socket timeout only bounds silence, so a server that trickles bytes could
+// hold a request (and everything sharing it) open forever. Bound the whole
+// exchange and its size as well.
+const QUOTA_REQUEST_DEADLINE_MS = 20_000
+const QUOTA_RESPONSE_MAX_BYTES = 4 * 1024 * 1024
+/** Statuses for which the Response constructor rejects any body, even an empty one. */
+const BODYLESS_STATUSES = new Set([101, 204, 205, 304])
+
 export async function requestPinned(
   url: URL,
   headers: Record<string, string>,
@@ -105,15 +113,34 @@ export async function requestPinned(
       timeout: 10_000,
     }, response => {
       const chunks: Buffer[] = []
-      response.on('data', chunk => chunks.push(Buffer.from(chunk)))
-      response.on('end', () => resolve(new Response(Buffer.concat(chunks), {
-        status: response.statusCode ?? 500,
-        headers: response.headers as HeadersInit,
-      })))
+      let received = 0
+      response.on('data', chunk => {
+        const buffer = Buffer.from(chunk)
+        received += buffer.byteLength
+        if (received > QUOTA_RESPONSE_MAX_BYTES) {
+          req.destroy(new Error('response too large'))
+          return
+        }
+        chunks.push(buffer)
+      })
+      response.on('end', () => {
+        clearTimeout(deadline)
+        // Thrown from an event callback this would be an uncaught exception.
+        try {
+          const status = response.statusCode ?? 500
+          resolve(new Response(BODYLESS_STATUSES.has(status) ? null : Buffer.concat(chunks), {
+            status,
+            headers: response.headers as HeadersInit,
+          }))
+        } catch (error) {
+          reject(error)
+        }
+      })
       response.on('error', reject)
     })
+    const deadline = setTimeout(() => req.destroy(new Error('timeout')), QUOTA_REQUEST_DEADLINE_MS)
     req.on('timeout', () => req.destroy(new Error('timeout')))
-    req.on('error', reject)
+    req.on('error', error => { clearTimeout(deadline); reject(error) })
     req.end()
   })
 }

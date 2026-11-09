@@ -89,7 +89,7 @@ catalog is empty. Tokmon displays account quota, rather than the key's allocated
 share. The ordinary custom URL mode remains available for pooled key quotas.
 
 The daemon shares one quota request across accounts on the same server and key
-file for 15 seconds. It uses CLIProxy's observation timestamps, omits expired
+file for 60 seconds, and a failed request for 30. It uses CLIProxy's observation timestamps, omits expired
 windows, and does not refresh upstream credentials or consume saved resets.
 Remote accounts contain quota only. Local accounts continue to own session
 history, token counts, and cost estimates.
