@@ -1,10 +1,31 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Metric } from './providers/types'
-import { blendHeadroom, deriveAccountIdentity, deriveProviderHeadroom, deriveQuotaView, deriveQuotaViews, MIN_STALE_AFTER_MS, projectAccountIdentity, resolveQuotaViews, staleAfterMs, tightestQuotaView, usageFromHeadroom } from './usage-semantics'
+import { billingStatus, blendHeadroom, deriveAccountIdentity, deriveProviderHeadroom, deriveQuotaView, deriveQuotaViews, headroomContributorIds, MIN_STALE_AFTER_MS, projectAccountIdentity, resolveQuotaViews, staleAfterMs, tightestQuotaView, usageFromHeadroom } from './usage-semantics'
 
 const pct = (label: string, used: number, extra: Partial<Metric> = {}): Metric => ({
   label, used, limit: 100, format: { kind: 'percent' }, ...extra,
+})
+
+test('billing status distinguishes provider failures from CLIProxy waiting and usable data', () => {
+  assert.equal(billingStatus({ metrics: [], error: 'Invalid key' }, 'ready'), 'error')
+  assert.equal(billingStatus({ metrics: [], error: '' }, 'ready'), 'error')
+  assert.equal(billingStatus({ metrics: [], error: 'Awaiting fresh quota observations from CLIProxy' }, 'ready'), 'waiting')
+  assert.equal(billingStatus({ metrics: [], error: null }, 'ready'), 'ready')
+  assert.equal(billingStatus({ metrics: [pct('Session', 30)], error: 'Partial response' }), 'ready')
+  assert.equal(billingStatus({ metrics: [pct('Session', 30)], error: null }, 'error'), 'error')
+  assert.equal(billingStatus(null), 'pending')
+})
+
+test('pooled contributors follow canonical windows despite different keys and exclude unused quotas', () => {
+  const accounts = [
+    { id: 'a', lastActivityAt: null, quotas: deriveQuotaViews([pct('Session', 10, { key: 'first', role: 'session' })]) },
+    { id: 'b', lastActivityAt: null, quotas: deriveQuotaViews([pct('Session', 90, { key: 'second', role: 'session' })]) },
+    { id: 'unused', lastActivityAt: null, quotas: deriveQuotaViews([pct('Auxiliary', 100, { role: 'other' })]) },
+  ]
+  const view = deriveProviderHeadroom(accounts, 10, 1_000)
+  assert.equal(view.value, 50)
+  assert.deepEqual(headroomContributorIds(accounts, view), ['a', 'b'])
 })
 
 test('quota views invert used exactly once and use canonical provider order', () => {

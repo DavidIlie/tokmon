@@ -8,6 +8,8 @@ import { readJsonLines } from '../_shared/jsonl'
 import { modelKeyMatches } from '../_shared/metric'
 import { makePriceResolver } from '../_shared/pricing'
 import { timestampMs } from '../_shared/time'
+import { claudePriceFor } from '../claude/usage'
+import type { UsageParseResult } from '../storage/usage-shard-store'
 
 // USD per token, from https://developers.openai.com/api/docs/pricing (checked
 // 2026-11-09). `long` models bill a request whose input exceeds 272K tokens at
@@ -43,6 +45,21 @@ const PRICING: Record<string, { in: number; cr: number; out: number; long?: true
   'gpt-5-nano': { in: 0.05e-6, cr: 0.005e-6, out: 0.4e-6 },
   'gpt-5': { in: 1.25e-6, cr: 0.125e-6, out: 10e-6 },
   'o4-mini': { in: 1.1e-6, cr: 0.275e-6, out: 4.4e-6 },
+  // https://platform.kimi.ai/docs/pricing/chat (checked 2026-11-09).
+  'kimi-k3.1-pro-highspeed': { in: 4e-6, cr: 0.2e-6, out: 20e-6 },
+  'kimi-k3.1-pro': { in: 2e-6, cr: 0.2e-6, out: 10e-6 },
+  'kimi-k3': { in: 3e-6, cr: 0.3e-6, out: 15e-6 },
+  // Earlier K2 versions are absent from the current price page; keep the fallback.
+  'kimi-k2.7-code-highspeed': { in: 1.9e-6, cr: 0.38e-6, out: 8e-6 },
+  'kimi-k2.7-code': { in: 0.95e-6, cr: 0.19e-6, out: 4e-6 },
+  'kimi-k2.6': { in: 0.95e-6, cr: 0.16e-6, out: 4e-6 },
+  // https://docs.z.ai/guides/overview/pricing (checked 2026-11-09).
+  'glm-5.3': { in: 1.4e-6, cr: 0.26e-6, out: 4.4e-6 },
+  'glm-5.3-flash': { in: 0.15e-6, cr: 0.03e-6, out: 0.5e-6 },
+  'glm-5.3-flashx': { in: 0.37e-6, cr: 0.075e-6, out: 1.25e-6 },
+  // https://api-docs.deepseek.com/quick_start/pricing (checked 2026-11-09).
+  // Published peak rates; off-peak and Chinese public-holiday discounts are not applied.
+  'deepseek-v4.1-flash': { in: 0.3e-6, cr: 0.006e-6, out: 1.2e-6 },
 }
 // Unknown/new model families are priced at the current flagship rate rather than
 // $0 — a slightly-wrong estimate beats silently free usage when OpenAI ships a
@@ -80,7 +97,11 @@ export function codexTierLabel(serviceTier?: string): string {
 }
 
 export function codexPriceFor(model: string, serviceTier?: string, inputTokens = 0) {
-  const base = resolvePrice(model)
+  const normalized = model.toLowerCase().trim().split('/').pop()!
+  // https://platform.claude.com/docs/en/about-claude/pricing (checked 2026-11-09).
+  const claude = normalized.startsWith('claude-')
+    ? claudePriceFor(normalized, undefined, undefined, inputTokens) : undefined
+  const base = claude ? { in: claude.i, cr: claude.cr, out: claude.o, long: false } : resolvePrice(normalized)
   const tier = (serviceTier && TIER_MULTIPLIER[serviceTier]) || 1
   const long = base.long && inputTokens > LONG_CONTEXT_INPUT
   return {
@@ -165,11 +186,13 @@ function timestampSecond(value: unknown): string | null {
   return ts === null ? null : new Date(ts).toISOString().slice(0, 19)
 }
 
-async function hasForkedHistory(path: string): Promise<boolean> {
+const FORK_PROBE_BYTES = 16 * 1024
+
+async function hasForkedHistory(path: string, end?: number): Promise<boolean> {
   let handle: Awaited<ReturnType<typeof openFile>> | null = null
   try {
     handle = await openFile(path, 'r')
-    const buffer = Buffer.alloc(16 * 1024)
+    const buffer = Buffer.alloc(Math.min(FORK_PROBE_BYTES, end ?? FORK_PROBE_BYTES))
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
     const prefix = buffer.subarray(0, bytesRead).toString('utf8')
     return prefix.includes('thread_spawn') && /"forked_from_id"\s*:\s*"[^"]+"/.test(prefix)
@@ -201,13 +224,25 @@ function findTimestamp(obj: any): number | null {
   return timestampMs(obj?.timestamp ?? obj?.payload?.timestamp ?? obj?.created_at ?? obj?.createdAt ?? obj?.time)
 }
 
-async function parseFile(path: string): Promise<Entry[]> {
+export interface CodexParseState {
+  model: string
+  serviceTier?: string
+  prevTotal: CodexDelta | null
+  prevSig: string | null
+  skipReplay: boolean
+}
+
+export async function parseFile(
+  path: string, start = 0, end?: number, state?: CodexParseState,
+): Promise<UsageParseResult<Entry, CodexParseState>> {
   const entries: Entry[] = []
-  let model = 'gpt-5'
-  let serviceTier: string | undefined
-  let prevTotal: CodexDelta | null = null
-  let prevSig: string | null = null
-  let skipReplay = await hasForkedHistory(path)
+  let model = state?.model ?? 'gpt-5'
+  let serviceTier = state?.serviceTier
+  let prevTotal = state?.prevTotal ?? null
+  let prevSig = state?.prevSig ?? null
+  let skipReplay = state?.skipReplay ?? await hasForkedHistory(path, end)
+  // A later append within the initial probe can still reveal forked history.
+  const canResume = state !== undefined || skipReplay || (end ?? Infinity) >= FORK_PROBE_BYTES
   const relevantLine = (line: string) =>
     line.includes('token_count')
     || line.includes('task_started')
@@ -216,7 +251,7 @@ async function parseFile(path: string): Promise<Entry[]> {
     || line.includes('"usage"')
     || line.includes('input_tokens')
     || line.includes('prompt_tokens')
-  for await (const obj of readJsonLines(path, relevantLine)) {
+  for await (const obj of readJsonLines(path, relevantLine, { start, end })) {
     try {
       const payloadType = obj?.payload?.type ?? obj?.type
       if (skipReplay) {
@@ -302,13 +337,13 @@ async function parseFile(path: string): Promise<Entry[]> {
       })
     } catch {}
   }
-  return entries
+  return { entries, state: canResume ? { model, serviceTier, prevTotal, prevSig, skipReplay } : undefined }
 }
 
 async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   const roots = codexHomes(homeDir).flatMap(home => [join(home, 'sessions'), join(home, 'archived_sessions')])
   const files = await collectSessionFiles(roots, path => path.endsWith('.jsonl'), since)
-  return loadCachedEntries(files, parseFile, since)
+  return loadCachedEntries(files, async path => (await parseFile(path)).entries, since, { parseResume: parseFile })
 }
 
 export async function codexDashboard(tz: string, homeDir?: string): Promise<DashboardData> {

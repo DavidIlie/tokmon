@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react'
 import type { Config, WebAccount, WebSnapshot } from '../../web/contract'
-import { usageFromHeadroom } from '../../usage-semantics'
+import { billingStatus, usageFromHeadroom } from '../../usage-semantics'
 import { formatTokens } from '../../shared/format'
 import { accountIdentity } from './privacy'
 import { providerMark, providerMonogram } from './provider-icons'
@@ -13,6 +13,7 @@ import {
   percentText,
   planLabel,
   providerRepresentative,
+  providerFreshness,
   providerTodayTokens,
   providerSecondarySummary,
   resetLabel,
@@ -21,7 +22,6 @@ import {
   staleAgeLabel,
   usageAriaValueText,
   usageNumberText,
-  type Freshness,
   type ProviderGroup,
   type ProviderRepresentative,
   type Quota,
@@ -139,7 +139,8 @@ function ActiveBeacon({ now, account }: { now: number; account: WebAccount | nul
 }
 
 function StaleTag({ account, now }: { account: WebAccount; now: number }) {
-  return <span className="tag tag--stale" title={staleAgeLabel(account, now)}>Stale</span>
+  const title = staleAgeLabel(account, now)
+  return <span className="tag tag--stale" role="img" title={title} aria-label={title}>Stale</span>
 }
 
 function ErrorMark({ message }: { message: string }) {
@@ -147,6 +148,7 @@ function ErrorMark({ message }: { message: string }) {
 }
 
 function accountPending(account: WebAccount): boolean {
+  if (billingStatus(account.billing, account.billingState) === 'waiting') return true
   return account.billingState === 'pending' && (!account.billing || account.billing.metrics.length === 0)
 }
 
@@ -155,9 +157,8 @@ function providerPending(accounts: readonly WebAccount[]): boolean {
 }
 
 function accountErrorText(account: WebAccount): string | null {
-  if (account.billing?.error) return account.billing.error
-  if (account.billingState === 'error') return 'Could not refresh — check that this account is signed in.'
-  return null
+  if (billingStatus(account.billing, account.billingState) !== 'error') return null
+  return account.billing?.error || 'Could not refresh — check that this account is signed in.'
 }
 
 function accountHasUsageHistory(account: WebAccount): boolean {
@@ -198,12 +199,9 @@ export function ProviderCard({
   const sevWord = severityTag(sev)
   const reset = headroom ? null : resetLabel(rep.quota?.resetsAt ?? null, now)
   const secondary = headroom ? null : providerSecondarySummary(rep)
-  const representative = headroom?.representativeAccountId
-    ? group.accounts.find(account => account.id === headroom.representativeAccountId) ?? rep.account
-    : rep.account
-  const repFresh: Freshness = representative ? freshness(representative, snapshot, now) : 'nodata'
+  const quotaFreshness = providerFreshness(group.accounts, snapshot, now, headroom, rep.noData ? null : rep.account)
   const providerError = group.accounts.some(account => freshness(account, snapshot, now) === 'error')
-  const providerStale = !providerError && !pending && repFresh === 'stale'
+  const providerStale = quotaFreshness.staleCount > 0
   const errorMessage = group.accounts.map(accountErrorText).find(Boolean) ?? 'Provider error'
   const headerId = `provider-header-${group.providerId}`
   const regionId = `provider-detail-${group.providerId}`
@@ -218,12 +216,13 @@ export function ProviderCard({
   const identityChip = multi
     ? `${group.accounts.length} accounts`
     : ''
-  const providerStatusAria = providerError
-    ? 'data may be outdated, could not refresh'
-    : providerStale ? 'data may be outdated' : null
+  const providerStatusAria = [
+    providerError ? 'could not refresh quota data' : null,
+    providerStale ? quotaFreshness.title : null,
+  ].filter(Boolean).join(', ')
   const aria = headroom
     ? [group.name, valueText, multi ? `${group.accounts.length} accounts` : identityChip, providerStatusAria, expanded ? 'expanded' : 'collapsed'].filter(Boolean).join(', ')
-    : buildProviderAria({ group, rep, multi, pending, sev, now, privacy: config.privacyMode, providerError, providerStale, expanded })
+    : buildProviderAria({ group, rep, multi, pending, sev, now, privacy: config.privacyMode, providerError, staleTitle: providerStale ? quotaFreshness.title : null, expanded })
   const onKeyDown = useCallback((event: React.KeyboardEvent) => {
     if (event.key === 'ArrowDown') { event.preventDefault(); onArrow('down') }
     else if (event.key === 'ArrowUp') { event.preventDefault(); onArrow('up') }
@@ -256,7 +255,7 @@ export function ProviderCard({
                 <span className="provider-titleline__spacer" />
                 {refreshing && <span className="spinner" role="status" aria-label="Refreshing" />}
                 {!refreshing && providerError && <ErrorMark message={errorMessage} />}
-                {!refreshing && providerStale && representative && <StaleTag account={representative} now={now} />}
+                {!refreshing && providerStale && <span className="tag tag--stale" role="img" title={quotaFreshness.title!} aria-label={quotaFreshness.title!}>{quotaFreshness.label}</span>}
               </span>
               <span className="provider-summaryline">
                 <span className="provider-value" data-sev={sev}>
@@ -308,6 +307,7 @@ function ExpandedAccount({ account, snapshot, config, providerName, showPlan, sh
   const plan = planLabel(account.plan)
   const identity = accountIdentity(account, config.privacyMode)
   const errorText = accountErrorText(account)
+  const waiting = billingStatus(account.billing, account.billingState) === 'waiting'
   const removable = showIdentity && account.source === 'auto'
   const showMetadata = showIdentity || (showPlan && !!plan) || fresh === 'error' || fresh === 'stale' || active || removable
   const hasHistory = accountHasUsageHistory(account)
@@ -332,6 +332,7 @@ function ExpandedAccount({ account, snapshot, config, providerName, showPlan, sh
         </div>
       )}
       {errorText && <p className="account-error">{errorText}</p>}
+      {waiting && <p>{account.billing?.error}</p>}
       <div className={`rows${fresh === 'error' ? ' is-dimmed' : ''}`}>
         {quotas.length > 0
           ? quotas.map(quota => (
@@ -348,9 +349,9 @@ function ExpandedAccount({ account, snapshot, config, providerName, showPlan, sh
   )
 }
 
-function buildProviderAria({ group, rep, multi, pending, sev, now, privacy, providerError, providerStale, expanded }: {
+function buildProviderAria({ group, rep, multi, pending, sev, now, privacy, providerError, staleTitle, expanded }: {
   group: ProviderGroup; rep: ProviderRepresentative; multi: boolean; pending: boolean
-  sev: ReturnType<typeof severity>; now: number; privacy: boolean; providerError: boolean; providerStale: boolean; expanded: boolean
+  sev: ReturnType<typeof severity>; now: number; privacy: boolean; providerError: boolean; staleTitle: string | null; expanded: boolean
 }): string {
   const parts: string[] = [group.name]
   if (group.sharedPlan) parts.push(group.sharedPlan)
@@ -365,7 +366,7 @@ function buildProviderAria({ group, rep, multi, pending, sev, now, privacy, prov
     if (reset) parts.push(reset.toLowerCase())
   }
   if (providerError) parts.push('data may be outdated, could not refresh')
-  else if (providerStale) parts.push('data may be outdated')
+  if (staleTitle) parts.push(staleTitle)
   parts.push(expanded ? 'expanded' : 'collapsed')
   return parts.join(', ')
 }

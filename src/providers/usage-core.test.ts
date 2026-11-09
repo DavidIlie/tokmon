@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -17,6 +17,7 @@ import {
 } from './usage-core'
 import { isClaudeSessionFile } from './claude/usage'
 import { dayKey, startOfDay, startOfMonth, startOfWeek, weekKey } from '../tz'
+import { readJsonLines } from './_shared/jsonl'
 
 // Build a fully populated Entry, overriding only the fields a test cares about.
 // Every numeric field defaults to a distinct value so accidental cross-field
@@ -76,6 +77,42 @@ test('request counts survive aggregation and the persisted row codec', async () 
       entries: { rows: unknown[][] }
     }
     assert.equal(disk.entries.rows[0]?.[9], 7)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('resumable loads preserve state from rows outside the requested window and bound reads', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'tokmon-usage-resume-'))
+  try {
+    const path = join(dir, 'source.jsonl')
+    const first = JSON.stringify({ ts: 1, total: 10, note: 'first µ' }) + '\n'
+    const second = JSON.stringify({ ts: 20, total: 17 }) + '\n'
+    const ranges: [number, number][] = []
+    const parseResume = async (file: string, start: number, end: number, state?: { total: number }) => {
+      ranges.push([start, end])
+      let total = state?.total ?? 0
+      const entries: Entry[] = []
+      for await (const row of readJsonLines<{ ts: number; total: number }>(file, undefined, { start, end })) {
+        entries.push(mk({ ts: row.ts, input: row.total - total }))
+        total = row.total
+      }
+      return { entries, state: { total } }
+    }
+    const load = async (size: number) => loadCachedEntries(
+      [{ path, size, mtimeMs: Date.now() + size }],
+      async () => assert.fail('must use the bounded resumable parser'), 10,
+      { storageDir: join(dir, 'cache'), parseResume },
+    )
+    await writeFile(path, first)
+    const firstSize = (await stat(path)).size
+    assert.deepEqual(await load(firstSize), [])
+    await appendFile(path, second)
+    const secondSize = (await stat(path)).size
+    // A later physical row is outside the observed source revision.
+    await appendFile(path, JSON.stringify({ ts: 30, total: 100 }) + '\n')
+    assert.deepEqual(await load(secondSize), [mk({ ts: 20, input: 7 })])
+    assert.deepEqual(ranges, [[0, firstSize], [firstSize, secondSize]])
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

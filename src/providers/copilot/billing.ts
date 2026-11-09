@@ -260,10 +260,13 @@ async function fetchUsage(token: string): Promise<{ data: CopilotUsage | null; s
       headers: {
         'Authorization': `token ${token}`,
         'Accept': 'application/json',
-        'Editor-Version': 'vscode/1.96.2',
-        'Editor-Plugin-Version': 'copilot-chat/0.26.7',
-        'User-Agent': 'GitHubCopilotChat/0.26.7',
-        'X-Github-Api-Version': '2025-04-01',
+        // Checked 2026-11-09: https://github.com/microsoft/vscode-copilot-chat/blob/main/src/platform/authentication/node/copilotTokenManager.ts
+        // CopilotUserInfo uses 2025-04-01. @vscode/copilot-api 0.2.19 excludes this request
+        // from editor-header injection: https://www.npmjs.com/package/@vscode/copilot-api/v/0.2.19
+        // baseFetchFetcher.ts supplies the package-version UA; package.json is 0.44.0.
+        // https://github.com/microsoft/vscode-copilot-chat/blob/main/src/platform/networking/node/baseFetchFetcher.ts
+        'User-Agent': 'GitHubCopilotChat/0.44.0',
+        'X-GitHub-Api-Version': '2025-04-01',
       },
       signal: AbortSignal.timeout(10000),
     })

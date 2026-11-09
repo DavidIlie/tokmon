@@ -16,25 +16,12 @@ import { readDesktopLoginItem, setDesktopLoginItem } from './desktop-login-item'
 import { registerDesktopIpc } from './ipc-bridge'
 import { createPopoverWindow } from './popover-window'
 import { effectiveSystemMode, electronThemeSource } from './native-theme'
-import { activeAccountIds, promotionAccounts, tightestQuota } from './presentation'
+import { activeAccountIds, promotionAccounts, providerTooltipLine, tightestQuota } from './presentation'
 import { selectPromotedAccounts, type PromotionState } from './promotion'
 import { createTrayIcon } from './tray-icon'
 import { TrayStripLifecycle } from './tray-strip-lifecycle'
 import { disconnectedMenuBarTitle, menuBarTitle } from './tray-presentation'
-import { accountIdentity } from '../shared/privacy'
-import {
-  percentText,
-  billingObservedAt,
-  billingStaleAfterMs,
-  providerRepresentative,
-  providerTodayTokens,
-  resetLabel,
-  resolveProviderPins,
-  severity,
-  severityTag,
-  staleAgeLabel,
-} from '../shared/presentation'
-import type { HeadroomView, WebAccount, WebSnapshot } from '../../web/contract'
+import { providerTodayTokens, resolveProviderPins, severity } from '../shared/presentation'
 import { DESKTOP_DOWNLOAD_URL, type DesktopUpdateState } from '../shared/desktop-contract'
 
 /** Unified critical band (≤10%), shared by strip, gauge, tooltip and popover. */
@@ -57,41 +44,6 @@ function updateTooltipLine(appName: string, update: DesktopUpdateState): string 
 }
 
 /** Honest per-provider tooltip line: one real window of one real account, in words. */
-function providerTooltipLine(
-  providerName: string,
-  accounts: readonly WebAccount[],
-  privacy: boolean,
-  snapshot: WebSnapshot,
-  activeTimeoutMin: number,
-  now: number,
-  headroom?: HeadroomView,
-): string {
-  if (headroom) {
-    if (headroom.value === null) return `${providerName} — no usage data yet`
-    const usage = usageFromHeadroom(headroom.value)!
-    const account = accounts.find(candidate => candidate.id === headroom.representativeAccountId)
-    const identity = account && accounts.length > 1 ? ` · ${accountIdentity(account, privacy)}` : ''
-    return `${providerName} — Usage ${percentText(usage)}${identity}`
-  }
-  const rep = providerRepresentative(accounts, activeTimeoutMin, now)
-  if (rep.noData || !rep.quota || rep.account === null) return `${providerName} — no usage data yet`
-  const multi = accounts.length > 1
-  const identity = accountIdentity(rep.account, privacy)
-  const value = percentText(rep.quota.used!)
-  const word = severityTag(severity(rep.quota.remaining))
-  const reset = resetLabel(rep.quota.resetsAt, now)
-  const observedAt = billingObservedAt(rep.account)
-  const stale = observedAt !== null && now - observedAt > billingStaleAfterMs(snapshot)
-  let line = `${providerName} — ${multi ? `${identity} · ` : ''}${rep.quota.label} ${value} used`
-  if (word) line += `, ${word}`
-  if (reset) line += `, ${reset}`
-  if (multi && rep.dataCount > 1 && rep.runwayPct !== null) {
-    line += ` · ${rep.dataCount} accounts, lowest account usage ${percentText(100 - rep.runwayPct)}`
-  }
-  if (stale) line += ` · ${staleAgeLabel(rep.account, now).toLowerCase()}`
-  return line
-}
-
 let daemon: DaemonController | null = null
 let rpc: DaemonRpcClient | null = null
 let closing = false

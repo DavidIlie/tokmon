@@ -9,7 +9,7 @@ import { Bar, sparkline, truncateName } from './shared'
 import { glyphs } from './glyphs'
 import { redactEmail } from '../config'
 import { planDisplay, normalizePlan, billingStaleLabel } from './provider-card.logic'
-import { percentText, resolveQuotaViews, severity, usageFromHeadroom, type QuotaView } from '../usage-semantics'
+import { billingStatus, percentText, resolveQuotaViews, severity, usageFromHeadroom, type QuotaView } from '../usage-semantics'
 import { resolveAccountTitle } from './app-layout.logic'
 import { aggregateDashboardData, cachedTokenPercentage } from '../dashboard-data'
 import { useTuiTheme } from './theme'
@@ -207,12 +207,14 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
   const showBars = variant !== 'mini'
   const showSpark = variant === 'full'
   const headroom = items.find(item => item.s?.providerHeadroom)?.s?.providerHeadroom
+  const providerError = items.some(item => billingStatus(item.s?.billing) === 'error')
 
   return (
     <Box flexDirection="column" width={width} borderStyle={glyphs().border} borderColor={meta.color} paddingX={1}>
       <Box>
         <Text color={meta.color}>{glyphs().dot} </Text>
         <Text bold color={meta.color}>{meta.name}</Text>
+        {providerError && <Text color={theme.crit}> {glyphs().warn} Error</Text>}
         <Box flexGrow={1} />
         {planView.mode === 'header' && <Text dimColor>{planView.plan}</Text>}
         {planView.mode === 'perRow' && <Text dimColor>{planView.count} accounts</Text>}
@@ -273,7 +275,10 @@ function CompactBilling({ items, privacyMode }: { items: Item[]; privacyMode?: b
   const stats = items.map(item => item.s).find(value => value?.billing)
   const billing = stats?.billing
   if (!billing) return <Text dimColor>Fetching{glyphs().ellipsis}</Text>
-  if (billing.error) return <Text color={theme.crit}>{privacyMode ? redactEmail(billing.error) : billing.error}</Text>
+  if (billing.error) {
+    const waiting = billingStatus(billing) === 'waiting'
+    return <Text color={waiting ? undefined : theme.crit} dimColor={waiting}>{privacyMode ? redactEmail(billing.error) : billing.error}</Text>
+  }
   const quotas = quotaViews(stats)
   const quota = quotas.find(value => value.primary) ?? quotas[0]
   if (!quota) return <Text dimColor>No data</Text>
@@ -366,7 +371,7 @@ function LimitsBlock({ items, inner, showRowPlans, privacyMode, privacyLabels, r
             {!billing ? (
               <Text dimColor>Fetching{glyphs().ellipsis}</Text>
             ) : billing.error ? (
-              <Text color={theme.crit} wrap="truncate-end">{privacyMode ? redactEmail(billing.error) : billing.error}</Text>
+              <Text color={billingStatus(billing) === 'waiting' ? undefined : theme.crit} dimColor={billingStatus(billing) === 'waiting'} wrap="truncate-end">{privacyMode ? redactEmail(billing.error) : billing.error}</Text>
             ) : quotas.length === 0 ? (
               <Text dimColor>No data</Text>
             ) : (

@@ -7,7 +7,7 @@ import { daemonLabel, snapshotUsageTotals, totalsCopy, usageDataStatus } from '.
 
 function updatedLabel(snapshot: WebSnapshot | null, now: number): string {
   if (!snapshot) return 'Waiting…'
-  return `Updated ${formatAgo(snapshot.generatedAt, now)}`
+  return `Tokmon refreshed ${formatAgo(snapshot.generatedAt, now)}`
 }
 
 function SettingsIcon() {
@@ -19,7 +19,7 @@ export function Footer({ snapshot, refreshing, now, appName, appVersion, daemon,
   appName: string; appVersion: string; daemon: DesktopState['daemon']
   onRefresh(): void; onSettings(): void; onDashboard(): void
 }) {
-  const freshness = refreshing ? 'Refreshing…' : updatedLabel(snapshot, now)
+  const freshness = refreshing ? 'Tokmon refreshing…' : updatedLabel(snapshot, now)
   const service = daemonLabel(daemon)
   return (
     <footer className="footer">

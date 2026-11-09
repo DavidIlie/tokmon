@@ -1,4 +1,4 @@
-import type { Metric } from './providers/types'
+import type { BillingResult, Metric } from './providers/types'
 export type MetricRole = 'session' | 'weekly' | 'model' | 'other' | 'unbounded'
 
 export type QuotaValue = {
@@ -209,6 +209,18 @@ export function staleAfterMs(intervalMs: number | null | undefined): number {
   return Math.max(MIN_STALE_AFTER_MS, interval * 2)
 }
 
+export function billingStatus(
+  billing: Pick<BillingResult, 'metrics' | 'error'> | null | undefined,
+  fetchState?: 'pending' | 'ready' | 'error',
+): 'pending' | 'ready' | 'waiting' | 'error' {
+  if (fetchState === 'error') return 'error'
+  if (!billing) return 'pending'
+  if (billing.metrics.length === 0 && billing.error != null) {
+    return billing.error === 'Awaiting fresh quota observations from CLIProxy' ? 'waiting' : 'error'
+  }
+  return 'ready'
+}
+
 /** Registered account title first; privacy mode always becomes a stable provider ordinal. */
 export function deriveAccountIdentity(input: {
   name: string
@@ -362,6 +374,14 @@ function accountHeadroom(account: HeadroomAccountInput): Omit<HeadroomView, 'bas
   }
 }
 
+function quotaPoolKey(quota: Pick<QuotaView, 'role' | 'modelId' | 'label' | 'key'>): string {
+  return quota.role === 'session' || quota.role === 'weekly'
+    ? quota.role
+    : quota.role === 'model'
+      ? `${quota.role}:${quota.modelId ?? quota.label.toLowerCase()}`
+      : `${quota.role}:${quota.key}`
+}
+
 /**
  * Pool equal account capacity per canonical quota before applying the smart
  * Session + active model + Weekly formula. A missing quota is unknown rather
@@ -372,11 +392,7 @@ function cumulativeQuotaViews(accounts: readonly HeadroomAccountInput[]): QuotaV
   for (const account of accounts) {
     for (const quota of account.quotas) {
       if (quota.remainingPct === null) continue
-      const identity = quota.role === 'session' || quota.role === 'weekly'
-        ? quota.role
-        : quota.role === 'model'
-          ? `${quota.role}:${quota.modelId ?? quota.label.toLowerCase()}`
-          : `${quota.role}:${quota.key}`
+      const identity = quotaPoolKey(quota)
       const rows = groups.get(identity) ?? []
       rows.push(quota)
       groups.set(identity, rows)
@@ -404,6 +420,19 @@ function cumulativeQuotaViews(accounts: readonly HeadroomAccountInput[]): QuotaV
       valueText: `${percentText(usedPct)} used`,
     }
     }).sort((a, b) => roleOrder(a.role) - roleOrder(b.role) || a.displayOrder - b.displayOrder || a.key.localeCompare(b.key))
+}
+
+/** Accounts supplying the selected windows, including every reporter in a pooled window. */
+export function headroomContributorIds(accounts: readonly HeadroomAccountInput[], headroom: HeadroomView): string[] {
+  if (headroom.value === null) return []
+  if (headroom.representativeAccountId !== null) return [headroom.representativeAccountId]
+  const included = cumulativeQuotaViews(accounts).filter(quota => headroom.factors.some(factor =>
+    factor.included && factor.key === quota.key && factor.role === quota.role,
+  ))
+  const pools = new Set(included.map(quotaPoolKey))
+  return accounts.filter(account => account.quotas.some(quota =>
+    quota.remainingPct !== null && pools.has(quotaPoolKey(quota)),
+  )).map(account => account.id)
 }
 
 export function deriveProviderHeadroom(accounts: readonly HeadroomAccountInput[], activeTimeoutMin: number, now: number, displayMetric: 'smartHeadroom' | 'tightestRemaining' = 'smartHeadroom'): HeadroomView {

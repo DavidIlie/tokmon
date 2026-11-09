@@ -8,7 +8,7 @@ import type { UsageSummary, TableRow, ModelDetail, DashboardData, TableData } fr
 import { dayKey, monthKey, weekKey, startOfDay, startOfMonth, startOfWeek } from '../tz'
 import { cacheDir } from '../config'
 import { finitePositive, safeNum } from './_shared/metric'
-import { UsageShardStore, type UsageCacheFingerprint } from './storage/usage-shard-store'
+import { UsageShardStore, type UsageCacheFingerprint, type UsageParseResult } from './storage/usage-shard-store'
 
 export { finitePositive, safeNum } from './_shared/metric'
 
@@ -48,7 +48,7 @@ const MAX_LOAD_MEMO = 16
  * with an externally configurable parser/pricing table can supply stable,
  * explicit versions; existing providers get a source-derived default.
  */
-export interface UsageCacheOptions {
+export interface UsageCacheOptions<State = unknown> {
   fingerprint?: Partial<UsageCacheFingerprint>
   /** Primarily useful for isolated embedders; normal providers use cacheDir(). */
   storageDir?: string
@@ -58,6 +58,8 @@ export interface UsageCacheOptions {
    * bytes instead of a full reparse.
    */
   parseRange?: (path: string, start: number, end: number) => Promise<Entry[]>
+  /** Reads [start, end), restoring and returning carry state for stateful logs. */
+  parseResume?: (path: string, start: number, end: number, state?: State) => Promise<UsageParseResult<Entry, State>>
 }
 
 function hash(value: string): string {
@@ -100,11 +102,12 @@ function runningBuildFingerprint(): string {
 
 const RUNNING_BUILD_FINGERPRINT = runningBuildFingerprint()
 
-function fingerprintFor(parse: (path: string) => Promise<Entry[]>, options?: UsageCacheOptions): UsageCacheFingerprint {
+function fingerprintFor<State>(parse: (path: string) => Promise<Entry[]>, options?: UsageCacheOptions<State>): UsageCacheFingerprint {
   // This is deliberately a fingerprint rather than a manually bumped global
   // cache number.  A provider can override either dimension when its parser or
   // pricing data is generated/configured outside this function's source.
-  const sourceVersion = `source-${hash(Function.prototype.toString.call(parse))}`
+  const sourceVersion = `source-${hash([parse, options?.parseRange, options?.parseResume]
+    .filter(fn => fn !== undefined).map(fn => Function.prototype.toString.call(fn)).join('\0'))}`
   return {
     format: options?.fingerprint?.format ?? 'usage-shard-v2',
     parser: options?.fingerprint?.parser ?? `${sourceVersion}.${RUNNING_BUILD_FINGERPRINT}`,
@@ -145,7 +148,7 @@ function decode(value: unknown): Entry[] | null {
   return out
 }
 
-function storeFor(parse: (path: string) => Promise<Entry[]>, options?: UsageCacheOptions): { store: UsageShardStore<Entry>; key: string } {
+function storeFor<State>(parse: (path: string) => Promise<Entry[]>, options?: UsageCacheOptions<State>): { store: UsageShardStore<Entry>; key: string } {
   const dir = options?.storageDir ?? cacheDir()
   const fingerprint = fingerprintFor(parse, options)
   const key = `${dir}\0${fingerprint.format}\0${fingerprint.parser}\0${fingerprint.pricing}`
@@ -309,11 +312,11 @@ async function mapLimit<T>(items: T[], limit: number, fn: (t: T) => Promise<void
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
 }
 
-export async function loadCachedEntries(
+export async function loadCachedEntries<State = unknown>(
   files: SessionFile[],
   parse: (path: string) => Promise<Entry[]>,
   since: number,
-  options?: UsageCacheOptions,
+  options?: UsageCacheOptions<State>,
 ): Promise<Entry[]> {
   const { store, key } = storeFor(parse, options)
   // All-time loads (since 0) run every few minutes and are large; only the
@@ -330,11 +333,14 @@ export async function loadCachedEntries(
     }
   }
   const parseRange = options?.parseRange
+  const parseResume = options?.parseResume
   const chunks: Entry[][] = []
   let settled = true
   await mapLimit(files, 8, async (f) => {
     try {
-      const loaded = parseRange
+      const loaded = parseResume
+        ? await store.loadTracked(f, () => parseResume(f.path, 0, f.size), (from, state) => parseResume(f.path, from, f.size, state))
+        : parseRange
         ? await store.loadTracked(f, () => parseRange(f.path, 0, f.size), from => parseRange(f.path, from, f.size))
         : await store.loadTracked(f, () => parse(f.path))
       if (!loaded.settled) settled = false

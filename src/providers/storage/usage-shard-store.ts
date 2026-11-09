@@ -23,6 +23,14 @@ export interface UsageCacheSource {
   size: number
 }
 
+export interface UsageParseResult<T, State = unknown> {
+  entries: T[]
+  /** JSON-serialisable state at the end offset. Omit to require a full reparse. */
+  state?: State
+}
+
+type ParseResult<T, State> = T[] | UsageParseResult<T, State>
+
 export interface UsageShardStoreOptions<T> {
   dir: string
   fingerprint: UsageCacheFingerprint
@@ -46,6 +54,8 @@ type Cached<T> = {
   persistedAt: number
   /** Bytes just before `source.size`, proving a later, larger file only appended. */
   tailProbe?: string | null
+  /** Parser carry state is deliberately never written to disk. */
+  state?: unknown
 }
 
 export interface UsageLoadResult<T> {
@@ -148,10 +158,10 @@ export class UsageShardStore<T> {
   }
 
   /** Loads an unchanged shard or parses it exactly once among concurrent callers. */
-  async load(
+  async load<State = unknown>(
     source: UsageCacheSource,
-    parse: () => Promise<T[]>,
-    parseTail?: (fromByte: number) => Promise<T[]>,
+    parse: () => Promise<ParseResult<T, State>>,
+    parseTail?: (fromByte: number, state?: State) => Promise<ParseResult<T, State>>,
   ): Promise<T[]> {
     return (await this.loadTracked(source, parse, parseTail)).entries
   }
@@ -161,10 +171,10 @@ export class UsageShardStore<T> {
    * since the cached revision. `parse` must then read exactly `source.size`
    * bytes so the two never overlap.
    */
-  async loadTracked(
+  async loadTracked<State = unknown>(
     source: UsageCacheSource,
-    parse: () => Promise<T[]>,
-    parseTail?: (fromByte: number) => Promise<T[]>,
+    parse: () => Promise<ParseResult<T, State>>,
+    parseTail?: (fromByte: number, state?: State) => Promise<ParseResult<T, State>>,
   ): Promise<UsageLoadResult<T>> {
     const key = this.key(source.path)
     const cached = this.memory.get(key)
@@ -249,12 +259,12 @@ export class UsageShardStore<T> {
     return { shards: this.memory.size, bytes: this.memoryBytes, inFlight: this.inFlight.size }
   }
 
-  private async loadOrParse(
+  private async loadOrParse<State>(
     key: string,
     requestKey: string,
     source: UsageCacheSource,
-    parse: () => Promise<T[]>,
-    parseTail?: (fromByte: number) => Promise<T[]>,
+    parse: () => Promise<ParseResult<T, State>>,
+    parseTail?: (fromByte: number, state?: State) => Promise<ParseResult<T, State>>,
   ): Promise<Cached<T>> {
     await this.ensureDirectory()
     const prior = this.memory.get(key)
@@ -268,15 +278,19 @@ export class UsageShardStore<T> {
     const started = this.now()
     let entries: T[] | null = null
     let bytes: number | null = null
+    let result: ParseResult<T, State>
     if (parseTail && prior?.tailProbe
       && source.size > prior.source.size && source.mtimeMs >= prior.source.mtimeMs
       && await tailProbe(source.path, prior.source.size) === prior.tailProbe) {
-      const appended = await parseTail(prior.source.size)
+      result = await parseTail(prior.source.size, prior.state as State | undefined)
+      const appended = Array.isArray(result) ? result : result.entries
       entries = prior.entries.concat(appended)
       // Sizing only the new rows keeps an append from re-serialising the file's whole history.
       bytes = prior.bytes + this.estimate(appended)
+    } else {
+      result = await parse()
     }
-    entries ??= await parse()
+    entries ??= Array.isArray(result) ? result : result.entries
     const finished = this.now()
     const cached: Cached<T> = {
       source: { ...source },
@@ -286,7 +300,9 @@ export class UsageShardStore<T> {
       parsedAt: finished,
       parseMs: finished - started,
       persistedAt: prior?.persistedAt ?? Number.NEGATIVE_INFINITY,
-      tailProbe: parseTail ? await tailProbe(source.path, source.size) : null,
+      tailProbe: parseTail && (Array.isArray(result) || result.state !== undefined)
+        ? await tailProbe(source.path, source.size) : null,
+      state: Array.isArray(result) ? undefined : result.state,
     }
     // A slower parse of an older file revision must not overwrite the shard or
     // memory entry produced by a newer observation of the same path.

@@ -2,7 +2,7 @@ import { chmod, readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promi
 import { chmodSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join, isAbsolute, resolve } from 'node:path'
 import { homedir } from 'node:os'
-import { DEFAULTS, normalizeConfig, repairConfig, type Config, type Account } from './config-schema'
+import { DEFAULTS, normalizeConfig, repairConfig, type Config } from './config-schema'
 
 export type {
   Config, Account, QuotaSourceConfig, TrayConfig, MenuBarConfig, MenuBarMode, MenuBarDensity,
@@ -194,7 +194,3 @@ export function canonicalizeConfigHomeRefs(config: Config): Config {
   }
 }
 
-export function findAccount(config: Config, id: string | null): Account | null {
-  if (!id) return null
-  return config.accounts.find(a => a.id === id) ?? null
-}

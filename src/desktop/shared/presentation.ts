@@ -4,7 +4,7 @@ import { aggregateDashboardData } from '../../dashboard-data'
 import { formatCurrency, formatTokens, resetParts } from '../../shared/format'
 import type { DesktopState } from './desktop-contract'
 import type { DashboardData } from '../../types'
-import { deriveQuotaView, percentText, resolveQuotaViews, staleAfterMs, type QuotaView } from '../../usage-semantics'
+import { billingStatus, deriveQuotaView, headroomContributorIds, percentText, resolveQuotaViews, staleAfterMs, type HeadroomView, type QuotaView } from '../../usage-semantics'
 
 // ── Severity ─────────────────────────────────────────────────────────────────
 // The availability band + text tag are single-sourced in usage-semantics so the
@@ -320,7 +320,7 @@ export function billingStaleAfterMs(snapshot: WebSnapshot): number {
 }
 
 export function freshness(account: WebAccount, snapshot: WebSnapshot, now: number): Freshness {
-  if (account.billingState === 'error') return 'error'
+  if (billingStatus(account.billing, account.billingState) === 'error') return 'error'
   if (!account.billing || account.billing.metrics.length === 0) return 'nodata'
   const observedAt = billingObservedAt(account)
   if (observedAt !== null && now - observedAt > billingStaleAfterMs(snapshot)) return 'stale'
@@ -329,7 +329,51 @@ export function freshness(account: WebAccount, snapshot: WebSnapshot, now: numbe
 
 export function staleAgeLabel(account: WebAccount, now: number): string {
   const duration = compactDuration((now - (billingObservedAt(account) ?? now)) / 1000)
-  return duration ? `As of ${duration} ago` : 'As of moments ago'
+  return duration ? `Quota observation is ${duration} old` : 'Quota observation is moments old'
+}
+
+export interface ProviderFreshness {
+  state: 'live' | 'stale' | 'partial' | 'nodata'
+  staleCount: number
+  totalCount: number
+  label: string | null
+  title: string | null
+}
+
+export function providerFreshness(
+  accounts: readonly WebAccount[],
+  snapshot: WebSnapshot,
+  now: number,
+  headroom?: HeadroomView,
+  representative: WebAccount | null = null,
+): ProviderFreshness {
+  const contributorIds = headroom
+    ? headroomContributorIds(accounts.map(account => ({
+      id: account.id,
+      lastActivityAt: account.lastActivityAt,
+      quotas: resolveQuotaViews({ quotas: account.quotas, metrics: account.billing?.metrics }),
+    })), headroom)
+    : representative ? [representative.id] : []
+  const contributors = accounts.filter(account => contributorIds.includes(account.id))
+  const stale = contributors.filter(account => {
+    const observedAt = billingObservedAt(account)
+    return observedAt !== null && now - observedAt > billingStaleAfterMs(snapshot)
+  })
+  const totalCount = contributors.length
+  const staleCount = stale.length
+  if (staleCount === 0) return { state: totalCount ? 'live' : 'nodata', staleCount, totalCount, label: null, title: null }
+  const allStale = staleCount === totalCount
+  const oldest = Math.min(...stale.map(account => billingObservedAt(account)!))
+  const age = compactDuration((now - oldest) / 1000) ?? 'moments'
+  return {
+    state: allStale ? 'stale' : 'partial',
+    staleCount,
+    totalCount,
+    label: allStale ? 'Stale' : `${staleCount} of ${totalCount} stale`,
+    title: totalCount === 1
+      ? `Quota observation is ${age} old`
+      : `${staleCount} of ${totalCount} contributing accounts have stale quota observations; oldest observation is ${age} old`,
+  }
 }
 
 // ── Pins (provider-scoped, max 2, ordered = menu-bar order) ───────────────────

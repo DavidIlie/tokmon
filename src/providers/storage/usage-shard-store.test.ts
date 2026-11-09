@@ -254,3 +254,76 @@ test('a slow parser is deferred, then catches up once the log is quiet', async (
     assert.deepEqual(caughtUp.entries, [{ id: 'b', value: 2 }])
   })
 })
+
+test('resumable state stays in memory, advances on appends, and is rebuilt after restart', async () => {
+  await withDir(async dir => {
+    const log = join(dir, 'stateful.jsonl')
+    let now = NOW
+    let cache = store(dir, { now: () => now })
+    const calls: { from: number; previous?: number }[] = []
+    const load = async (mtimeMs: number) => {
+      const size = (await stat(log)).size
+      const parse = async (from = 0, state?: { total: number }) => {
+        calls.push({ from, previous: state?.total })
+        const values = (await readFile(log)).subarray(from, size).toString().trim().split('\n').map(Number)
+        let total = state?.total ?? 0
+        const entries = values.map(value => ({ id: String(value), value: total += value }))
+        return { entries, state: { total } }
+      }
+      return cache.load({ path: log, mtimeMs, size }, () => parse(), parse)
+    }
+    await writeFile(log, '2\n')
+    assert.deepEqual(await load(1), [{ id: '2', value: 2 }])
+    await appendFile(log, '3\n')
+    assert.deepEqual(await load(2), [{ id: '2', value: 2 }, { id: '3', value: 5 }])
+    await appendFile(log, '4\n')
+    assert.deepEqual(await load(3), [{ id: '2', value: 2 }, { id: '3', value: 5 }, { id: '4', value: 9 }])
+    assert.deepEqual(calls, [{ from: 0, previous: undefined }, { from: 2, previous: 2 }, { from: 4, previous: 5 }])
+
+    now += 60_000
+    await load(3)
+    cache = store(dir, { now: () => now })
+    assert.deepEqual(await load(3), [{ id: '2', value: 2 }, { id: '3', value: 5 }, { id: '4', value: 9 }])
+    assert.equal(calls.length, 3)
+    const root = join(dir, 'usage-shards')
+    const namespace = join(root, (await readdir(root))[0])
+    const disk = JSON.parse(await readFile(join(namespace, (await readdir(namespace)).find(name => name.endsWith('.json'))!), 'utf8'))
+    assert.equal('state' in disk, false)
+    await appendFile(log, '5\n')
+    assert.deepEqual(await load(4), [
+      { id: '2', value: 2 }, { id: '3', value: 5 }, { id: '4', value: 9 }, { id: '5', value: 14 },
+    ])
+    assert.deepEqual(calls.at(-1), { from: 0, previous: undefined })
+  })
+})
+
+for (const scenario of ['rewrite', 'shrink', 'backwards mtime', 'partial line', 'missing carry'] as const) {
+  test(`resumable parsing falls back to a full parse after ${scenario}`, async () => {
+    await withDir(async dir => {
+      const cache = store(dir)
+      const log = join(dir, 'unsafe.jsonl')
+      const initial = scenario === 'partial line' ? '10' : '10\n'
+      await writeFile(log, initial)
+      let fullParses = 0
+      let tailParses = 0
+      const load = async (mtimeMs: number) => {
+        const size = (await stat(log)).size
+        return cache.load({ path: log, mtimeMs, size }, async () => {
+          fullParses++
+          return { entries: [{ id: 'full', value: size }], state: scenario === 'missing carry' ? undefined : { size } }
+        }, async () => {
+          tailParses++
+          return { entries: [], state: { size } }
+        })
+      }
+      await load(2)
+      if (scenario === 'rewrite') await writeFile(log, '20\n30\n')
+      else if (scenario === 'shrink') await writeFile(log, '1\n')
+      else await appendFile(log, '\n30\n')
+      const size = (await stat(log)).size
+      assert.deepEqual(await load(scenario === 'backwards mtime' ? 1 : 3), [{ id: 'full', value: size }])
+      assert.equal(fullParses, 2)
+      assert.equal(tailParses, 0)
+    })
+  })
+}
