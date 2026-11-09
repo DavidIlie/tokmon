@@ -46,14 +46,14 @@ jobs:
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: ${{ startsWith(matrix.os, 'macos') || startsWith(matrix.os, 'windows') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.34.4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -208,7 +208,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_TAG }}
       - uses: actions/download-artifact@v4
@@ -257,11 +257,11 @@ jobs:
     env:
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: env.HOMEBREW_TAP_TOKEN != ''
         with:
           ref: ${{ env.RELEASE_TAG }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: env.HOMEBREW_TAP_TOKEN != ''
         with:
           node-version: 24
