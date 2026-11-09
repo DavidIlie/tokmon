@@ -121,9 +121,10 @@ function shortModel(model: string): string {
   return model.replace('claude-', '').replace(/-\d{8}$/, '')
 }
 
-async function parseFile(path: string): Promise<Entry[]> {
+// Each transcript line prices on its own, so a byte range parses independently.
+async function parseFile(path: string, start?: number, end?: number): Promise<Entry[]> {
   const entries: Entry[] = []
-  for await (const obj of readJsonLines(path, line => line.includes('"usage"'))) {
+  for await (const obj of readJsonLines(path, line => line.includes('"usage"'), { start, end })) {
     try {
       if (obj.type !== 'assistant' || !obj.message?.usage) continue
       const ts = timestampMs(obj.timestamp)
@@ -162,7 +163,7 @@ async function parseFile(path: string): Promise<Entry[]> {
 
 async function loadEntries(since: number, homeDir?: string): Promise<Entry[]> {
   const files = await collectSessionFiles(getClaudeDirs(homeDir), path => path.endsWith('.jsonl'), since)
-  return loadCachedEntries(files, parseFile, since)
+  return loadCachedEntries(files, path => parseFile(path), since, { parseRange: parseFile })
 }
 
 export async function claudeDashboard(tz: string, homeDir?: string): Promise<DashboardData> {

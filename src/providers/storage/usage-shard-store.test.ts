@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { appendFile, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -191,5 +191,66 @@ test('prunes stale completed shards in obsolete fingerprint namespaces only', as
     assert.equal((await readdir(oldNamespace)).includes(foreignTemp.split('/').pop()!), true)
     assert.equal((await readdir(oldNamespace)).some(name => name.endsWith('.json')), false)
     assert.equal((await shardFiles(dir)).length, 1)
+  })
+})
+
+test('an appended log costs only its new bytes and loses no rows', async () => {
+  await withDir(async dir => {
+    const log = join(dir, 'session.jsonl')
+    const lines = (from: number, to: number) =>
+      Array.from({ length: to - from }, (_, i) => JSON.stringify({ id: `r${from + i}`, value: from + i }) + '\n').join('')
+    const ranges: [number, number][] = []
+    const parseRange = async (start: number, end: number): Promise<Row[]> => {
+      ranges.push([start, end])
+      const text = (await readFile(log, 'utf8')).slice(start, end)
+      return text.split('\n').filter(Boolean).map(line => JSON.parse(line) as Row)
+    }
+    const load = async (cache: UsageShardStore<Row>, mtimeMs: number) => {
+      const size = (await stat(log)).size
+      return cache.load({ path: log, mtimeMs, size }, () => parseRange(0, size), from => parseRange(from, size))
+    }
+    let now = NOW
+    const cache = store(dir, { now: () => now })
+
+    await writeFile(log, lines(0, 3))
+    const firstSize = (await stat(log)).size
+    assert.deepEqual((await load(cache, 1)).map(row => row.id), ['r0', 'r1', 'r2'])
+
+    await appendFile(log, lines(3, 5))
+    assert.deepEqual((await load(cache, 2)).map(row => row.id), ['r0', 'r1', 'r2', 'r3', 'r4'])
+    assert.deepEqual(ranges.at(-1), [firstSize, (await stat(log)).size])
+
+    // The hot shard is not rewritten on every append, but a quiet poll after
+    // the write interval must leave the newest rows on disk for the next start.
+    now += 60_000
+    await load(cache, 2)
+    const restarted = store(dir, { now: () => now })
+    let reparsed = false
+    const size = (await stat(log)).size
+    const fromDisk = await restarted.load({ path: log, mtimeMs: 2, size }, async () => { reparsed = true; return [] })
+    assert.equal(reparsed, false)
+    assert.equal(fromDisk.length, 5)
+
+    // A rewrite that happens to be larger is not an append: reparse it whole.
+    await writeFile(log, lines(10, 20))
+    const rewritten = await load(cache, 3)
+    assert.deepEqual(ranges.at(-1), [0, (await stat(log)).size])
+    assert.deepEqual(rewritten.map(row => row.id), Array.from({ length: 10 }, (_, i) => `r${10 + i}`))
+  })
+})
+
+test('a slow parser is deferred, then catches up once the log is quiet', async () => {
+  await withDir(async dir => {
+    let now = NOW
+    const cache = store(dir, { now: () => now })
+    const slow = (rows: Row[]) => async () => { now += 1_000; return rows }
+
+    await cache.load(source('/logs/big.jsonl', 1, 100), slow([{ id: 'a', value: 1 }]))
+    const deferred = await cache.loadTracked(source('/logs/big.jsonl', 2, 200), slow([{ id: 'b', value: 2 }]))
+    assert.deepEqual(deferred, { entries: [{ id: 'a', value: 1 }], settled: false })
+
+    now += 60_000
+    const caughtUp = await cache.loadTracked(source('/logs/big.jsonl', 2, 200), slow([{ id: 'b', value: 2 }]))
+    assert.deepEqual(caughtUp.entries, [{ id: 'b', value: 2 }])
   })
 })

@@ -28,8 +28,27 @@ function dayFmt(tz: string): Intl.DateTimeFormat {
   return f
 }
 
+// Every zone in use since 2000 sits a multiple of 15 minutes from UTC, so local
+// midnight always lands on a 15-minute UTC boundary and one such bucket never
+// spans two calendar days. Formatting once per bucket instead of once per usage
+// row is what keeps aggregation off the profile.
+const DAY_KEY_BUCKET_MS = 15 * 60_000
+const DAY_KEY_MEMO_FROM = Date.UTC(2000, 0, 1)
+const DAY_KEY_MEMO_MAX = 50_000
+const dayKeyMemo = new Map<string, Map<number, string>>()
+
 export function dayKey(ts: number, tz: string): string {
-  return dayFmt(tz).format(new Date(ts))
+  if (!(ts >= DAY_KEY_MEMO_FROM)) return dayFmt(tz).format(new Date(ts))
+  let memo = dayKeyMemo.get(tz)
+  if (!memo) { memo = new Map(); dayKeyMemo.set(tz, memo) }
+  const bucket = Math.floor(ts / DAY_KEY_BUCKET_MS)
+  let key = memo.get(bucket)
+  if (key === undefined) {
+    key = dayFmt(tz).format(new Date(ts))
+    if (memo.size >= DAY_KEY_MEMO_MAX) memo.clear()
+    memo.set(bucket, key)
+  }
+  return key
 }
 
 export function monthKey(ts: number, tz: string): string {
@@ -114,5 +133,6 @@ export function startOfWeek(ts: number, tz: string): number {
 }
 
 export function weekKey(ts: number, tz: string): string {
-  return dayKey(startOfWeek(ts, tz), tz)
+  // The Monday of the local calendar day, without a second timezone round trip.
+  return weekStartDayKey(dayKey(ts, tz))
 }

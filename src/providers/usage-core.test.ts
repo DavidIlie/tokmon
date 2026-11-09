@@ -16,7 +16,7 @@ import {
   type Entry,
 } from './usage-core'
 import { isClaudeSessionFile } from './claude/usage'
-import { startOfDay, startOfMonth, startOfWeek } from '../tz'
+import { dayKey, startOfDay, startOfMonth, startOfWeek, weekKey } from '../tz'
 
 // Build a fully populated Entry, overriding only the fields a test cares about.
 // Every numeric field defaults to a distinct value so accidental cross-field
@@ -209,5 +209,31 @@ test('session detection does not follow symlinks back into the tree', async () =
     assert.equal(await hasFileMatching(root, isClaudeSessionFile), true)
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('memoized day and week keys match the formatter in awkward zones and across DST', () => {
+  const formatters = new Map<string, Intl.DateTimeFormat>()
+  const reference = (ts: number, tz: string) => {
+    let formatter = formatters.get(tz)
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
+      formatters.set(tz, formatter)
+    }
+    return formatter.format(new Date(ts))
+  }
+  const zones = ['UTC', 'America/New_York', 'Europe/London', 'Asia/Kathmandu', 'Pacific/Chatham', 'Australia/Lord_Howe', 'Pacific/Kiritimati']
+  const starts = ['2026-03-07T00:00:00Z', '2026-10-24T00:00:00Z', '2026-11-08T00:00:00Z', '2026-12-30T00:00:00Z'].map(Date.parse)
+  for (const tz of zones) {
+    for (const start of starts) {
+      // 7-minute steps over two days land on both sides of every local midnight.
+      for (let ts = start, step = 0; ts < start + 2 * 86_400_000; ts += 7 * 60_000 + 1, step++) {
+        assert.equal(dayKey(ts, tz), reference(ts, tz), `${tz} ${new Date(ts).toISOString()}`)
+        // The week reference costs two formatter round trips, so sample it.
+        if (step % 16 === 0) {
+          assert.equal(weekKey(ts, tz), reference(startOfWeek(ts, tz), tz), `${tz} week of ${new Date(ts).toISOString()}`)
+        }
+      }
+    }
   }
 })

@@ -6,9 +6,23 @@ import { menuBarDisplayBucket, menuBarRenderSignature, menuBarValuesFromSnapshot
 import { disabledUpdateState } from './desktop-updater'
 import { effectiveSystemMode } from './native-theme'
 
+/**
+ * While the popover is closed nobody is looking at it, yet every state push
+ * still costs a structured clone and a full React render in its renderer. Live
+ * usage moves the snapshot every couple of seconds, so closed-popover snapshot
+ * pushes are coalesced to this cadence; the menu-bar strip, which the renderer
+ * paints, lags by at most as much.
+ */
+export const HIDDEN_SNAPSHOT_PUSH_MS = 10_000
+
 export class DesktopStateStore {
   private readonly targets = new Set<WebContents>()
   private value: DesktopState
+  /** What the renderer last received; its paints are validated against this. */
+  private sent: DesktopState
+  private visible = false
+  private lastPushAt = Number.NEGATIVE_INFINITY
+  private pendingPush: ReturnType<typeof setTimeout> | null = null
 
   constructor(appName = 'Tokmon', appVersion = '0.0.0', daemon: DesktopState['daemon'] = null, displayWidthPt = 1440) {
     this.value = {
@@ -27,9 +41,19 @@ export class DesktopStateStore {
       activeAccountIds: [],
       error: null,
     }
+    this.sent = this.value
   }
 
   get(): DesktopState { return this.value }
+
+  /** The state the renderer is currently drawing from. */
+  delivered(): DesktopState { return this.sent }
+
+  /** Opening the popover delivers anything held back while it was closed. */
+  setVisible(visible: boolean): void {
+    this.visible = visible
+    if (visible && this.sent !== this.value) this.push()
+  }
 
   addTarget(contents: WebContents): () => void {
     this.targets.add(contents)
@@ -42,11 +66,35 @@ export class DesktopStateStore {
     // the IPC boundary into the always-alive renderer. Presentation repaints
     // call update() with values that are usually unchanged; skip those sends.
     if (!this.patchChangesValue(patch)) return this.value
+    const deferrable = !this.visible && this.onlyUsageChanged(patch)
     this.value = { ...this.value, ...patch }
+    const wait = this.lastPushAt + HIDDEN_SNAPSHOT_PUSH_MS - Date.now()
+    if (!deferrable || wait <= 0) {
+      this.push()
+    } else if (!this.pendingPush) {
+      this.pendingPush = setTimeout(() => this.push(), wait)
+    }
+    return this.value
+  }
+
+  private push(): void {
+    if (this.pendingPush) clearTimeout(this.pendingPush)
+    this.pendingPush = null
+    this.lastPushAt = Date.now()
+    this.sent = this.value
     for (const target of this.targets) {
       if (!target.isDestroyed()) target.send(DESKTOP_CHANNELS.state, this.value)
     }
-    return this.value
+  }
+
+  /** True when the patch moves nothing but live usage; anything else is delivered at once. */
+  private onlyUsageChanged(patch: Partial<DesktopState>): boolean {
+    for (const key of Object.keys(patch) as (keyof DesktopState)[]) {
+      if (key === 'snapshot' || key === 'activeAccountIds') continue
+      if (patch[key] !== this.value[key]) return false
+    }
+    // The first snapshot ends the loading state and must not wait.
+    return this.value.snapshot !== null
   }
 
   private patchChangesValue(patch: Partial<DesktopState>): boolean {

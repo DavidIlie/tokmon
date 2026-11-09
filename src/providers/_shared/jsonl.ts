@@ -8,9 +8,14 @@ export function stripBom(value: string): string {
 export async function* readJsonLines<T = any>(
   path: string,
   predicate?: (line: string) => boolean,
-  options?: { ignoreReadErrors?: boolean },
+  options?: { ignoreReadErrors?: boolean; start?: number; end?: number },
 ): AsyncGenerator<T> {
-  const input = createReadStream(path)
+  // `end` is exclusive here; createReadStream's is inclusive.
+  if (options?.end !== undefined && options.end <= (options.start ?? 0)) return
+  const input = createReadStream(path, {
+    ...(options?.start !== undefined ? { start: options.start } : {}),
+    ...(options?.end !== undefined ? { end: options.end - 1 } : {}),
+  })
   input.on('error', () => {})
   const rl = createInterface({ input, crlfDelay: Infinity })
   try {

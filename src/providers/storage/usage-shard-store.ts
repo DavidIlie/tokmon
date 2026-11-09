@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, readdir, rename, rmdir, unlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, open, readFile, readdir, rename, rmdir, unlink, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
@@ -39,6 +39,22 @@ type Cached<T> = {
   entries: T[]
   bytes: number
   persisted: boolean
+  /** When this revision was parsed or read, and what producing it cost. */
+  parsedAt: number
+  parseMs: number
+  /** Last successful shard write for this path (-Infinity: never), carried across revisions. */
+  persistedAt: number
+  /** Bytes just before `source.size`, proving a later, larger file only appended. */
+  tailProbe?: string | null
+}
+
+export interface UsageLoadResult<T> {
+  entries: T[]
+  /**
+   * False while a newer revision is deferred or still unwritten. Callers that
+   * memoize across refreshes must not pin an unsettled result.
+   */
+  settled: boolean
 }
 
 type DiskShard = {
@@ -52,6 +68,35 @@ const DEFAULT_MAX_MEMORY_BYTES = 48 * 1024 * 1024
 const DEFAULT_MAX_MEMORY_SHARDS = 192
 const DEFAULT_STALE_AFTER_MS = 230 * 86_400_000
 const PRUNE_INTERVAL_MS = 60 * 60_000
+// A log that is being appended changes on every poll. Reparsing it may spend at
+// most 1/REPARSE_DUTY of wall time, so a slow parse backs itself off instead of
+// pinning a core; cheap parses (under the floor) are never deferred.
+const REPARSE_DUTY = 20
+const REPARSE_DEFER_FLOOR_MS = 25
+const REPARSE_DEFER_MAX_MS = 30_000
+// The shard for a hot log is rewritten at most this often; the parsed rows stay
+// in memory meanwhile, and the next quiet poll writes the final revision.
+const PERSIST_MIN_INTERVAL_MS = 15_000
+const TAIL_PROBE_BYTES = 64
+
+/** The bytes ending at `end`, or null unless they close a complete line. */
+async function tailProbe(path: string, end: number): Promise<string | null> {
+  if (end <= 0) return null
+  const length = Math.min(TAIL_PROBE_BYTES, end)
+  try {
+    const handle = await open(path, 'r')
+    try {
+      const buffer = Buffer.alloc(length)
+      const { bytesRead } = await handle.read(buffer, 0, length, end - length)
+      if (bytesRead !== length || buffer[length - 1] !== 0x0a) return null
+      return buffer.toString('base64')
+    } finally {
+      await handle.close()
+    }
+  } catch {
+    return null
+  }
+}
 
 function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex')
@@ -103,30 +148,55 @@ export class UsageShardStore<T> {
   }
 
   /** Loads an unchanged shard or parses it exactly once among concurrent callers. */
-  async load(source: UsageCacheSource, parse: () => Promise<T[]>): Promise<T[]> {
+  async load(
+    source: UsageCacheSource,
+    parse: () => Promise<T[]>,
+    parseTail?: (fromByte: number) => Promise<T[]>,
+  ): Promise<T[]> {
+    return (await this.loadTracked(source, parse, parseTail)).entries
+  }
+
+  /**
+   * `parseTail`, when the log format allows it, parses only the bytes appended
+   * since the cached revision. `parse` must then read exactly `source.size`
+   * bytes so the two never overlap.
+   */
+  async loadTracked(
+    source: UsageCacheSource,
+    parse: () => Promise<T[]>,
+    parseTail?: (fromByte: number) => Promise<T[]>,
+  ): Promise<UsageLoadResult<T>> {
     const key = this.key(source.path)
     const cached = this.memory.get(key)
     if (cached && sameSource(cached.source, source)) {
       this.touch(key, cached)
-      if (!cached.persisted) await this.persist(key, cached)
-      return cached.entries
+      if (!cached.persisted && this.now() - cached.persistedAt >= PERSIST_MIN_INTERVAL_MS) {
+        await this.persist(key, cached)
+      }
+      return { entries: cached.entries, settled: cached.persisted }
+    }
+    if (cached && cached.parseMs >= REPARSE_DEFER_FLOOR_MS
+      && this.now() - cached.parsedAt < Math.min(REPARSE_DEFER_MAX_MS, cached.parseMs * REPARSE_DUTY)) {
+      this.touch(key, cached)
+      return { entries: cached.entries, settled: false }
     }
 
     // A path can be appended while a dashboard refresh is parsing it.  Only
-    // coalesce work for the exact source revision, never return old entries to
-    // a caller that observed newer metadata.
+    // coalesce work for the exact source revision; a caller that observed newer
+    // metadata gets older entries only through the bounded deferral above.
     const flightKey = `${key}\0${source.mtimeMs}\0${source.size}`
     this.latestRequest.set(key, flightKey)
     let pending = this.inFlight.get(flightKey)
     if (!pending) {
-      pending = this.loadOrParse(key, flightKey, source, parse)
+      pending = this.loadOrParse(key, flightKey, source, parse, parseTail)
       this.inFlight.set(flightKey, pending)
       void pending.finally(() => {
         this.inFlight.delete(flightKey)
         if (this.latestRequest.get(key) === flightKey) this.latestRequest.delete(key)
       }).catch(() => {})
     }
-    return (await pending).entries
+    const loaded = await pending
+    return { entries: loaded.entries, settled: loaded.persisted }
   }
 
   /** Waits for incremental writes; retained for the existing daemon shutdown hook. */
@@ -184,20 +254,45 @@ export class UsageShardStore<T> {
     requestKey: string,
     source: UsageCacheSource,
     parse: () => Promise<T[]>,
+    parseTail?: (fromByte: number) => Promise<T[]>,
   ): Promise<Cached<T>> {
     await this.ensureDirectory()
-    const onDisk = await this.read(key, source)
+    const prior = this.memory.get(key)
+    // With an older revision in memory the shard on disk is that revision or an
+    // earlier one, so reading it back could only miss.
+    const onDisk = prior ? null : await this.read(key, source)
     if (onDisk) {
       return this.latestRequest.get(key) === requestKey ? this.remember(key, onDisk) : onDisk
     }
 
-    const entries = await parse()
-    const cached: Cached<T> = { source: { ...source }, entries, bytes: this.estimate(entries), persisted: false }
+    const started = this.now()
+    let entries: T[] | null = null
+    let bytes: number | null = null
+    if (parseTail && prior?.tailProbe
+      && source.size > prior.source.size && source.mtimeMs >= prior.source.mtimeMs
+      && await tailProbe(source.path, prior.source.size) === prior.tailProbe) {
+      const appended = await parseTail(prior.source.size)
+      entries = prior.entries.concat(appended)
+      // Sizing only the new rows keeps an append from re-serialising the file's whole history.
+      bytes = prior.bytes + this.estimate(appended)
+    }
+    entries ??= await parse()
+    const finished = this.now()
+    const cached: Cached<T> = {
+      source: { ...source },
+      entries,
+      bytes: bytes ?? this.estimate(entries),
+      persisted: false,
+      parsedAt: finished,
+      parseMs: finished - started,
+      persistedAt: prior?.persistedAt ?? Number.NEGATIVE_INFINITY,
+      tailProbe: parseTail ? await tailProbe(source.path, source.size) : null,
+    }
     // A slower parse of an older file revision must not overwrite the shard or
     // memory entry produced by a newer observation of the same path.
     if (this.latestRequest.get(key) !== requestKey) return cached
     this.remember(key, cached)
-    await this.persist(key, cached)
+    if (finished - cached.persistedAt >= PERSIST_MIN_INTERVAL_MS) await this.persist(key, cached)
     void this.prune().catch(() => {})
     return cached
   }
@@ -210,14 +305,21 @@ export class UsageShardStore<T> {
         || !sameSource(raw.source, source)) return null
       const entries = this.options.decode(raw.entries)
       if (!entries) return null
-      return { source: { ...source }, entries, bytes: this.estimate(entries), persisted: true }
+      const now = this.now()
+      return {
+        source: { ...source }, entries, bytes: this.estimate(entries),
+        persisted: true, parsedAt: now, parseMs: 0, persistedAt: now,
+      }
     } catch {
       return null
     }
   }
 
   private async persist(key: string, cached: Cached<T>): Promise<void> {
-    const write = this.write(key, cached).then(() => { cached.persisted = true }).catch(() => {
+    const write = this.write(key, cached).then(() => {
+      cached.persisted = true
+      cached.persistedAt = this.now()
+    }).catch(() => {
       // Keep serving the parsed entries.  A later cache hit retries persistence.
       cached.persisted = false
     })
