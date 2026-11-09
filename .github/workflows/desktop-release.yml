@@ -244,3 +244,38 @@ jobs:
       packages: write
     uses: ./.github/workflows/publish.yml
     secrets: inherit
+
+  # The tap describes artifacts by checksum, so it can only follow a release
+  # whose installers and npm package are already public. Skipped until the tap
+  # token exists; see docs/releasing.md.
+  homebrew:
+    if: github.event_name == 'push'
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@v4
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        with:
+          node-version: 24
+      - name: Update the Homebrew tap
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        run: |
+          git clone --depth 1 "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/DavidIlie/homebrew-tap.git" tap
+          node scripts/render-homebrew.mjs --version "${RELEASE_TAG#v}" --tap tap
+          cd tap
+          git add Casks/tokmon.rb Formula/tokmon-cli.rb
+          if git diff --cached --quiet; then
+            echo "Tap already describes ${RELEASE_TAG}."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "tokmon ${RELEASE_TAG#v}"
+          git push origin HEAD
