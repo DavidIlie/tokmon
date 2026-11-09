@@ -132,7 +132,17 @@ export function startOfWeek(ts: number, tz: string): number {
   return instantFromTz(p.y, p.m, p.d - offset, 0, 0, 0, tz)
 }
 
+const weekKeyMemo = new Map<string, string>()
+
 export function weekKey(ts: number, tz: string): string {
   // The Monday of the local calendar day, without a second timezone round trip.
-  return weekStartDayKey(dayKey(ts, tz))
+  // History has a few hundred distinct days and millions of rows.
+  const day = dayKey(ts, tz)
+  let week = weekKeyMemo.get(day)
+  if (week === undefined) {
+    week = weekStartDayKey(day)
+    if (weekKeyMemo.size >= 4096) weekKeyMemo.clear()
+    weekKeyMemo.set(day, week)
+  }
+  return week
 }

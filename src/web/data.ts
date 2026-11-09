@@ -9,6 +9,7 @@ import type {
   WebSnapshot, WebAccount, WebProviderInfo, AccountFetchState, PeakStatus,
 } from './contract'
 import { deriveAccountIdentity, deriveProviderHeadroom, deriveQuotaViews } from '../usage-semantics'
+import { collectSummary, collectTable } from './usage-runner'
 
 export interface ResolvedAccount {
   account: Account
@@ -44,14 +45,14 @@ export async function fetchAccountSummary(account: Account, tz: string): Promise
   if (account.quotaSource?.kind === 'cliproxy') return null
   const p = PROVIDERS[account.providerId]
   if (!p.fetchSummary) return null
-  return p.fetchSummary(account, tz)
+  return collectSummary(account, tz)
 }
 
 export async function fetchAccountTable(account: Account, tz: string): Promise<TableData | null> {
   if (account.quotaSource?.kind === 'cliproxy') return null
   const p = PROVIDERS[account.providerId]
   if (!p.fetchTable) return null
-  return p.fetchTable(account, tz)
+  return collectTable(account, tz)
 }
 
 export async function fetchAccountBilling(account: Account, tz: string): Promise<BillingResult | null> {

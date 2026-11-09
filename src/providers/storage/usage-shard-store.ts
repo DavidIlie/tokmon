@@ -299,7 +299,8 @@ export class UsageShardStore<T> {
 
   private async read(key: string, source: UsageCacheSource): Promise<Cached<T> | null> {
     try {
-      const raw = JSON.parse(await readFile(this.file(key), 'utf8')) as DiskShard
+      const text = await readFile(this.file(key), 'utf8')
+      const raw = JSON.parse(text) as DiskShard
       if (!raw || raw.format !== 'tokmon.usage-shard/v1'
         || !sameFingerprint(raw.fingerprint, this.options.fingerprint)
         || !sameSource(raw.source, source)) return null
@@ -307,7 +308,9 @@ export class UsageShardStore<T> {
       if (!entries) return null
       const now = this.now()
       return {
-        source: { ...source }, entries, bytes: this.estimate(entries),
+        // The shard's own length is the size estimate; re-encoding the rows
+        // just to measure them doubled the cost of every cold load.
+        source: { ...source }, entries, bytes: text.length,
         persisted: true, parsedAt: now, parseMs: 0, persistedAt: now,
       }
     } catch {

@@ -14,7 +14,7 @@ import type { Config, DetectedAccountRef } from '../config-schema'
 import { MIN_STALE_AFTER_MS } from '../usage-semantics'
 import { createRefreshQueue, settleRefreshTasks, type RefreshQueue } from './refresh-queue'
 import { decodeWebSnapshot } from './snapshot-schema'
-import { invalidateSessionScans } from '../providers/usage-core'
+import { invalidateUsageScans } from './usage-runner'
 
 const TABLE_INTERVAL_MS = 300_000
 const PEAK_INTERVAL_MS = 300_000
@@ -450,7 +450,7 @@ export function createDataEngine(opts: DataEngineOptions): DataEngine {
       // An explicit refresh always answers with a snapshot, changed or not, and
       // looks at every log again rather than only the recently written ones.
       lastPublish = 0
-      invalidateSessionScans()
+      invalidateUsageScans()
       const tasks: Promise<void>[] = []
       if (scope === 'all' || scope === 'summary') tasks.push(refreshSummary.run(true))
       if (scope === 'all' || scope === 'table') tasks.push(refreshTable.run(true))
