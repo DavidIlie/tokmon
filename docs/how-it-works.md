@@ -31,6 +31,18 @@ Local usage readers aggregate per day, account, provider, and model. File-backed
 sources use modification time and size fingerprints so unchanged sessions are
 not parsed again. Edited and deleted sources invalidate their cached shards.
 
+Appended logs are read from where the last parse stopped, where the format
+allows it (Claude transcripts). The full directory tree is walked every 15
+seconds; between walks only recently written files are checked. All of this
+runs on a worker thread, so a long history never blocks the daemon's event loop
+or, in the desktop app, the menu bar.
+
+A poll that finds nothing new publishes no snapshot; clients get a heartbeat
+every 30 seconds instead. After a minute without new usage the daemon polls
+every 10 seconds, and returns to the configured interval on the first change.
+While the desktop popover is closed it receives at most one update every 10
+seconds.
+
 Usage and billing have separate refresh schedules. Opening another client reuses
 fresh billing data; it does not force another provider API call.
 
