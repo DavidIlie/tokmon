@@ -9,6 +9,13 @@ const SNAPSHOT_TTL_MS = 60_000
 // Accounts on one server and key are read one after another. Without a shared
 // failure, a server that is down gets a request (and a retry) per account.
 const FAILURE_COOLDOWN_MS = 30_000
+// CLIProxy observes quota passively, so a dropped request (wake from sleep, a
+// proxy restart, a slow network) says nothing about the accounts behind it.
+// Replacing every account's metrics with an error blanked the pooled headroom
+// and the menu-bar number until the next billing pass. The last reading is
+// served instead, with its real observation time, so it ages into "Stale".
+const lastReadings = new Map<string, { windows: unknown[]; observedAt: number }>()
+const LAST_READING_MAX_AGE_MS = 24 * 3_600_000
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
@@ -83,7 +90,18 @@ export async function cliProxyBilling(account: Account): Promise<BillingResult> 
       )
       if (snapshotFlights.size > 16) snapshotFlights.delete(snapshotFlights.keys().next().value!)
     }
-    const snapshot = record((await flight.promise).find(value => {
+    const readingKey = `${url.href}:${source.credentialId}`
+    let rows: unknown[]
+    try {
+      rows = await flight.promise
+    } catch (error) {
+      const last = lastReadings.get(readingKey)
+      const metrics = last && Date.now() - last.observedAt < LAST_READING_MAX_AGE_MS ? cliProxyMetrics(last.windows) : []
+      if (!last || metrics.length === 0) throw error
+      // error stays null: surfaces render an error in place of metrics.
+      return { plan: 'CLIProxy', metrics, error: null, displayName: account.name, asOfMs: last.observedAt }
+    }
+    const snapshot = record(rows.find(value => {
       const row = record(value)
       return row.auth_id === source.credentialId || row.auth_index === source.credentialId
     }))
@@ -91,7 +109,12 @@ export async function cliProxyBilling(account: Account): Promise<BillingResult> 
     if (snapshot.provider !== account.providerId) throw new Error('CLIProxy account provider does not match')
     const observedAt = typeof snapshot.observed_at === 'string' ? Date.parse(snapshot.observed_at) : NaN
     if (!Number.isFinite(observedAt)) throw new Error('CLIProxy quota observation time is missing')
-    const metrics = cliProxyMetrics(Array.isArray(snapshot.windows) ? snapshot.windows : [])
+    const windows = Array.isArray(snapshot.windows) ? snapshot.windows : []
+    const metrics = cliProxyMetrics(windows)
+    if (metrics.length) {
+      lastReadings.set(readingKey, { windows, observedAt })
+      if (lastReadings.size > 64) lastReadings.delete(lastReadings.keys().next().value!)
+    }
     return {
       plan: 'CLIProxy', metrics,
       error: metrics.length ? null : 'Awaiting fresh quota observations from CLIProxy',

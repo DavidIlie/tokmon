@@ -458,28 +458,29 @@ async function bootstrap(): Promise<void> {
       applyLaunchAtLogin(config.tray.launchAtLogin)
     },
     onTrayStrip: payload => {
-      if (process.platform !== 'darwin') return
+      if (process.platform !== 'darwin') return true
       // The renderer painted from the state it was last sent, which trails
       // state.get() while closed-popover snapshot pushes are coalesced.
       const current = state.delivered()
       const pinSignature = current.snapshot && current.config
         ? resolveProviderPins(current.config, current.snapshot).join(String.fromCharCode(0))
         : ''
-      if (!trayStripPayloadMatchesState(payload, current, pinSignature)) return
+      if (!trayStripPayloadMatchesState(payload, current, pinSignature)) return false
       const decode = (dataUrl: string) => Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64')
       // Both representations so non-Retina externals get a crisp 1× rather than a downscale.
       const image = nativeImage.createEmpty()
       image.addRepresentation({ scaleFactor: 1, buffer: decode(payload.dataUrl1x) })
       image.addRepresentation({ scaleFactor: 2, buffer: decode(payload.dataUrl2x) })
-      if (image.isEmpty()) return
+      if (image.isEmpty()) return false
       // Sanity-check the 2× bitmap against the declared logical width; reject a mismatch.
       const size = image.getSize()
-      if (size.width === 0 || Math.abs(size.width - payload.logicalWidth) > 2) return
+      if (size.width === 0 || Math.abs(size.width - payload.logicalWidth) > 2) return false
       image.setTemplateImage(true)
       tray.setImage(image)
       lastFallbackIcon = null
       setTitle('')
       trayStrip.accept()
+      return true
     },
   })
 

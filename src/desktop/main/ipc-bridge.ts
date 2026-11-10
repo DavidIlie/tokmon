@@ -27,7 +27,8 @@ export interface DesktopIpcOptions {
   setPopoverHeight(height: number): void
   onConfig?(config: Config): void
   /** Consume the renderer-painted menu-bar strip (macOS). Absent → strip is ignored. */
-  onTrayStrip?(payload: TrayStripPayload): void
+  /** True when the pixels were applied; false when superseded or invalid. */
+  onTrayStrip?(payload: TrayStripPayload): boolean
 }
 
 export function registerDesktopIpc(opts: DesktopIpcOptions): () => void {
@@ -100,7 +101,7 @@ export function registerDesktopIpc(opts: DesktopIpcOptions): () => void {
     if (!isTrayStripPayload(payload)) {
       throw new Error('invalid tray strip payload')
     }
-    opts.onTrayStrip?.(payload)
+    return opts.onTrayStrip?.(payload) ?? false
   })
   ipcMain.handle(DESKTOP_CHANNELS.setPopoverHeight, (event, height: unknown) => {
     assertSender(event)
