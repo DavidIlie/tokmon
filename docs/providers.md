@@ -107,8 +107,14 @@ share. The ordinary custom URL mode remains available for pooled key quotas.
 The daemon shares one quota request across accounts on the same server and key
 file for 60 seconds, and a failed request for 30. It uses CLIProxy's observation timestamps, omits expired
 windows, and does not refresh upstream credentials or consume saved resets.
-Remote accounts contain quota only. Local accounts continue to own session
-history, token counts, and cost estimates.
+Remote accounts contain quota only. Traffic routed through CLIProxy still
+writes this machine's session logs, so Tokmon also reads the logs in the home
+directory the CLIProxy accounts name and shows their spend, tokens, burn rate
+and history in the provider's totals. That source has no quota row of its own,
+and removing the local account does not turn it off. CLIProxy picks which
+subscription serves each request, so this spend is provider-wide rather than
+split per subscription. When a local account already reads the same home, it
+owns those logs and nothing is counted twice.
 
 Private HTTPS servers and split DNS are supported for this explicitly configured
 source. DNS results are pinned per request; redirects, link-local metadata

@@ -33,6 +33,8 @@ export interface TrackedAccountCandidate {
   homeDir?: string | null
   color?: string | null
   source?: 'auto' | 'configured'
+  /** Local-log usage source riding on CLIProxy accounts; never a settings row. */
+  usageOnly?: boolean
 }
 
 export function getTrackedAccountRows(
@@ -86,6 +88,7 @@ export function getTrackedAccountRows(
 
   if (autoAccounts) {
     for (const account of autoAccounts) {
+      if (account.usageOnly) continue
       if (!detectionEnabled || detectorDisabled.has(account.providerId)) continue
       if (config.disabledProviders.includes(account.providerId)) continue
       const key = keyFor(account.providerId, account.homeDir)

@@ -121,6 +121,7 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
         color: account.color,
         homeDir: account.homeDir ?? undefined,
         source: account.source,
+        ...(account.usageOnly ? { usageOnly: true } : {}),
       }))
     : buildAccounts(cfg, detectedAccountProviders), [cfg, connected, detectedAccountProviders, snapshot])
   const trackedAccountRows = useMemo(
@@ -248,17 +249,20 @@ export function App({ interval: cliInterval, initialConfig, baseUrl = null, mode
   }), [accounts, cfg.privacyMode, connected, snapshot, trackedAccountRows])
 
   const slots: Slot[] = useMemo(
-    () => deriveSlots(accounts, cfg.privacyMode, privacyLabels),
+    () => deriveSlots(accounts.filter(account => !account.usageOnly), cfg.privacyMode, privacyLabels),
     [accounts, cfg.privacyMode, privacyLabels],
   )
   const { activeSlotIdx, focusId } = useMemo(
     () => findActiveSlot(slots, cfg.activeAccountId),
     [slots, cfg.activeAccountId],
   )
-  const visibleAccounts = useMemo(
-    () => focusId === null ? accounts : accounts.filter(a => a.id === focusId),
-    [accounts, focusId],
-  )
+  // A focused account keeps its provider's usage-only local logs: they are the
+  // only spend source a CLIProxy account has.
+  const visibleAccounts = useMemo(() => {
+    if (focusId === null) return accounts
+    const focused = accounts.find(a => a.id === focusId)
+    return accounts.filter(a => a.id === focusId || (a.usageOnly && a.providerId === focused?.providerId))
+  }, [accounts, focusId])
   const groups = useMemo(
     () => focusId === null ? allGroups : accountsByProvider(visibleAccounts),
     [allGroups, visibleAccounts, focusId],

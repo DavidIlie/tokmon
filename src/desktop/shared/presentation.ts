@@ -260,7 +260,10 @@ export function planLabel(plan: string | null | undefined): string {
 export interface ProviderGroup {
   providerId: string
   name: string
+  /** Quota-owning accounts, one row each. */
   accounts: WebAccount[]
+  /** Every account feeding the provider's spend and token totals, including usage-only local logs. */
+  usageAccounts: WebAccount[]
   /** The single shared plan when every account agrees, else null (plan drops to rows). */
   sharedPlan: string | null
 }
@@ -284,12 +287,14 @@ export function groupByProvider(snapshot: WebSnapshot): ProviderGroup[] {
   return [...buckets.keys()]
     .sort((a, b) => order(a) - order(b) || a.localeCompare(b))
     .map(providerId => {
-      const accounts = buckets.get(providerId)!
+      const usageAccounts = buckets.get(providerId)!
+      const accounts = usageAccounts.filter(account => !account.usageOnly)
       const plans = new Set(accounts.map(account => planLabel(account.plan)).filter(Boolean))
       return {
         providerId,
         name: nameOf.get(providerId as never) ?? PROVIDER_META[providerId as keyof typeof PROVIDER_META]?.name ?? providerId,
         accounts,
+        usageAccounts,
         sharedPlan: plans.size === 1 ? [...plans][0]! : null,
       }
     })
