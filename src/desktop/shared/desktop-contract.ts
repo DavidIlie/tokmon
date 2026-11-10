@@ -136,6 +136,7 @@ export interface DesktopApi {
   installUpdate(): Promise<boolean>
   setPopoverHeight(height: number): Promise<void>
   /** Push the composed menu-bar strip (macOS). No-op on platforms without `setTitle`. */
-  sendTrayStrip(payload: TrayStripPayload): Promise<void>
+  /** Resolves false when main rejected the paint as superseded; the renderer must repaint. */
+  sendTrayStrip(payload: TrayStripPayload): Promise<boolean>
   quit(): Promise<void>
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { Config, MenuBarConfig, WebSnapshot } from '../../web/contract'
 import type { DesktopUpdateState } from '../shared/desktop-contract'
 import {
@@ -175,6 +175,11 @@ export function TrayStripPainter({ snapshot, config, pins, platform, update, dis
   const canvas2x = useRef<HTMLCanvasElement>(null)
   const valueMemory = useRef<Map<string, RetainedMenuBarValue>>(new Map())
   const lastPaintKey = useRef<string | null>(null)
+  // Main rejects a paint when newer state reached it first. That newer state
+  // can arrive here before the rejection does, so the skip-unchanged check
+  // would otherwise keep the menu bar on old pixels until values moved again.
+  const [repaint, setRepaint] = useState(0)
+  const rejectedInARow = useRef(0)
   const menuBarDependency = JSON.stringify(config.tray.menuBar)
   const effectiveDisplayWidth = displayWidthPt ?? window.screen.availWidth
   useEffect(() => {
@@ -226,13 +231,24 @@ export function TrayStripPainter({ snapshot, config, pins, platform, update, dis
           updateReady,
           updateStatus: update.status,
         }),
+      }).then(accepted => {
+        if (accepted) {
+          rejectedInARow.current = 0
+          return
+        }
+        if (lastPaintKey.current === paintKey) lastPaintKey.current = null
+        // Bounded: a paint main can never accept must not become a paint loop.
+        rejectedInARow.current += 1
+        if (rejectedInARow.current <= 2) setRepaint(value => value + 1)
+      }, () => {
+        if (lastPaintKey.current === paintKey) lastPaintKey.current = null
       })
     } catch {
       // The main process retains its procedural fallback icon.
     }
   }, [
     snapshot, pins, platform, config.revision, config.tray.activeTimeoutMin,
-    config.tray.menuBarValue, menuBarDependency, update.status, effectiveDisplayWidth,
+    config.tray.menuBarValue, menuBarDependency, update.status, effectiveDisplayWidth, repaint,
   ])
   return (
     <>

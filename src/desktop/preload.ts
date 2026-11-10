@@ -30,7 +30,7 @@ const api: DesktopApi = {
   checkForUpdates: () => ipcRenderer.invoke(DESKTOP_CHANNELS.checkForUpdates) as Promise<void>,
   installUpdate: () => ipcRenderer.invoke(DESKTOP_CHANNELS.installUpdate) as Promise<boolean>,
   setPopoverHeight: (height: number) => ipcRenderer.invoke(DESKTOP_CHANNELS.setPopoverHeight, height) as Promise<void>,
-  sendTrayStrip: (payload: TrayStripPayload) => ipcRenderer.invoke(DESKTOP_CHANNELS.trayStrip, payload) as Promise<void>,
+  sendTrayStrip: (payload: TrayStripPayload) => ipcRenderer.invoke(DESKTOP_CHANNELS.trayStrip, payload) as Promise<boolean>,
   quit: () => ipcRenderer.invoke(DESKTOP_CHANNELS.quit) as Promise<void>,
 }
 
