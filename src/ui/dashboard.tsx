@@ -59,8 +59,9 @@ export function estimateCardHeights(
     if (meta.hasUsage) h += 5 // spacer + 3 summary rows + kpi line
     if (meta.hasBilling) {
       if (meta.hasUsage) h += 1 // rule
-      const multi = g.accounts.length > 1
-      g.accounts.forEach((a, i) => {
+      const quotaAccounts = g.accounts.filter(a => !a.usageOnly)
+      const multi = quotaAccounts.length > 1
+      quotaAccounts.forEach((a, i) => {
         const s = stats.get(a.id)
         const staleRow = s?.billing && !s.billing.error && quotaViews(s).length > 0
           && billingStaleLabel(s.billing.asOfMs ?? s.billingUpdatedAt, Date.now(), billingIntervalMs) ? 1 : 0
@@ -198,8 +199,9 @@ function ProviderCard({ provider, accounts, stats, width, variant, privacyMode =
 }) {
   const theme = useTuiTheme()
   const meta = PROVIDERS[provider]
-  const items: Item[] = accounts.map(a => ({ account: a, s: stats.get(a.id) }))
-  const agg = meta.hasUsage ? aggregateDashboardData(items.map(i => i.s?.dashboard)) : null
+  // Usage-only local logs count toward spend but own no quota row.
+  const agg = meta.hasUsage ? aggregateDashboardData(accounts.map(a => stats.get(a.id)?.dashboard)) : null
+  const items: Item[] = accounts.filter(a => !a.usageOnly).map(a => ({ account: a, s: stats.get(a.id) }))
   const planView = planDisplay(items.map(i => i.s?.billing?.plan))
   const activity = items.map(i => i.s?.billing?.activity).find(Boolean) ?? null
   const inner = width - 4

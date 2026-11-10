@@ -206,7 +206,7 @@ export function ProviderCard({
   const headerId = `provider-header-${group.providerId}`
   const regionId = `provider-detail-${group.providerId}`
   const subject = headroom ? `${group.name} usage` : rep.quota ? `${group.name} ${rep.quota.label}` : group.name
-  const todayTokens = providerTodayTokens(group.accounts)
+  const todayTokens = providerTodayTokens(group.usageAccounts)
   const noQuotaText = todayTokens === null ? 'No quota data' : `${formatTokens(todayTokens)} tokens today`
   const valueText = headroom
     ? (repUsed === null ? (pending ? 'Loading…' : noQuotaText) : `Usage ${percentText(repUsed)}`)
@@ -274,7 +274,7 @@ export function ProviderCard({
           <div id={regionId} role="region" aria-labelledby={headerId} className="provider-detail">
             {expanded && (
               <ProviderUsageStats
-                accounts={group.accounts} providerName={group.name}
+                accounts={group.usageAccounts} providerName={group.name}
                 intervalMs={snapshot.intervalMs} rangeDays={config.desktop.graphRangeDays} now={now}
               />
             )}

@@ -164,7 +164,7 @@ export function useDegradedPolling({
     const task = (async () => {
       const targets = accountsRef.current.filter(account => {
         const provider = PROVIDERS[account.providerId]
-        return provider.hasBilling && provider.fetchBilling
+        return !account.usageOnly && provider.hasBilling && provider.fetchBilling
       })
       const settled = await Promise.allSettled(targets.map(async account => {
         const fetchBilling = PROVIDERS[account.providerId].fetchBilling

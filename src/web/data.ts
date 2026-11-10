@@ -33,7 +33,7 @@ export async function resolveAccounts(config: Config): Promise<ResolvedAccounts>
       return {
         account: a,
         hasUsage: a.quotaSource?.kind !== 'cliproxy' && (p.hasUsage || !!p.fetchTable),
-        hasBilling: p.hasBilling,
+        hasBilling: p.hasBilling && !a.usageOnly,
         color: colorHex(a.color, PROVIDERS[a.providerId].color),
       }
     }),
@@ -56,6 +56,7 @@ export async function fetchAccountTable(account: Account, tz: string): Promise<T
 }
 
 export async function fetchAccountBilling(account: Account, tz: string): Promise<BillingResult | null> {
+  if (account.usageOnly) return null
   const p = PROVIDERS[account.providerId]
   if (!p.fetchBilling) return null
   return p.fetchBilling(account, tz)
@@ -95,6 +96,8 @@ export function assembleSnapshot(opts: {
       color: r.color,
       homeDir: r.account.homeDir ?? null,
       source: r.account.source ?? 'auto',
+      // Optional wire field: present only when true, like the other optionalKeys.
+      ...(r.account.usageOnly ? { usageOnly: true } : {}),
       hasUsage: r.hasUsage,
       hasBilling: r.hasBilling,
       email: billing?.email ?? null,
@@ -144,7 +147,7 @@ export function assembleSnapshot(opts: {
       name: PROVIDERS[r.account.providerId].name,
       color: namedHex(PROVIDERS[r.account.providerId].color),
       headroom: deriveProviderHeadroom(
-        (accountsByProvider.get(r.account.providerId) ?? []).map(account => ({
+        (accountsByProvider.get(r.account.providerId) ?? []).filter(account => !account.usageOnly).map(account => ({
           id: account.id,
           lastActivityAt: account.lastActivityAt,
           quotas: account.quotas ?? [],

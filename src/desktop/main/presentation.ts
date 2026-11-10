@@ -31,7 +31,7 @@ export function tightestQuota(account: WebAccount): TightestQuota | null {
 }
 
 export function promotionAccounts(snapshot: WebSnapshot): PromotionAccount[] {
-  return snapshot.accounts.map(account => {
+  return snapshot.accounts.filter(account => !account.usageOnly).map(account => {
     const quota = tightestQuota(account)
     return {
       id: account.id,
@@ -49,7 +49,7 @@ export function promotionAccounts(snapshot: WebSnapshot): PromotionAccount[] {
 export function activeAccountIds(snapshot: WebSnapshot, activeTimeoutMin: number, now: number): string[] {
   const cutoff = now - activeTimeoutMin * 60_000
   return snapshot.accounts
-    .filter(account => account.lastActivityAt !== null && account.lastActivityAt >= cutoff)
+    .filter(account => !account.usageOnly && account.lastActivityAt !== null && account.lastActivityAt >= cutoff)
     .map(account => account.id)
 }
 

@@ -189,7 +189,7 @@ export function menuBarValuesFromSnapshot(
         active: provider.headroom.activeAccountIds.length > 0,
       }
     }
-    const rows = accounts.map(account => ({
+    const rows = accounts.filter(account => !account.usageOnly).map(account => ({
       account,
       floor: accountFloor(account),
       active: account.lastActivityAt !== null

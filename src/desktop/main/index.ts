@@ -274,7 +274,7 @@ async function bootstrap(): Promise<void> {
       .filter((id, index, ids) => ids.indexOf(id) === index)
       .slice(0, 5)
     const tooltipRows = describedProviders.map(providerId => {
-      const accounts = snapshot.accounts.filter(candidate => candidate.providerId === providerId)
+      const accounts = snapshot.accounts.filter(candidate => candidate.providerId === providerId && !candidate.usageOnly)
       const name = snapshot.providers.find(candidate => candidate.id === providerId)?.name ?? providerId
       const headroom = snapshot.providers.find(candidate => candidate.id === providerId)?.headroom
       return providerTooltipLine(name, accounts, config.privacyMode, snapshot, config.tray.activeTimeoutMin, now, headroom)

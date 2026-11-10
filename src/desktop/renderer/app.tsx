@@ -34,6 +34,8 @@ export function snapshotWithAccountPolicy(snapshot: WebSnapshot, config: Config)
   )
   const included = (account: WebAccount) => {
     if (config.disabledProviders.includes(account.providerId)) return false
+    // Follows its CLIProxy accounts, not detection settings or exclusions.
+    if (account.usageOnly) return true
     const manual = configured(account)
     if (account.source === 'configured' || (account.source === undefined && manual)) {
       return manual?.enabled !== false

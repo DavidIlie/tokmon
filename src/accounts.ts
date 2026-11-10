@@ -227,27 +227,72 @@ export function collectAccounts(config: Config, detected: ProviderId[]): Collect
       })
     }
 
-    if (!config.accountDetection.enabled || config.accountDetection.disabledProviders.includes(pid)) continue
-    const discovered = discoverProviderAccounts(pid)
-    if (detected.includes(pid)) {
-      const account: Account = {
-        id: pid, providerId: pid, name: provider.name, color: provider.color,
-        homeDir: undefined, source: 'auto',
+    if (config.accountDetection.enabled && !config.accountDetection.disabledProviders.includes(pid)) {
+      if (detected.includes(pid)) {
+        const homeKey = accountHomeKey(pid)
+        if (configuredHomes.has(homeKey)) {
+          // Already tracked by a configured account.
+        } else if (excludedKeys.has(homeKey)) {
+          noteSuppressed(homeKey)
+        } else {
+          add({ id: pid, providerId: pid, name: provider.name, color: provider.color, homeDir: undefined, source: 'auto' })
+        }
       }
-      const homeKey = accountHomeKey(pid)
-      const key = accountKey(pid)
-      if (configuredHomes.has(homeKey)) continue
-      if (excludedKeys.has(homeKey)) noteSuppressed(homeKey)
-      else add(account)
+      for (const account of discoverProviderAccounts(pid)) {
+        const homeKey = accountHomeKey(account.providerId, account.homeDir)
+        if (configuredHomes.has(homeKey)) continue
+        if (excludedKeys.has(homeKey)) { noteSuppressed(homeKey); continue }
+        add(account)
+      }
     }
-    for (const account of discovered) {
-      const homeKey = accountHomeKey(account.providerId, account.homeDir)
-      if (configuredHomes.has(homeKey)) continue
-      if (excludedKeys.has(homeKey)) { noteSuppressed(homeKey); continue }
-      add(account)
-    }
+
+    for (const account of localUsageSources(pid, configured, out, detected)) add(account)
   }
   return { accounts: out, suppressed }
+}
+
+/**
+ * CLIProxy accounts report quota only, yet traffic routed through the proxy
+ * still writes this machine's session logs. Each home a CLIProxy account names
+ * gets one usage-only source, unless a local account already reads that home
+ * or the user disabled the local account there. Exclusions do not apply: they
+ * hide the local quota row, and spend for proxied traffic has nowhere else to go.
+ */
+function localUsageSources(
+  pid: ProviderId,
+  configured: readonly Config['accounts'][number][],
+  tracked: readonly Account[],
+  detected: readonly ProviderId[],
+): Account[] {
+  const provider = PROVIDERS[pid]
+  if (!provider.hasUsage || !provider.fetchSummary) return []
+  const covered = new Set([
+    ...tracked
+      .filter(a => a.providerId === pid && a.quotaSource?.kind !== 'cliproxy')
+      .map(a => accountHomeKey(pid, a.homeDir)),
+    ...configured
+      .filter(a => a.enabled === false && a.quotaSource?.kind !== 'cliproxy')
+      .map(a => accountHomeKey(pid, a.homeDir || '~')),
+  ])
+  const out: Account[] = []
+  for (const a of configured) {
+    if (a.enabled === false || a.quotaSource?.kind !== 'cliproxy') continue
+    const homeDir = runtimeHomeDir(a.homeDir || '~')
+    const homeKey = accountHomeKey(pid, homeDir)
+    if (covered.has(homeKey)) continue
+    covered.add(homeKey)
+    if (homeDir === undefined ? !detected.includes(pid) : !existsSync(homeDir)) continue
+    out.push({
+      id: homeDir === undefined ? `${pid}_local_usage` : `${pid}_local_usage_${stableHash(homeDir)}`,
+      providerId: pid,
+      name: 'Local usage',
+      color: provider.color,
+      homeDir,
+      source: 'auto',
+      usageOnly: true,
+    })
+  }
+  return out
 }
 
 export function buildAccounts(config: Config, detected: ProviderId[]): Account[] {

@@ -121,6 +121,12 @@ export interface WebAccount {
   homeDir: string | null
   /** Daemon-owned provenance for account lifecycle actions. Optional for cached/older snapshots. */
   source?: 'auto' | 'configured'
+  /**
+   * Local session logs read for spend beside CLIProxy accounts. Counts toward
+   * provider usage totals and history, never toward quota, headroom or the
+   * account list. Absent means a regular account.
+   */
+  usageOnly?: boolean
   hasUsage: boolean
   hasBilling: boolean
   email?: string | null

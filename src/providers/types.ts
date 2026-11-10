@@ -14,6 +14,12 @@ export interface Account {
   /** Runtime provenance. Provider readers stay source-agnostic; clients use it for lifecycle actions. */
   source?: 'auto' | 'configured'
   quotaSource?: QuotaSourceConfig
+  /**
+   * Reads this machine's session logs for spend and tokens but owns no quota.
+   * Tracked beside CLIProxy accounts, whose traffic still writes local logs but
+   * whose pool cannot say which subscription served a given request.
+   */
+  usageOnly?: boolean
 }
 
 export type MetricFormat =
